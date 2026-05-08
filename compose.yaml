@@ -1,0 +1,50 @@
+services:
+  docker-socket-proxy:
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest}
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+    networks:
+      - monitor-internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - CONTAINERS=1
+      - INFO=1
+      - POST=0
+    security_opt:
+      - no-new-privileges:true
+
+  pi-monitor:
+    build:
+      context: ./apps/pi-monitor
+      dockerfile: Dockerfile
+    container_name: pi-monitor
+    restart: unless-stopped
+    depends_on:
+      - docker-socket-proxy
+    networks:
+      - monitor-internal
+    ports:
+      - "${MONITOR_PORT:-8080}:80"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/hostname:/host/etc/hostname:ro
+    environment:
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
+      - HOST_ETC=/host/etc
+      - DOCKER_API_BASE=http://docker-socket-proxy:2375
+      - API_CORS_ORIGINS=${API_CORS_ORIGINS:-}
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/api/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  monitor-internal:
+    internal: true

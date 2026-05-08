@@ -1,0 +1,10 @@
+.DS_Store
+.git
+frontend/node_modules
+frontend/build
+frontend/coverage
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+*.log
