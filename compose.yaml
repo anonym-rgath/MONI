@@ -24,8 +24,16 @@ services:
       - docker-socket-proxy
     networks:
       - monitor-internal
+      - traefik-network
     ports:
       - "${MONITOR_PORT:-8080}:80"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-network
+      - traefik.http.routers.pi-monitor.rule=Host(`${MONITOR_HOST}`)
+      - traefik.http.routers.pi-monitor.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.pi-monitor.tls=${TRAEFIK_TLS:-true}
+      - traefik.http.services.pi-monitor.loadbalancer.server.port=80
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -48,3 +56,5 @@ services:
 networks:
   monitor-internal:
     internal: true
+  traefik-network:
+    external: true
