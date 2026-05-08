@@ -15,20 +15,21 @@ Dieses Projekt enthaelt nur den Pi Monitor, sein Frontend, sein Backend und die 
 ## Start
 
 ```bash
-cp .env.example .env
 ./scripts/start.sh
 ```
 
-Der Monitor ist danach lokal auf dem konfigurierten Port erreichbar:
+Das Startskript erstellt `.env` bei Bedarf aus `.env.example` und ergaenzt fehlende Werte in bestehenden `.env`-Dateien.
+
+Der Monitor ist danach ueber Traefik erreichbar:
 
 ```bash
-http://<pi-host>:8080
+http://monitor.sau-index.de
 ```
 
-Der Port kann in `.env` angepasst werden:
+Die Domain kann in `.env` angepasst werden:
 
 ```env
-MONITOR_PORT=8080
+MONITOR_HOST=monitor.sau-index.de
 ```
 
 ## Betrieb
@@ -42,7 +43,8 @@ docker compose ps
 
 ## Konfiguration
 
-- `MONITOR_PORT`: lokaler HTTP-Port des Monitors
+- `MONITOR_HOST`: Domain, auf die Traefik fuer den Monitor routet
+- `TRAEFIK_ENTRYPOINT`: Traefik-EntryPoint, standardmaessig `web`
 - `API_CORS_ORIGINS`: optionale CORS-Origin-Liste fuer direkte API-Zugriffe im Dev-Modus
 - `DOCKER_SOCKET_PROXY_IMAGE`: optionales Image-Pinning fuer den Docker-Socket-Proxy
 

@@ -39,6 +39,25 @@ if [ ! -f "$ROOT_DIR/.env" ]; then
     echo -e "${YELLOW}Bitte pruefe .env vor dem produktiven Einsatz.${NC}"
 fi
 
+if [ -f "$ROOT_DIR/.env.example" ]; then
+    added_env_keys=0
+    while IFS= read -r env_line; do
+        case "$env_line" in
+            ""|\#*) continue ;;
+        esac
+
+        env_key="${env_line%%=*}"
+        if ! grep -qE "^[[:space:]]*${env_key}=" "$ROOT_DIR/.env"; then
+            echo "$env_line" >> "$ROOT_DIR/.env"
+            added_env_keys=1
+        fi
+    done < "$ROOT_DIR/.env.example"
+
+    if [ "$added_env_keys" -eq 1 ]; then
+        echo -e "${YELLOW}Fehlende Werte aus .env.example wurden in .env ergaenzt.${NC}"
+    fi
+fi
+
 echo -e "${YELLOW}Baue und starte Pi Monitor...${NC}"
 docker compose up -d --build
 
@@ -47,8 +66,8 @@ echo ""
 docker compose ps
 echo ""
 echo -e "${GREEN}Pi Monitor läuft${NC}"
-MONITOR_ENDPOINT="$(docker compose port pi-monitor 80 || true)"
-if [ -n "$MONITOR_ENDPOINT" ]; then
-    echo -e "Endpoint: ${GREEN}${MONITOR_ENDPOINT}${NC}"
+MONITOR_HOST="$(sed -n 's/^MONITOR_HOST=//p' "$ROOT_DIR/.env" | tail -n 1)"
+if [ -n "$MONITOR_HOST" ]; then
+    echo -e "Endpoint: ${GREEN}http://${MONITOR_HOST}${NC}"
 fi
 echo ""
