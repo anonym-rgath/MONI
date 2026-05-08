@@ -28,12 +28,11 @@ services:
     ports:
       - "${MONITOR_PORT:-8080}:80"
     labels:
-      - traefik.enable=true
-      - traefik.docker.network=traefik-network
-      - traefik.http.routers.pi-monitor.rule=Host(`${MONITOR_HOST}`)
-      - traefik.http.routers.pi-monitor.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
-      - traefik.http.routers.pi-monitor.tls=${TRAEFIK_TLS:-true}
-      - traefik.http.services.pi-monitor.loadbalancer.server.port=80
+      - "traefik.enable=true"
+      - "traefik.http.routers.pi-monitor.rule=Host(`${MONITOR_HOST}`)"
+      - "traefik.http.routers.pi-monitor.entrypoints=${TRAEFIK_ENTRYPOINT:-web}"
+      - "traefik.http.services.pi-monitor.loadbalancer.server.port=80"
+      - "traefik.docker.network=traefik-network"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
