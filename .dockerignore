@@ -1,5 +1,7 @@
 .DS_Store
 .git
+.env
+PI-SETUP
 frontend/node_modules
 frontend/build
 frontend/coverage

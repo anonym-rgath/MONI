@@ -3,7 +3,7 @@ FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/yarn.lock* ./
-RUN yarn install || yarn install --ignore-engines
+RUN yarn install --frozen-lockfile --non-interactive
 COPY frontend/ .
 RUN yarn build
 
@@ -16,6 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     supervisor \
     curl \
+    && sed -i 's|^user .*|# user directive disabled for non-root runtime;|' /etc/nginx/nginx.conf \
+    && sed -i 's|^pid .*|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
+    && sed -i 's|^[[:space:]]*error_log .*|error_log /dev/stderr warn;|' /etc/nginx/nginx.conf \
+    && sed -i 's|^[[:space:]]*access_log .*|    access_log /dev/stdout;|' /etc/nginx/nginx.conf \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements-docker.txt ./backend/
@@ -25,10 +29,25 @@ COPY backend/server.py ./backend/
 
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
+RUN addgroup --system app \
+    && adduser --system --ingroup app --home /app app \
+    && chown -R app:app /app
+
 # Nginx config
 RUN echo 'server { \n\
-    listen 80; \n\
+    listen 8080; \n\
     server_name localhost; \n\
+    access_log /dev/stdout; \n\
+    error_log /dev/stderr warn; \n\
+    client_body_temp_path /tmp/nginx-client-body; \n\
+    proxy_temp_path /tmp/nginx-proxy; \n\
+    fastcgi_temp_path /tmp/nginx-fastcgi; \n\
+    uwsgi_temp_path /tmp/nginx-uwsgi; \n\
+    scgi_temp_path /tmp/nginx-scgi; \n\
+    add_header Content-Security-Policy "default-src '\''self'\''; font-src '\''self'\'' https://fonts.gstatic.com; style-src '\''self'\'' '\''unsafe-inline'\'' https://fonts.googleapis.com; script-src '\''self'\''; connect-src '\''self'\''; img-src '\''self'\'' data:; frame-ancestors '\''none'\''; base-uri '\''self'\''; form-action '\''self'\''" always; \n\
+    add_header X-Content-Type-Options "nosniff" always; \n\
+    add_header Referrer-Policy "no-referrer" always; \n\
+    add_header X-Frame-Options "DENY" always; \n\
     \n\
     location / { \n\
         root /app/frontend/build; \n\
@@ -48,29 +67,33 @@ RUN echo 'server { \n\
 # Supervisor config with logging
 RUN echo '[supervisord] \n\
 nodaemon=true \n\
-logfile=/var/log/supervisor/supervisord.log \n\
+logfile=/tmp/supervisord.log \n\
+pidfile=/tmp/supervisord.pid \n\
+childlogdir=/tmp \n\
 \n\
 [program:nginx] \n\
 command=nginx -g "daemon off;" \n\
 autostart=true \n\
 autorestart=true \n\
-stdout_logfile=/var/log/supervisor/nginx.log \n\
-stderr_logfile=/var/log/supervisor/nginx.err.log \n\
+stdout_logfile=/tmp/nginx.log \n\
+stderr_logfile=/tmp/nginx.err.log \n\
 \n\
 [program:backend] \n\
 command=uvicorn server:app --host 0.0.0.0 --port 8001 \n\
 directory=/app/backend \n\
 autostart=true \n\
 autorestart=true \n\
-stdout_logfile=/var/log/supervisor/backend.log \n\
-stderr_logfile=/var/log/supervisor/backend.err.log \n\
+stdout_logfile=/tmp/backend.log \n\
+stderr_logfile=/tmp/backend.err.log \n\
 ' > /etc/supervisor/conf.d/supervisord.conf
 
 RUN mkdir -p /var/log/supervisor
 
-EXPOSE 80
+USER app
+
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1/api/ || exit 1
+    CMD curl -fsS http://127.0.0.1:8080/api/ || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
