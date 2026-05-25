@@ -6,7 +6,9 @@ Dieses Projekt enthaelt nur den Pi Monitor, sein Frontend, sein Backend und die 
 
 ## Inhalt
 
-- `apps/pi-monitor`: React-Frontend, FastAPI-Backend und Dockerfile
+- `frontend/`: React-Frontend
+- `backend/`: FastAPI-Backend
+- `Dockerfile`: Multi-stage Image fuer Frontend, Backend und Nginx
 - `scripts/start.sh`: Monitor bauen und starten
 - `scripts/stop.sh`: Monitor stoppen
 - `scripts/logs.sh`: Monitor-Logs verfolgen
