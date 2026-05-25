@@ -50,6 +50,17 @@ wait_for_running() {
     fail "$service_name laeuft nicht. Starte zuerst ./scripts/start.sh"
 }
 
+wait_for_api() {
+    for _ in $(seq 1 30); do
+        if curl_pi_monitor http://127.0.0.1/api/ >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    fail "API Root antwortet nicht nach 30 Sekunden"
+}
+
 require_command docker
 docker compose version >/dev/null 2>&1 || fail "Docker Compose Plugin ist nicht installiert"
 
@@ -65,7 +76,7 @@ wait_for_running "docker-socket-proxy" "docker-socket-proxy"
 
 ok "Container laufen"
 
-curl_pi_monitor http://127.0.0.1/api/ >/dev/null
+wait_for_api
 ok "API Root antwortet"
 
 curl_pi_monitor http://127.0.0.1/api/metrics/host >/dev/null
