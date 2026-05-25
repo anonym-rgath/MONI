@@ -49,9 +49,28 @@ else
 fi
 
 echo ""
+echo "Traefik Host-Header-Test auf dem Host:"
+if [ -n "$MONITOR_HOST" ]; then
+    curl -fsS -H "Host: $MONITOR_HOST" -D - http://127.0.0.1/ -o /tmp/pi-monitor-traefik-index.html | head -n 20 || true
+
+    STATIC_ASSET="$(sed -n 's/.*src="\(\/static\/js\/[^"]*\.js\)".*/\1/p' /tmp/pi-monitor-traefik-index.html | head -n 1)"
+    if [ -n "$STATIC_ASSET" ]; then
+        echo ""
+        echo "Traefik Static-Asset-Test auf dem Host ($STATIC_ASSET):"
+        curl -fsS -H "Host: $MONITOR_HOST" -D - "http://127.0.0.1$STATIC_ASSET" -o /dev/null | head -n 20 || true
+    else
+        echo ""
+        echo "Kein statisches JS-Asset im Traefik-Response gefunden."
+    fi
+else
+    echo "MONITOR_HOST leer, Traefik Host-Header-Test uebersprungen"
+fi
+
+echo ""
 echo "Hinweis:"
 echo "Wenn die internen Checks 200 liefern, aber extern 404 kommt, liegt der Fehler vor pi-monitor:"
 echo "- falscher Hostname"
 echo "- falscher Traefik EntryPoint"
 echo "- pi-monitor nicht im traefik-network"
 echo "- Traefik liest den Docker Provider/Labels nicht"
+echo "- Cloudflare Tunnel/Access routet nicht alle Pfade, insbesondere /static/* und /api/*"
