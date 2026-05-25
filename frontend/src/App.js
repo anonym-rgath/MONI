@@ -13,7 +13,9 @@ import {
   Clock,
   RefreshCw,
   HardDrive,
-  RotateCcw
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2
 } from "lucide-react";
 import { 
   LineChart, 
@@ -50,6 +52,80 @@ const getStatusColor = (percent) => {
   if (percent > 80) return '#FF3366';
   if (percent > 60) return '#FFCC00';
   return '#00FF66';
+};
+
+const getHealthColor = (status) => {
+  if (status === 'healthy') return '#00FF66';
+  if (status === 'unhealthy') return '#FF3366';
+  if (status === 'starting') return '#FFCC00';
+  return '#8A8A8A';
+};
+
+const buildReliabilityAlerts = (host, containers, dockerStatus) => {
+  const alerts = [];
+  if (!host) {
+    if (dockerStatus && !dockerStatus.reachable) {
+      alerts.push({ level: 'critical', text: 'Monitoring API nicht erreichbar' });
+    }
+    return alerts;
+  }
+
+  if (host.cpu?.usage_percent > 85) alerts.push({ level: 'critical', text: `CPU ${host.cpu.usage_percent}%` });
+  if (host.memory?.usage_percent > 85) alerts.push({ level: 'critical', text: `RAM ${host.memory.usage_percent}%` });
+  if (host.disk?.usage_percent > 85) alerts.push({ level: 'critical', text: `Disk ${host.disk.usage_percent}%` });
+  if (host.temperature?.celsius > 75) alerts.push({ level: 'critical', text: `Temp ${host.temperature.celsius}°C` });
+
+  if (host.cpu?.usage_percent > 75 && host.cpu?.usage_percent <= 85) alerts.push({ level: 'warning', text: `CPU ${host.cpu.usage_percent}%` });
+  if (host.memory?.usage_percent > 75 && host.memory?.usage_percent <= 85) alerts.push({ level: 'warning', text: `RAM ${host.memory.usage_percent}%` });
+  if (host.disk?.usage_percent > 75 && host.disk?.usage_percent <= 85) alerts.push({ level: 'warning', text: `Disk ${host.disk.usage_percent}%` });
+  if (host.temperature?.celsius > 65 && host.temperature?.celsius <= 75) alerts.push({ level: 'warning', text: `Temp ${host.temperature.celsius}°C` });
+
+  if (dockerStatus && !dockerStatus.reachable) {
+    alerts.push({ level: 'critical', text: 'Docker API nicht erreichbar' });
+  }
+
+  const stopped = containers.filter(c => c.status !== 'running');
+  if (stopped.length > 0) alerts.push({ level: 'warning', text: `${stopped.length} Container nicht running` });
+
+  const unhealthy = containers.filter(c => c.health?.status === 'unhealthy');
+  if (unhealthy.length > 0) alerts.push({ level: 'critical', text: `${unhealthy.length} Container unhealthy` });
+
+  if (dockerStatus?.stats_unavailable_count > 0) {
+    alerts.push({ level: 'warning', text: `Docker Stats ${dockerStatus.stats_unavailable_count}x nicht verfuegbar` });
+  }
+
+  return alerts;
+};
+
+const ReliabilityStrip = ({ alerts, dockerStatus }) => {
+  const hasCritical = alerts.some(alert => alert.level === 'critical');
+  const hasWarnings = alerts.length > 0;
+  const color = hasCritical ? '#FF3366' : hasWarnings ? '#FFCC00' : '#00FF66';
+  const Icon = hasWarnings ? AlertTriangle : CheckCircle2;
+
+  return (
+    <div className="mb-6 bg-[#0A0A0A] border border-[#1A1A1A] rounded-sm px-4 py-3" data-testid="reliability-strip">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2">
+          <Icon size={16} style={{ color }} strokeWidth={1.5} />
+          <span className="text-sm font-mono" style={{ color }}>
+            {hasWarnings ? alerts.map(alert => alert.text).join(' | ') : 'System OK'}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-[#8A8A8A]">
+          <span className="border border-[#1A1A1A] px-2 py-1">
+            Docker API: {dockerStatus ? (dockerStatus.reachable ? 'OK' : 'Fehler') : '-'}
+          </span>
+          <span className="border border-[#1A1A1A] px-2 py-1">
+            Stats: {dockerStatus?.stats_available_count ?? 0}/{dockerStatus?.running_count ?? 0}
+          </span>
+          <span className="border border-[#1A1A1A] px-2 py-1">
+            Health: {dockerStatus?.health_healthy_count ?? 0} healthy
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // Metric Card Component
@@ -107,6 +183,7 @@ const ContainerCard = ({ container }) => {
   const hasCpu = container.cpu?.available && container.cpu?.usage_percent !== null && container.cpu?.usage_percent !== undefined;
   const hasMemory = container.memory?.available && container.memory?.usage_mb !== null && container.memory?.usage_mb !== undefined;
   const memoryPercent = container.memory?.usage_percent || 0;
+  const healthStatus = container.health?.status || 'none';
   
   return (
     <div 
@@ -118,13 +195,20 @@ const ContainerCard = ({ container }) => {
           <Container size={16} className="text-[#8A8A8A]" strokeWidth={1.5} />
           <span className="font-medium text-[#EDEDED]">{container.name}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span 
-            className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[#00FF66] live-indicator' : 'bg-[#FF3366]'}`}
-          />
-          <span className={`text-xs font-mono uppercase ${isRunning ? 'text-[#00FF66]' : 'text-[#FF3366]'}`}>
-            {container.status}
-          </span>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[#00FF66] live-indicator' : 'bg-[#FF3366]'}`}
+            />
+            <span className={`text-xs font-mono uppercase ${isRunning ? 'text-[#00FF66]' : 'text-[#FF3366]'}`}>
+              {container.status}
+            </span>
+          </div>
+          {healthStatus !== 'none' && (
+            <span className="text-[10px] font-mono uppercase" style={{ color: getHealthColor(healthStatus) }}>
+              {healthStatus}
+            </span>
+          )}
         </div>
       </div>
 
@@ -223,6 +307,7 @@ const ContainerCard = ({ container }) => {
 function App() {
   const [hostMetrics, setHostMetrics] = useState(null);
   const [containers, setContainers] = useState([]);
+  const [dockerStatus, setDockerStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [cpuHistory, setCpuHistory] = useState([]);
@@ -232,10 +317,11 @@ function App() {
   const fetchMetrics = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/metrics/all`);
-      const { host, containers: containerData } = response.data;
+      const { host, containers: containerData, docker } = response.data;
       
       setHostMetrics(host);
       setContainers(containerData);
+      setDockerStatus(docker);
       setLastUpdate(new Date());
       
       setCpuHistory(prev => {
@@ -251,6 +337,12 @@ function App() {
       setLoading(false);
     } catch (error) {
       console.error('Error fetching metrics:', error);
+      setDockerStatus({
+        reachable: false,
+        running_count: 0,
+        stats_available_count: 0,
+        health_healthy_count: 0
+      });
       setLoading(false);
     }
   }, []);
@@ -271,6 +363,8 @@ function App() {
       </div>
     );
   }
+
+  const reliabilityAlerts = buildReliabilityAlerts(hostMetrics, containers, dockerStatus);
 
   return (
     <div className="min-h-screen bg-[#050505]" data-testid="dashboard">
@@ -312,6 +406,8 @@ function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-6">
+        <ReliabilityStrip alerts={reliabilityAlerts} dockerStatus={dockerStatus} />
+
         {/* Host Section */}
         <section className="mb-8" data-testid="host-section">
           <div className="flex items-center gap-2 mb-4">
@@ -419,6 +515,9 @@ function App() {
               <h2 className="text-lg font-medium text-white">Docker Container</h2>
               <span className="text-xs font-mono text-[#8A8A8A] bg-[#0A0A0A] px-2 py-1 rounded-sm border border-[#1A1A1A]">
                 {containers.filter(c => c.status === 'running').length} / {containers.length} aktiv
+              </span>
+              <span className="text-xs font-mono text-[#8A8A8A] bg-[#0A0A0A] px-2 py-1 rounded-sm border border-[#1A1A1A]">
+                Stats {dockerStatus?.stats_available_count ?? 0} / {dockerStatus?.running_count ?? 0}
               </span>
             </div>
           </div>

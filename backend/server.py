@@ -8,7 +8,7 @@ import ctypes
 import ctypes.util
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib import request as urlrequest
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from datetime import datetime, timezone
 
 app = FastAPI(title="Pi Monitor API")
@@ -16,7 +16,7 @@ api_router = APIRouter(prefix="/api")
 
 DOCKER_SOCKET = "/var/run/docker.sock"
 DOCKER_API_BASE = os.environ.get("DOCKER_API_BASE", f"unix://{DOCKER_SOCKET}")
-DOCKER_STATS_TIMEOUT = float(os.environ.get("DOCKER_STATS_TIMEOUT", "1.5"))
+DOCKER_STATS_TIMEOUT = float(os.environ.get("DOCKER_STATS_TIMEOUT", "2.5"))
 DOCKER_INSPECT_TIMEOUT = float(os.environ.get("DOCKER_INSPECT_TIMEOUT", "1.0"))
 MAX_DOCKER_WORKERS = int(os.environ.get("MAX_DOCKER_WORKERS", "8"))
 HOST_PROC = os.environ.get('HOST_PROC', '/proc')
@@ -229,10 +229,13 @@ def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
     if state == "running" and created:
         uptime_seconds = int(datetime.now(timezone.utc).timestamp() - created)
 
+    list_health = c.get('Health') if isinstance(c.get('Health'), dict) else {}
     container = {
         "id": container_id,
         "name": name,
         "status": state,
+        "health": {"status": list_health.get('Status', 'none')},
+        "stats": {"available": False},
         "cpu": {"usage_percent": None, "available": False},
         "memory": {"usage_mb": None, "limit_mb": None, "usage_percent": None, "available": False},
         "network": {"rx_bytes": 0, "tx_bytes": 0, "rx_rate_kbps": 0.0, "tx_rate_kbps": 0.0},
@@ -247,7 +250,13 @@ def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
         f"/containers/{full_container_id}/stats?stream=false",
         timeout=DOCKER_STATS_TIMEOUT
     )
+    if not stats:
+        stats = docker_request(
+            f"/containers/{full_container_id}/stats?stream=false&one-shot=true",
+            timeout=DOCKER_STATS_TIMEOUT
+        )
     if stats:
+        container['stats']['available'] = True
         try:
             cpu_stats = stats.get('cpu_stats', {})
             precpu_stats = stats.get('precpu_stats', {})
@@ -297,15 +306,40 @@ def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
     inspect = docker_request(f"/containers/{full_container_id}/json", timeout=DOCKER_INSPECT_TIMEOUT)
     if inspect:
         container['restart_count'] = inspect.get('RestartCount', 0)
+        state_info = inspect.get('State', {})
+        health_info = state_info.get('Health')
+        if health_info:
+            container['health']['status'] = health_info.get('Status', 'unknown')
 
     return container
 
 def get_containers() -> List[Dict[str, Any]]:
+    containers, _ = get_containers_with_status()
+    return containers
+
+def get_containers_with_status() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     containers = []
+    docker_status = {
+        "reachable": False,
+        "container_count": 0,
+        "running_count": 0,
+        "stats_available_count": 0,
+        "stats_unavailable_count": 0,
+        "health_healthy_count": 0,
+        "health_unhealthy_count": 0,
+        "health_none_count": 0,
+        "warnings": []
+    }
+
     try:
         data = docker_request("/containers/json?all=true")
+        if data is None:
+            docker_status["warnings"].append("Docker API nicht erreichbar")
+            return containers, docker_status
+
+        docker_status["reachable"] = True
         if not data:
-            return containers
+            return containers, docker_status
 
         worker_count = max(1, min(MAX_DOCKER_WORKERS, len(data)))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -317,8 +351,26 @@ def get_containers() -> List[Dict[str, Any]]:
                     logging.warning(f"Container metrics worker error: {e}")
     except Exception as e:
         logging.error(f"Container error: {e}")
-    
-    return containers
+        docker_status["warnings"].append("Container-Metriken konnten nicht gelesen werden")
+
+    running_containers = [c for c in containers if c.get("status") == "running"]
+    docker_status["container_count"] = len(containers)
+    docker_status["running_count"] = len(running_containers)
+    docker_status["stats_available_count"] = sum(1 for c in running_containers if c.get("stats", {}).get("available"))
+    docker_status["stats_unavailable_count"] = max(
+        0,
+        docker_status["running_count"] - docker_status["stats_available_count"]
+    )
+    docker_status["health_healthy_count"] = sum(1 for c in containers if c.get("health", {}).get("status") == "healthy")
+    docker_status["health_unhealthy_count"] = sum(1 for c in containers if c.get("health", {}).get("status") == "unhealthy")
+    docker_status["health_none_count"] = sum(1 for c in containers if c.get("health", {}).get("status") == "none")
+
+    if docker_status["stats_unavailable_count"] > 0:
+        docker_status["warnings"].append("Docker Stats teilweise nicht verfuegbar")
+    if docker_status["health_unhealthy_count"] > 0:
+        docker_status["warnings"].append("Mindestens ein Container ist unhealthy")
+
+    return containers, docker_status
 
 @api_router.get("/")
 async def root():
@@ -346,6 +398,7 @@ async def get_container_metrics():
 @api_router.get("/metrics/all")
 async def get_all_metrics():
     cpu_info = get_cpu_info()
+    containers, docker_status = get_containers_with_status()
     return {
         "host": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -358,7 +411,8 @@ async def get_all_metrics():
             "process_count": get_process_count(),
             "hostname": get_hostname()
         },
-        "containers": get_containers()
+        "containers": containers,
+        "docker": docker_status
     }
 
 app.include_router(api_router)
