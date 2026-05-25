@@ -37,6 +37,8 @@ Die Domain kann in `.env` angepasst werden:
 MONITOR_HOST=monitor.example.com
 ```
 
+Fuer den produktiven Betrieb muss `MONITOR_HOST` auf die echte Traefik-Domain gesetzt werden. Die Scripts brechen mit dem Beispielwert `monitor.example.com` ab, damit kein gesunder Container mit falscher Traefik-Route deployt wird.
+
 ## Betrieb
 
 ```bash

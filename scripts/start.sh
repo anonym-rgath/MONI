@@ -58,6 +58,14 @@ if [ -f "$ROOT_DIR/.env.example" ]; then
     fi
 fi
 
+MONITOR_HOST="$(sed -n 's/^MONITOR_HOST=//p' "$ROOT_DIR/.env" | tail -n 1)"
+if [ -z "$MONITOR_HOST" ] || [ "$MONITOR_HOST" = "monitor.example.com" ]; then
+    echo -e "${RED}Fehler: MONITOR_HOST ist nicht fuer den produktiven Betrieb gesetzt.${NC}"
+    echo "Bitte in .env die echte Domain setzen, z. B.:"
+    echo "  MONITOR_HOST=monitor.sau-index.de"
+    exit 1
+fi
+
 echo -e "${YELLOW}Baue und starte Pi Monitor...${NC}"
 docker compose up -d --build
 
@@ -66,7 +74,6 @@ echo ""
 docker compose ps
 echo ""
 echo -e "${GREEN}Pi Monitor läuft${NC}"
-MONITOR_HOST="$(sed -n 's/^MONITOR_HOST=//p' "$ROOT_DIR/.env" | tail -n 1)"
 if [ -n "$MONITOR_HOST" ]; then
     echo -e "Endpoint: ${GREEN}http://${MONITOR_HOST}${NC}"
 fi

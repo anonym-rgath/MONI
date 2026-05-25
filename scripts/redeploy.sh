@@ -103,6 +103,14 @@ if [ -f "$ROOT_DIR/.env.example" ]; then
     fi
 fi
 
+MONITOR_HOST="$(sed -n 's/^MONITOR_HOST=//p' "$ROOT_DIR/.env" | tail -n 1)"
+if [ -z "$MONITOR_HOST" ] || [ "$MONITOR_HOST" = "monitor.example.com" ]; then
+    echo -e "${RED}Fehler: MONITOR_HOST ist nicht fuer den produktiven Betrieb gesetzt.${NC}"
+    echo "Bitte in .env die echte Domain setzen, z. B.:"
+    echo "  MONITOR_HOST=monitor.sau-index.de"
+    exit 1
+fi
+
 echo ""
 echo -e "${YELLOW}[3/5] pi-monitor neu bauen + starten...${NC}"
 if [ -n "$FORCE_RECREATE" ]; then
