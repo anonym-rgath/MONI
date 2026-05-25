@@ -50,7 +50,7 @@ Diese Liste sammelt die Security-Findings aus dem Review, damit sie schrittweise
   - Ziel: Pruefen, ob alle Mounts vollstaendig benoetigt werden, und Zugriff so klein wie moeglich halten.
 
 - [x] HTTP-Security-Header setzen
-  - Erledigt und per Smoke-Test bestaetigt: `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy` und `X-Frame-Options`.
+  - Erledigt und per Smoke-Test bestaetigt: `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options` und `Permissions-Policy`.
 
 - [ ] Lokalen Compose-Betrieb robuster machen
   - `docker compose up -d --no-deps pi-monitor` scheitert ohne externes `traefik-network`.
@@ -65,10 +65,8 @@ Diese Liste sammelt die Security-Findings aus dem Review, damit sie schrittweise
   - Backend gibt bei Docker-/Host-Lesefehlern oft stille Defaultwerte zurueck.
   - Ziel: Fehlerzustand im API-Response sichtbar machen, damit das Dashboard falsche Nullen nicht als echte Metriken interpretiert.
 
-- [ ] Healthchecks erweitern
-  - Aktueller Healthcheck prueft nur `/api/`.
-  - Ziel: Healthcheck oder Smoke-Test um `/api/metrics/host`, `/api/metrics/containers` und statische Frontend-Auslieferung erweitern.
+- [x] Healthchecks erweitern
+  - Erledigt: `scripts/smoke.sh` prueft `/api/`, `/api/metrics/host`, `/api/metrics/containers`, `/api/metrics/all` und statische Frontend-Auslieferung.
 
-- [ ] Security-Testcheckliste automatisieren
-  - Manuelle Tests wurden erfolgreich durchgefuehrt, sind aber nicht automatisiert.
-  - Ziel: Smoke-Test-Skript fuer API, Frontend, Docker-Socket-Proxy-POST-Block und Compose-Config anlegen.
+- [x] Security-Testcheckliste automatisieren
+  - Erledigt: `scripts/smoke.sh` prueft Compose-Config, API, Frontend, Security-Header, Docker-Socket-Proxy-POST-Block und Runtime-Haertung.

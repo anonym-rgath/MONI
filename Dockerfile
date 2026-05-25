@@ -39,6 +39,7 @@ RUN echo 'server { \n\
     server_name localhost; \n\
     access_log /dev/stdout; \n\
     error_log /dev/stderr warn; \n\
+    client_max_body_size 1m; \n\
     client_body_temp_path /tmp/nginx-client-body; \n\
     proxy_temp_path /tmp/nginx-proxy; \n\
     fastcgi_temp_path /tmp/nginx-fastcgi; \n\
@@ -48,6 +49,7 @@ RUN echo 'server { \n\
     add_header X-Content-Type-Options "nosniff" always; \n\
     add_header Referrer-Policy "no-referrer" always; \n\
     add_header X-Frame-Options "DENY" always; \n\
+    add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always; \n\
     \n\
     location / { \n\
         root /app/frontend/build; \n\

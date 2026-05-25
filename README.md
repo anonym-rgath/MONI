@@ -12,6 +12,7 @@ Dieses Projekt enthaelt nur den Pi Monitor, sein Frontend, sein Backend und die 
 - `scripts/start.sh`: Monitor bauen und starten
 - `scripts/stop.sh`: Monitor stoppen
 - `scripts/logs.sh`: Monitor-Logs verfolgen
+- `scripts/smoke.sh`: Nach-Deploy-Check fuer API, Frontend, Security-Header und Runtime-Haertung
 - `scripts/diagnose.sh`: Traefik-/Routing-/Container-Diagnose bei 404 oder fehlender Erreichbarkeit
 - `compose.yaml`: Runtime fuer Monitor plus eingeschraenkten Docker-Socket-Proxy
 
@@ -41,9 +42,16 @@ MONITOR_HOST=monitor.example.com
 ./scripts/start.sh
 ./scripts/stop.sh
 ./scripts/logs.sh
+./scripts/smoke.sh
 ./scripts/diagnose.sh
 docker compose ps
 ```
+
+`scripts/smoke.sh` sollte nach Deployments gruen durchlaufen. Es prueft API-Endpunkte, statische Frontend-Auslieferung, Security-Header, den Docker-Socket-Proxy-POST-Block und die Runtime-Haertung des `pi-monitor` Containers.
+
+## Security
+
+Der Monitor ist fuer den Betrieb hinter Traefik und Cloudflare Access gedacht. Cloudflare Access sollte auf den kompletten Host-Pfad `/*` angewendet werden, damit auch statische Assets und API-Aufrufe geschuetzt sind. Der Docker-Socket wird nicht direkt gemountet, sondern nur ueber `docker-socket-proxy` mit deaktivierten POST-Requests erreichbar gemacht.
 
 ## Konfiguration
 
