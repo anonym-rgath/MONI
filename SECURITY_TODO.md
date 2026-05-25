@@ -4,10 +4,9 @@ Diese Liste sammelt die Security-Findings aus dem Review, damit sie schrittweise
 
 ## Hoch
 
-- [ ] App/API absichern
-  - Aktuell haben Dashboard und API keine eigene Authentisierung.
-  - Cloudflare Access schuetzt nur den externen Pfad; intern erreichbare Services koennen die API weiterhin direkt ansprechen.
-  - Ziel: Entweder Cloudflare Access dauerhaft erzwingen und dokumentieren oder zusaetzliche App-eigene Auth einfuehren.
+- [x] App/API absichern
+  - Ausgangslage: Dashboard und API hatten keine eigene Authentisierung; Cloudflare Access schuetzte nur den externen Pfad.
+  - Erledigt: Cloudflare Access bleibt dokumentierte Primaerabsicherung; optional kann zusaetzliche Basic-Auth direkt im Monitor per `PI_MONITOR_BASIC_AUTH_USER` und `PI_MONITOR_BASIC_AUTH_PASSWORD` aktiviert werden.
 
 ## Mittel
 

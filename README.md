@@ -53,12 +53,24 @@ docker compose ps
 
 Der Monitor ist fuer den Betrieb hinter Traefik und Cloudflare Access gedacht. Cloudflare Access sollte auf den kompletten Host-Pfad `/*` angewendet werden, damit auch statische Assets und API-Aufrufe geschuetzt sind. Der Docker-Socket wird nicht direkt gemountet, sondern nur ueber `docker-socket-proxy` mit deaktivierten POST-Requests erreichbar gemacht.
 
+Optional kann eine zusaetzliche Basic-Auth direkt im Monitor aktiviert werden. Setze dafuer beide Werte in `.env`:
+
+```env
+PI_MONITOR_BASIC_AUTH_USER=admin
+PI_MONITOR_BASIC_AUTH_PASSWORD=change-me-long-random-secret
+```
+
+Wenn nur einer der beiden Werte gesetzt ist, startet der Container nicht. Interne Healthchecks ueber `127.0.0.1` bleiben erlaubt.
+`scripts/smoke.sh` zeigt an, ob diese zusaetzliche Auth-Schicht in der laufenden Container-Konfiguration aktiv ist.
+
 ## Konfiguration
 
 - `MONITOR_HOST`: Domain, auf die Traefik fuer den Monitor routet
 - `TRAEFIK_ENTRYPOINT`: Traefik-EntryPoint, standardmaessig `web`
 - `API_CORS_ORIGINS`: optionale CORS-Origin-Liste fuer direkte API-Zugriffe im Dev-Modus
 - `DOCKER_SOCKET_PROXY_IMAGE`: optionales Image-Pinning fuer den Docker-Socket-Proxy
+- `PI_MONITOR_BASIC_AUTH_USER`: optionaler Benutzer fuer zusaetzliche Basic-Auth
+- `PI_MONITOR_BASIC_AUTH_PASSWORD`: optionales Passwort fuer zusaetzliche Basic-Auth
 
 ## Abgrenzung zu PI-SETUP
 
