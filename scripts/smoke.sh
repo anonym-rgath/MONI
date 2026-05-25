@@ -101,14 +101,6 @@ printf '%s\n' "$headers" | grep -qi '^Permissions-Policy:' \
     || fail "Permissions-Policy Header fehlt"
 ok "Frontend antwortet mit Security-Headern"
 
-pi_monitor_env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' pi-monitor)"
-if printf '%s\n' "$pi_monitor_env" | grep -q '^PI_MONITOR_BASIC_AUTH_USER=.' \
-    && printf '%s\n' "$pi_monitor_env" | grep -q '^PI_MONITOR_BASIC_AUTH_PASSWORD=.'; then
-    ok "Zusaetzliche Basic-Auth ist konfiguriert"
-else
-    warn "Zusaetzliche Basic-Auth ist nicht konfiguriert; Cloudflare Access muss aktiv sein"
-fi
-
 post_status="$(
     compose_exec curl -sS -o /tmp/pi-monitor-proxy-post.out -w '%{http_code}' \
         -X POST http://docker-socket-proxy:2375/containers/create || true

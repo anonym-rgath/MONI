@@ -26,13 +26,11 @@ COPY backend/requirements-docker.txt ./backend/
 RUN pip install --no-cache-dir -r backend/requirements-docker.txt
 
 COPY backend/server.py ./backend/
-COPY docker-entrypoint.sh /usr/local/bin/pi-monitor-entrypoint
 
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
 RUN addgroup --system app \
     && adduser --system --ingroup app --home /app app \
-    && chmod +x /usr/local/bin/pi-monitor-entrypoint \
     && chown -R app:app /app
 
 # Nginx config
@@ -52,7 +50,6 @@ RUN echo 'server { \n\
     add_header Referrer-Policy "no-referrer" always; \n\
     add_header X-Frame-Options "DENY" always; \n\
     add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always; \n\
-    include /tmp/nginx-auth.conf; \n\
     \n\
     location / { \n\
         root /app/frontend/build; \n\
@@ -101,4 +98,4 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1/api/ || exit 1
 
-CMD ["/usr/local/bin/pi-monitor-entrypoint"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -49,8 +49,6 @@ services:
       - HOST_ETC=/host/etc
       - DOCKER_API_BASE=http://docker-socket-proxy:2375
       - API_CORS_ORIGINS=${API_CORS_ORIGINS:-}
-      - PI_MONITOR_BASIC_AUTH_USER=${PI_MONITOR_BASIC_AUTH_USER:-}
-      - PI_MONITOR_BASIC_AUTH_PASSWORD=${PI_MONITOR_BASIC_AUTH_PASSWORD:-}
     security_opt:
       - no-new-privileges:true
     healthcheck:

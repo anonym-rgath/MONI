@@ -6,7 +6,7 @@ Diese Liste sammelt die Security-Findings aus dem Review, damit sie schrittweise
 
 - [x] App/API absichern
   - Ausgangslage: Dashboard und API hatten keine eigene Authentisierung; Cloudflare Access schuetzte nur den externen Pfad.
-  - Erledigt: Cloudflare Access bleibt dokumentierte Primaerabsicherung; optional kann zusaetzliche Basic-Auth direkt im Monitor per `PI_MONITOR_BASIC_AUTH_USER` und `PI_MONITOR_BASIC_AUTH_PASSWORD` aktiviert werden.
+  - Erledigt/Architekturentscheidung: Cloudflare Access ist die verpflichtende Auth-Schicht am Edge und muss fuer `monitor.sau-index.de/*` gelten. Eine zusaetzliche Basic-Auth im Monitor wurde wegen schlechter UX wieder entfernt.
 
 ## Mittel
 
