@@ -35,7 +35,7 @@ RUN addgroup --system app \
 
 # Nginx config
 RUN echo 'server { \n\
-    listen 8080; \n\
+    listen 80; \n\
     server_name localhost; \n\
     access_log /dev/stdout; \n\
     error_log /dev/stderr warn; \n\
@@ -91,9 +91,9 @@ RUN mkdir -p /var/log/supervisor
 
 USER app
 
-EXPOSE 8080
+EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8080/api/ || exit 1
+    CMD curl -fsS http://127.0.0.1/api/ || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
