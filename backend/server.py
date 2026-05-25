@@ -221,7 +221,8 @@ def docker_request(endpoint: str, timeout: float = 2.0) -> Any:
 def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
     name = c.get('Names', ['/unknown'])[0].lstrip('/')
     state = c.get('State', 'unknown')
-    container_id = c.get('Id', '')[:12]
+    full_container_id = c.get('Id', '')
+    container_id = full_container_id[:12]
     created = c.get('Created', 0)
 
     uptime_seconds = 0
@@ -232,8 +233,8 @@ def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
         "id": container_id,
         "name": name,
         "status": state,
-        "cpu": {"usage_percent": 0.0},
-        "memory": {"usage_mb": 0, "limit_mb": 0, "usage_percent": 0.0},
+        "cpu": {"usage_percent": None, "available": False},
+        "memory": {"usage_mb": None, "limit_mb": None, "usage_percent": None, "available": False},
         "network": {"rx_bytes": 0, "tx_bytes": 0, "rx_rate_kbps": 0.0, "tx_rate_kbps": 0.0},
         "uptime_seconds": uptime_seconds,
         "restart_count": 0
@@ -243,41 +244,46 @@ def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
         return container
 
     stats = docker_request(
-        f"/containers/{container_id}/stats?stream=false&one-shot=true",
+        f"/containers/{full_container_id}/stats?stream=false",
         timeout=DOCKER_STATS_TIMEOUT
     )
     if stats:
         try:
-            cpu_delta = stats['cpu_stats']['cpu_usage']['total_usage'] - stats['precpu_stats']['cpu_usage']['total_usage']
-            system_delta = stats['cpu_stats']['system_cpu_usage'] - stats['precpu_stats']['system_cpu_usage']
-            num_cpus = stats['cpu_stats'].get('online_cpus', 1)
-            if system_delta > 0:
+            cpu_stats = stats.get('cpu_stats', {})
+            precpu_stats = stats.get('precpu_stats', {})
+            cpu_usage = cpu_stats.get('cpu_usage', {})
+            precpu_usage = precpu_stats.get('cpu_usage', {})
+            cpu_delta = cpu_usage.get('total_usage', 0) - precpu_usage.get('total_usage', 0)
+            system_delta = cpu_stats.get('system_cpu_usage', 0) - precpu_stats.get('system_cpu_usage', 0)
+            num_cpus = cpu_stats.get('online_cpus') or len(cpu_usage.get('percpu_usage') or []) or 1
+            if cpu_delta >= 0 and system_delta > 0:
                 container['cpu']['usage_percent'] = round((cpu_delta / system_delta) * num_cpus * 100, 1)
+                container['cpu']['available'] = True
         except Exception:
             pass
 
         try:
             mem_stats = stats.get('memory_stats', {})
-            mem_usage = mem_stats.get('usage', 0)
             stats_detail = mem_stats.get('stats', {})
-            if stats_detail:
-                inactive_file = stats_detail.get('inactive_file', 0)
-                cache = stats_detail.get('cache', 0)
-                mem_usage = max(0, mem_usage - inactive_file - cache)
-
-            if mem_usage == 0:
-                mem_usage = mem_stats.get('rss', 0)
-            if mem_usage == 0:
-                mem_usage = stats_detail.get('anon', 0)
+            mem_usage = mem_stats.get('usage')
+            if mem_usage is None:
+                mem_usage = mem_stats.get('rss') or stats_detail.get('anon') or stats_detail.get('total_rss')
+            else:
+                inactive_file = stats_detail.get('inactive_file') or stats_detail.get('total_inactive_file') or 0
+                adjusted_usage = mem_usage - inactive_file
+                if adjusted_usage > 0:
+                    mem_usage = adjusted_usage
 
             mem_limit = mem_stats.get('limit', 0)
             if mem_limit == 0 or mem_limit > 10**14:
                 mem_limit = get_memory_info()['total_mb'] * 1024 * 1024
 
-            container['memory']['usage_mb'] = mem_usage // (1024 * 1024)
-            container['memory']['limit_mb'] = mem_limit // (1024 * 1024)
-            if mem_limit > 0:
-                container['memory']['usage_percent'] = round((mem_usage / mem_limit) * 100, 1)
+            if mem_usage is not None:
+                container['memory']['usage_mb'] = mem_usage // (1024 * 1024)
+                container['memory']['limit_mb'] = mem_limit // (1024 * 1024) if mem_limit else None
+                if mem_limit > 0:
+                    container['memory']['usage_percent'] = round((mem_usage / mem_limit) * 100, 1)
+                container['memory']['available'] = True
         except Exception as e:
             logging.warning(f"Memory parse error for {name}: {e}")
 
@@ -288,7 +294,7 @@ def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
 
-    inspect = docker_request(f"/containers/{container_id}/json", timeout=DOCKER_INSPECT_TIMEOUT)
+    inspect = docker_request(f"/containers/{full_container_id}/json", timeout=DOCKER_INSPECT_TIMEOUT)
     if inspect:
         container['restart_count'] = inspect.get('RestartCount', 0)
 

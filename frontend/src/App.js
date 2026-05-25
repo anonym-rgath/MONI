@@ -104,6 +104,9 @@ const MiniChart = ({ data, dataKey, color }) => (
 // Container Card Component
 const ContainerCard = ({ container }) => {
   const isRunning = container.status === 'running';
+  const hasCpu = container.cpu?.available && container.cpu?.usage_percent !== null && container.cpu?.usage_percent !== undefined;
+  const hasMemory = container.memory?.available && container.memory?.usage_mb !== null && container.memory?.usage_mb !== undefined;
+  const memoryPercent = container.memory?.usage_percent || 0;
   
   return (
     <div 
@@ -128,6 +131,7 @@ const ContainerCard = ({ container }) => {
       {isRunning && (
         <div className="space-y-4">
           {/* CPU */}
+          {hasCpu && (
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-mono uppercase tracking-wider text-[#8A8A8A]">CPU</span>
@@ -145,12 +149,14 @@ const ContainerCard = ({ container }) => {
               />
             </div>
           </div>
+          )}
 
           {/* Memory */}
+          {hasMemory && (
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-mono uppercase tracking-wider text-[#8A8A8A]">RAM</span>
-              <span className="text-sm font-mono" style={{ color: getStatusColor(container.memory.usage_percent) }}>
+              <span className="text-sm font-mono" style={{ color: getStatusColor(memoryPercent) }}>
                 {container.memory.usage_mb} MB
               </span>
             </div>
@@ -158,12 +164,21 @@ const ContainerCard = ({ container }) => {
               <div 
                 className="h-full rounded-full transition-all duration-500"
                 style={{ 
-                  width: `${Math.min(100, container.memory.usage_percent)}%`,
-                  backgroundColor: getStatusColor(container.memory.usage_percent)
+                  width: `${Math.min(100, memoryPercent)}%`,
+                  backgroundColor: getStatusColor(memoryPercent)
                 }}
               />
             </div>
           </div>
+          )}
+
+          {!hasCpu && !hasMemory && (
+            <div className="py-3 border-y border-[#1A1A1A]">
+              <span className="text-xs font-mono uppercase tracking-wider text-[#8A8A8A]">
+                Docker Stats nicht verfuegbar
+              </span>
+            </div>
+          )}
 
           {/* Network & Uptime */}
           <div className="flex justify-between pt-2 border-t border-[#1A1A1A]">
