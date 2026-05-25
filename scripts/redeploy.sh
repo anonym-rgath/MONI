@@ -111,6 +111,11 @@ if [ -z "$MONITOR_HOST" ] || [ "$MONITOR_HOST" = "monitor.example.com" ]; then
     exit 1
 fi
 
+if grep -qE '^[[:space:]]*MONITOR_PORT=' "$ROOT_DIR/.env"; then
+    echo -e "${YELLOW}Hinweis: MONITOR_PORT ist veraltet und wird ignoriert.${NC}"
+    echo "Der Container hoert intern immer auf Port 80; Traefik routet ebenfalls auf Port 80."
+fi
+
 echo ""
 echo -e "${YELLOW}[3/5] pi-monitor neu bauen + starten...${NC}"
 if [ -n "$FORCE_RECREATE" ]; then

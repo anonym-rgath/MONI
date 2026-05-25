@@ -78,6 +78,8 @@ Wenn nur einer der beiden Werte gesetzt ist, startet der Container nicht. Intern
 - `PI_MONITOR_BASIC_AUTH_USER`: optionaler Benutzer fuer zusaetzliche Basic-Auth
 - `PI_MONITOR_BASIC_AUTH_PASSWORD`: optionales Passwort fuer zusaetzliche Basic-Auth
 
+`MONITOR_PORT` ist veraltet und wird nicht mehr verwendet. Der Container hoert intern immer auf Port 80; Traefik routet auf `traefik.http.services.pi-monitor.loadbalancer.server.port=80`.
+
 ## Abgrenzung zu PI-SETUP
 
 `PI-MONI` startet keinen Reverse Proxy und keine Infrastruktur-Dienste. Wenn der Monitor per Domain, Cloudflare Tunnel oder Traefik erreichbar sein soll, wird das im Projekt `PI-SETUP` verdrahtet.
