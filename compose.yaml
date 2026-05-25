@@ -34,8 +34,9 @@ services:
       - "80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.pi-monitor.rule=Host(`${MONITOR_HOST}`)"
-      - "traefik.http.routers.pi-monitor.entrypoints=${TRAEFIK_ENTRYPOINT:-web}"
+      - "traefik.http.routers.pi-monitor.rule=Host(`${MONITOR_HOST:?MONITOR_HOST muss in .env gesetzt sein}`)"
+      - "traefik.http.routers.pi-monitor.entrypoints=${TRAEFIK_ENTRYPOINT:?TRAEFIK_ENTRYPOINT muss in .env gesetzt sein}"
+      - "traefik.http.routers.pi-monitor.priority=100"
       - "traefik.http.services.pi-monitor.loadbalancer.server.port=80"
       - "traefik.docker.network=traefik-network"
     volumes:

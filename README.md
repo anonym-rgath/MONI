@@ -12,6 +12,7 @@ Dieses Projekt enthaelt nur den Pi Monitor, sein Frontend, sein Backend und die 
 - `scripts/start.sh`: Monitor bauen und starten
 - `scripts/stop.sh`: Monitor stoppen
 - `scripts/logs.sh`: Monitor-Logs verfolgen
+- `scripts/diagnose.sh`: Traefik-/Routing-/Container-Diagnose bei 404 oder fehlender Erreichbarkeit
 - `compose.yaml`: Runtime fuer Monitor plus eingeschraenkten Docker-Socket-Proxy
 
 ## Start
@@ -40,6 +41,7 @@ MONITOR_HOST=monitor.sau-index.de
 ./scripts/start.sh
 ./scripts/stop.sh
 ./scripts/logs.sh
+./scripts/diagnose.sh
 docker compose ps
 ```
 
