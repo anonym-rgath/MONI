@@ -15,16 +15,24 @@ Diese Liste sammelt die Security-Findings aus dem Review, damit sie schrittweise
   - Erledigt: Image nutzt den User `app`; Smoke-Test bestaetigt `Config.User=app`.
 
 - [ ] `docker-socket-proxy` nicht mehr als root betreiben
-  - Der Proxy ist durch `POST=0`, `read_only`, `cap_drop` und `no-new-privileges` gehaertet.
+  - Der Proxy ist durch `POST=0`, internes Netzwerk und `no-new-privileges` gehaertet.
   - Offen: Non-root Betrieb separat pruefen, da Zugriff auf `/var/run/docker.sock` von Socket-Rechten abhaengt.
 
-- [x] Container-Dateisystem haerten
-  - Erledigt: `read_only: true` fuer `pi-monitor` und `docker-socket-proxy`; notwendiger Runtime-Pfad `/tmp` liegt auf `tmpfs`.
-  - Smoke-Test fuer `pi-monitor` ist mit read-only Root-FS erfolgreich.
+- [x] `pi-monitor` Dateisystem haerten
+  - Erledigt: `read_only: true` fuer `pi-monitor`; notwendiger Runtime-Pfad `/tmp` liegt auf `tmpfs`.
+  - Smoke-Test ist mit read-only Root-FS erfolgreich.
 
-- [x] Linux Capabilities reduzieren
-  - Erledigt: `cap_drop: ["ALL"]` fuer `pi-monitor` und `docker-socket-proxy`.
-  - Smoke-Test fuer `pi-monitor` ist ohne zusaetzliche Capabilities erfolgreich.
+- [ ] `docker-socket-proxy` Dateisystem haerten
+  - Zurueckgestellt: `read_only`/`tmpfs` am Proxy kann auf dem Pi die Container-Anzeige brechen.
+  - Ziel: Separat mit Proxy-Healthcheck und direktem `/containers/json`-Test validieren.
+
+- [x] `pi-monitor` Linux Capabilities reduzieren
+  - Erledigt: `cap_drop: ["ALL"]` fuer `pi-monitor`.
+  - Smoke-Test ist ohne zusaetzliche Capabilities erfolgreich.
+
+- [ ] `docker-socket-proxy` Linux Capabilities reduzieren
+  - Zurueckgestellt: `cap_drop: ["ALL"]` am Proxy separat auf dem Pi validieren.
+  - Ziel: Erst wieder aktivieren, wenn die Container-Liste ueber den Proxy stabil funktioniert.
 
 - [ ] Docker- und Base-Images pinnen
   - `tecnativa/docker-socket-proxy:latest`, `node:20-alpine` und `python:3.11-slim` sind Floating Tags.

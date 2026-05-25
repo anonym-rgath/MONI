@@ -3,11 +3,6 @@ services:
     image: ${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest}
     container_name: docker-socket-proxy
     restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
-    cap_drop:
-      - ALL
     networks:
       - monitor-internal
     volumes:
