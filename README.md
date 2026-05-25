@@ -26,13 +26,13 @@ Das Startskript erstellt `.env` bei Bedarf aus `.env.example` und ergaenzt fehle
 Der Monitor ist danach ueber Traefik erreichbar:
 
 ```bash
-http://monitor.sau-index.de
+http://monitor.example.com
 ```
 
 Die Domain kann in `.env` angepasst werden:
 
 ```env
-MONITOR_HOST=monitor.sau-index.de
+MONITOR_HOST=monitor.example.com
 ```
 
 ## Betrieb
