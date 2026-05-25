@@ -1,0 +1,71 @@
+# Dependabot-Konfiguration fuer MONI
+# ----------------------------------
+# Drei Update-Streams: Python-Backend, NPM-Frontend, Docker-Base-Images.
+# Wochenrhythmus (sammelt PRs in einem Schwung), Major-Updates gruppiert,
+# Patches und Minor jeweils einzeln. Security-Updates laufen unabhaengig
+# vom Schedule sofort, sobald ein bekannter Fix verfuegbar ist.
+#
+# Auto-Merge bewusst NICHT eingerichtet. Jeder PR braucht manuelles Review,
+# damit Breaking-Changes nicht unbemerkt durchrutschen.
+
+version: 2
+updates:
+
+  # --- Backend: Python (pip) ----------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+    commit-message:
+      prefix: "deps(backend)"
+      include: "scope"
+    groups:
+      backend-major:
+        update-types:
+          - "major"
+
+  # --- Frontend: NPM/Yarn -------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    commit-message:
+      prefix: "deps(frontend)"
+      include: "scope"
+    groups:
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "react-scripts"
+      frontend-major:
+        update-types:
+          - "major"
+        exclude-patterns:
+          - "react"
+          - "react-dom"
+          - "react-scripts"
+
+  # --- Docker: Root Dockerfile -------------------------------------------
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
