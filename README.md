@@ -12,6 +12,7 @@ Dieses Projekt enthaelt nur den Pi Monitor, sein Frontend, sein Backend und die 
 - `scripts/start.sh`: Monitor bauen und starten
 - `scripts/stop.sh`: Monitor stoppen
 - `scripts/logs.sh`: Monitor-Logs verfolgen
+- `scripts/redeploy.sh`: Nach `git pull` neu bauen, starten und pruefen
 - `scripts/smoke.sh`: Nach-Deploy-Check fuer API, Frontend, Security-Header und Runtime-Haertung
 - `scripts/diagnose.sh`: Traefik-/Routing-/Container-Diagnose bei 404 oder fehlender Erreichbarkeit
 - `compose.yaml`: Runtime fuer Monitor plus eingeschraenkten Docker-Socket-Proxy
@@ -40,6 +41,7 @@ MONITOR_HOST=monitor.example.com
 
 ```bash
 ./scripts/start.sh
+./scripts/redeploy.sh
 ./scripts/stop.sh
 ./scripts/logs.sh
 ./scripts/smoke.sh
@@ -48,6 +50,8 @@ docker compose ps
 ```
 
 `scripts/smoke.sh` sollte nach Deployments gruen durchlaufen. Es prueft API-Endpunkte, statische Frontend-Auslieferung, Security-Header, den Docker-Socket-Proxy-POST-Block und die Runtime-Haertung des `pi-monitor` Containers.
+
+`scripts/redeploy.sh` nutzt `git pull --ff-only`, baut `pi-monitor` neu, startet den Container und fuehrt danach automatisch `scripts/smoke.sh` aus. Mit `--force` wird ein Recreate erzwungen; mit `--no-smoke` wird der Smoke-Check uebersprungen.
 
 ## Security
 
