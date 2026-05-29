@@ -49,6 +49,9 @@ services:
       - HOST_ETC=/host/etc
       - DOCKER_API_BASE=http://docker-socket-proxy:2375
       - API_CORS_ORIGINS=${API_CORS_ORIGINS:-}
+      - DOCKER_STATS_TIMEOUT=${DOCKER_STATS_TIMEOUT:-2.5}
+      - DOCKER_INSPECT_TIMEOUT=${DOCKER_INSPECT_TIMEOUT:-1.0}
+      - MAX_DOCKER_WORKERS=${MAX_DOCKER_WORKERS:-8}
     security_opt:
       - no-new-privileges:true
     healthcheck:

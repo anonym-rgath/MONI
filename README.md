@@ -66,8 +66,18 @@ Der Monitor ist fuer den Betrieb hinter Traefik und Cloudflare Access gedacht. C
 - `API_CORS_ORIGINS`: optionale CORS-Origin-Liste fuer direkte API-Zugriffe im Dev-Modus
 - `DOCKER_SOCKET_PROXY_IMAGE`: optionales Image-Pinning fuer den Docker-Socket-Proxy
 
+Optionale Feintuning-Parameter (Defaults greifen, wenn nicht gesetzt):
+
+- `DOCKER_STATS_TIMEOUT`: Timeout in Sekunden je Docker-Stats-Abfrage (Default `2.5`)
+- `DOCKER_INSPECT_TIMEOUT`: Timeout in Sekunden je Container-Inspect (Default `1.0`)
+- `MAX_DOCKER_WORKERS`: parallele Worker fuer Container-Metriken (Default `8`)
+
 `MONITOR_PORT` ist veraltet und wird nicht mehr verwendet. Der Container hoert intern immer auf Port 80; Traefik routet auf `traefik.http.services.pi-monitor.loadbalancer.server.port=80`.
 
 ## Abgrenzung zu PI-SETUP
 
 `PI-MONI` startet keinen Reverse Proxy und keine Infrastruktur-Dienste. Wenn der Monitor per Domain, Cloudflare Tunnel oder Traefik erreichbar sein soll, wird das im Projekt `PI-SETUP` verdrahtet.
+
+## Lizenz
+
+Apache License 2.0. Copyright 2026 Robin Gathmann. Den vollstaendigen Lizenztext enthaelt die Datei `LICENSE`.
