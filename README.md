@@ -65,14 +65,14 @@ Alles laeuft in **einem** Multi-Stage-Image. Nginx liefert das statische
 React-Build aus und reverse-proxyt `/api` an das FastAPI-Backend; beide Prozesse
 werden von Supervisor verwaltet. Der Docker-Socket wird niemals direkt in den
 Monitor gemountet, sondern nur lesend ueber einen restriktiven Proxy erreichbar
-gemacht.
+gemacht, der zentral in `PI-SETUP` betrieben wird.
 
 ```
 Browser ──HTTPS──▶ Cloudflare Access ──▶ Traefik ──▶ pi-monitor (:80, nginx)
                                                         ├── /      ▶ React-Build (statisch)
                                                         └── /api   ▶ uvicorn :8001 (FastAPI)
                                                                        ├── /proc, /sys, /etc/hostname  (read-only)
-                                                                       └── docker-socket-proxy :2375   (internes Netz)
+                                                                       └── docker-socket-proxy :2375   (in PI-SETUP, internes Netz)
                                                                               └── /var/run/docker.sock  (read-only, POST=0)
 ```
 
@@ -81,14 +81,18 @@ Browser ──HTTPS──▶ Cloudflare Access ──▶ Traefik ──▶ pi-mo
 | `frontend/`           | React-Dashboard (CRA + CRACO + Tailwind)                       |
 | `backend/`            | FastAPI-Backend, liest `/proc`, `/sys` und die Docker-API      |
 | `nginx`               | Statische Auslieferung + Reverse-Proxy + Security-Header       |
-| `docker-socket-proxy` | Gekapselter, read-only Zugriff auf den Docker-Socket           |
+| `docker-socket-proxy` | Read-only Zugriff auf den Docker-Socket – **extern, Teil von `PI-SETUP`** |
 
 ---
 
 ## Voraussetzungen
 
 - Docker und das `docker compose`-Plugin
-- Ein externes Docker-Netzwerk `traefik-network` (von der Infrastruktur bereitgestellt)
+- Zwei externe Docker-Netzwerke, von der Infrastruktur (`PI-SETUP`) bereitgestellt:
+  - `traefik-network` – Routing am Edge
+  - `socket-proxy-network` – interner Zugriff auf den Docker-Socket-Proxy
+- Ein laufender `docker-socket-proxy` (Teil von `PI-SETUP`), erreichbar als
+  `docker-socket-proxy:2375` im `socket-proxy-network`
 - Fuer den produktiven Betrieb: Traefik als Reverse-Proxy und Cloudflare Access
   als Authentisierung am Edge (siehe [Sicherheit](#sicherheit))
 
@@ -103,7 +107,6 @@ Alle Werte werden ueber `.env` gesetzt (Vorlage: `.env.example`).
 | `MONITOR_HOST`              |   ja    | –                                | Domain, auf die Traefik den Monitor routet                |
 | `TRAEFIK_ENTRYPOINT`        |   ja    | `web`                            | Traefik-EntryPoint                                        |
 | `API_CORS_ORIGINS`          |  nein   | leer                             | CORS-Origin-Liste fuer direkte API-Zugriffe (Dev)         |
-| `DOCKER_SOCKET_PROXY_IMAGE` |  nein   | gepinntes `tecnativa`-Image      | Image-Pinning fuer den Docker-Socket-Proxy                |
 
 **Optionale Feintuning-Parameter** (Defaults greifen, wenn nicht gesetzt):
 
@@ -178,13 +181,15 @@ API-Aufrufe geschuetzt sind.
 - Non-root-Betrieb als User `app`
 - `read_only`-Root-Dateisystem, beschreibbarer Pfad nur als `tmpfs` (`/tmp`)
 - `cap_drop: ALL` und `no-new-privileges`
-- Base- und Proxy-Images per `@sha256`-Digest gepinnt (Dependabot haelt sie aktuell)
+- Base-Images per `@sha256`-Digest gepinnt (Dependabot haelt sie aktuell)
 - HTTP-Security-Header: Content-Security-Policy, X-Content-Type-Options,
   Referrer-Policy, X-Frame-Options, Permissions-Policy
 
-**Docker-Socket.** Der Socket wird nicht direkt in den Monitor gemountet, sondern
-nur ueber `docker-socket-proxy` mit `POST=0` in einem rein internen Netz
-erreichbar gemacht (read-only Socket-Mount).
+**Docker-Socket.** Der Socket wird nicht direkt in den Monitor gemountet. Der
+Zugriff laeuft ausschliesslich ueber den `docker-socket-proxy` (`POST=0`,
+read-only Socket-Mount), der zentral in `PI-SETUP` betrieben und nur ueber das
+interne `socket-proxy-network` erreichbar ist. `scripts/smoke.sh` verifiziert
+diese Absicherung nach jedem Deploy.
 
 ---
 
@@ -231,7 +236,7 @@ Damit erhalten auch die woechentlichen **Dependabot**-PRs
 │   ├── workflows/ci.yml         # CI: Tests + Image-Build + Boot-Smoke
 │   └── dependabot.yml
 ├── Dockerfile                   # Multi-Stage-Image (nginx + supervisor + uvicorn)
-├── compose.yaml                 # Monitor + docker-socket-proxy
+├── compose.yaml                 # Monitor-Service (Socket-Proxy + Netze: PI-SETUP)
 ├── .env.example
 └── LICENSE
 ```
