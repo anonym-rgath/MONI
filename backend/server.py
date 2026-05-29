@@ -218,7 +218,7 @@ def docker_request(endpoint: str, timeout: float = 2.0) -> Any:
         logging.warning(f"Docker API error: {e}")
     return None
 
-def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
+def build_container_metrics(c: Dict[str, Any], host_total_mem_bytes: int = 0) -> Dict[str, Any]:
     name = c.get('Names', ['/unknown'])[0].lstrip('/')
     state = c.get('State', 'unknown')
     full_container_id = c.get('Id', '')
@@ -285,7 +285,10 @@ def build_container_metrics(c: Dict[str, Any]) -> Dict[str, Any]:
 
             mem_limit = mem_stats.get('limit', 0)
             if mem_limit == 0 or mem_limit > 10**14:
-                mem_limit = get_memory_info()['total_mb'] * 1024 * 1024
+                # Container ohne eigenes Memory-Limit darf den ganzen Host nutzen.
+                # host_total_mem_bytes wird einmal pro Request ermittelt und
+                # durchgereicht, statt /proc/meminfo je Container neu zu parsen.
+                mem_limit = host_total_mem_bytes
 
             if mem_usage is not None:
                 container['memory']['usage_mb'] = mem_usage // (1024 * 1024)
@@ -341,9 +344,13 @@ def get_containers_with_status() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         if not data:
             return containers, docker_status
 
+        # Host-Gesamtspeicher einmal pro Request ermitteln und als Fallback fuer
+        # Container ohne eigenes Memory-Limit an alle Worker durchreichen.
+        host_total_mem_bytes = get_memory_info()['total_mb'] * 1024 * 1024
+
         worker_count = max(1, min(MAX_DOCKER_WORKERS, len(data)))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_map = {executor.submit(build_container_metrics, c): c for c in data}
+            future_map = {executor.submit(build_container_metrics, c, host_total_mem_bytes): c for c in data}
             for future in as_completed(future_map):
                 try:
                     containers.append(future.result())
