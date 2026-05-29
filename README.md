@@ -1,83 +1,295 @@
-# PI-MONI
+# Pi Monitor
 
-Pi-Monitor-Repository fuer den Raspberry Pi.
+> Schlankes Echtzeit-Monitoring-Dashboard fuer einen Raspberry Pi: Host-Metriken
+> und Docker-Container-Status, ausgeliefert als ein einzelner, gehaerteter Container.
 
-Dieses Projekt enthaelt nur den Pi Monitor, sein Frontend, sein Backend und die Start-/Betriebsskripte. Infrastruktur wie Traefik, Tunnel, DNS, Backups oder allgemeines Pi-Setup liegt im separaten Projekt `PI-SETUP`.
+[![CI](https://github.com/anonym-rgath/MONI/actions/workflows/ci.yml/badge.svg)](https://github.com/anonym-rgath/MONI/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-## Inhalt
+Das Projekt enthaelt ausschliesslich den Monitor selbst (Frontend, Backend,
+Betriebs-Skripte). Infrastruktur wie Traefik, Cloudflare Tunnel, DNS oder
+Backups liegt im separaten Projekt [`PI-SETUP`](#abgrenzung-zu-pi-setup).
 
-- `frontend/`: React-Frontend
-- `backend/`: FastAPI-Backend
-- `Dockerfile`: Multi-stage Image fuer Frontend, Backend und Nginx
-- `scripts/start.sh`: Monitor bauen und starten
-- `scripts/stop.sh`: Monitor stoppen
-- `scripts/logs.sh`: Monitor-Logs verfolgen
-- `scripts/redeploy.sh`: Nach `git pull` neu bauen, starten und pruefen
-- `scripts/smoke.sh`: Nach-Deploy-Check fuer API, Frontend, Security-Header und Runtime-Haertung
-- `scripts/diagnose.sh`: Traefik-/Routing-/Container-Diagnose bei 404 oder fehlender Erreichbarkeit
-- `compose.yaml`: Runtime fuer Monitor plus eingeschraenkten Docker-Socket-Proxy
+---
 
-## Start
+## Inhaltsverzeichnis
+
+- [Features](#features)
+- [Architektur](#architektur)
+- [Voraussetzungen](#voraussetzungen)
+- [Schnellstart](#schnellstart)
+- [Konfiguration](#konfiguration)
+- [API](#api)
+- [Betrieb](#betrieb)
+- [Sicherheit](#sicherheit)
+- [Entwicklung & Tests](#entwicklung--tests)
+- [Projektstruktur](#projektstruktur)
+- [Roadmap / Bekannte Einschraenkungen](#roadmap--bekannte-einschraenkungen)
+- [Abgrenzung zu PI-SETUP](#abgrenzung-zu-pi-setup)
+- [Lizenz](#lizenz)
+
+---
+
+## Features
+
+**Host-Metriken**
+
+- CPU: Auslastung, Kernanzahl, aktueller Takt
+- RAM inkl. Swap
+- Disk (Root-Dateisystem)
+- Load Average (1 / 5 / 15 Minuten)
+- Temperatur (Thermal Zone)
+- Uptime, laufende Prozesse, Hostname
+
+**Docker-Container** (pro Container)
+
+- Status und Health
+- CPU- und RAM-Nutzung
+- Netzwerk-Durchsatz (rx / tx)
+- Uptime und Restart-Count
+
+**Dashboard**
+
+- Live-Aktualisierung mit waehlbarem Intervall (2 / 3 / 5 / 10 s)
+- CPU- und RAM-Verlaufscharts
+- Reliability-Strip: aggregierte Alerts (Schwellen fuer CPU/RAM/Disk/Temperatur,
+  gestoppte oder unhealthy Container, Docker-API-Status)
+
+**Robuste API**
+
+- Lesefehler werden ueber `available`-Flags und eine `warnings`-Liste sichtbar
+  gemacht, statt sie als falsche Nullwerte zu kaschieren.
+
+---
+
+## Architektur
+
+Alles laeuft in **einem** Multi-Stage-Image. Nginx liefert das statische
+React-Build aus und reverse-proxyt `/api` an das FastAPI-Backend; beide Prozesse
+werden von Supervisor verwaltet. Der Docker-Socket wird niemals direkt in den
+Monitor gemountet, sondern nur lesend ueber einen restriktiven Proxy erreichbar
+gemacht.
+
+```
+Browser ──HTTPS──▶ Cloudflare Access ──▶ Traefik ──▶ pi-monitor (:80, nginx)
+                                                        ├── /      ▶ React-Build (statisch)
+                                                        └── /api   ▶ uvicorn :8001 (FastAPI)
+                                                                       ├── /proc, /sys, /etc/hostname  (read-only)
+                                                                       └── docker-socket-proxy :2375   (internes Netz)
+                                                                              └── /var/run/docker.sock  (read-only, POST=0)
+```
+
+| Komponente            | Aufgabe                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `frontend/`           | React-Dashboard (CRA + CRACO + Tailwind)                       |
+| `backend/`            | FastAPI-Backend, liest `/proc`, `/sys` und die Docker-API      |
+| `nginx`               | Statische Auslieferung + Reverse-Proxy + Security-Header       |
+| `docker-socket-proxy` | Gekapselter, read-only Zugriff auf den Docker-Socket           |
+
+---
+
+## Voraussetzungen
+
+- Docker und das `docker compose`-Plugin
+- Ein externes Docker-Netzwerk `traefik-network` (von der Infrastruktur bereitgestellt)
+- Fuer den produktiven Betrieb: Traefik als Reverse-Proxy und Cloudflare Access
+  als Authentisierung am Edge (siehe [Sicherheit](#sicherheit))
+
+---
+
+## Schnellstart
 
 ```bash
 ./scripts/start.sh
 ```
 
-Das Startskript erstellt `.env` bei Bedarf aus `.env.example` und ergaenzt fehlende Werte in bestehenden `.env`-Dateien.
+Das Startskript legt bei Bedarf `.env` aus `.env.example` an und ergaenzt
+fehlende Schluessel in bestehenden `.env`-Dateien. Anschliessend ist der Monitor
+ueber Traefik erreichbar:
 
-Der Monitor ist danach ueber Traefik erreichbar:
-
-```bash
-http://monitor.example.com
+```
+http://<MONITOR_HOST>
 ```
 
-Die Domain kann in `.env` angepasst werden:
+Die Domain wird in `.env` gesetzt:
 
 ```env
 MONITOR_HOST=monitor.example.com
 ```
 
-Fuer den produktiven Betrieb muss `MONITOR_HOST` auf die echte Traefik-Domain gesetzt werden. Die Scripts brechen mit dem Beispielwert `monitor.example.com` ab, damit kein gesunder Container mit falscher Traefik-Route deployt wird.
+> **Hinweis:** Fuer den produktiven Betrieb muss `MONITOR_HOST` auf die echte
+> Traefik-Domain zeigen. Die Skripte brechen mit dem Beispielwert
+> `monitor.example.com` ab, damit kein Container mit falscher Route deployt wird.
 
-## Betrieb
-
-```bash
-./scripts/start.sh
-./scripts/redeploy.sh
-./scripts/stop.sh
-./scripts/logs.sh
-./scripts/smoke.sh
-./scripts/diagnose.sh
-docker compose ps
-```
-
-`scripts/smoke.sh` sollte nach Deployments gruen durchlaufen. Es prueft API-Endpunkte, statische Frontend-Auslieferung, Security-Header, den Docker-Socket-Proxy-POST-Block und die Runtime-Haertung des `pi-monitor` Containers.
-
-`scripts/redeploy.sh` nutzt `git pull --ff-only`, baut `pi-monitor` neu, startet den Container und fuehrt danach automatisch `scripts/smoke.sh` aus. Mit `--force` wird ein Recreate erzwungen; mit `--no-smoke` wird der Smoke-Check uebersprungen.
-
-## Security
-
-Der Monitor ist fuer den Betrieb hinter Traefik und Cloudflare Access gedacht. Cloudflare Access muss auf den kompletten Host-Pfad `/*` angewendet werden, damit statische Assets und API-Aufrufe geschuetzt sind. Der Monitor selbst erzwingt keine eigene Login-Maske; Authentisierung gehoert in diesem Setup an den Edge. Der Docker-Socket wird nicht direkt gemountet, sondern nur ueber `docker-socket-proxy` mit deaktivierten POST-Requests erreichbar gemacht.
+---
 
 ## Konfiguration
 
-- `MONITOR_HOST`: Domain, auf die Traefik fuer den Monitor routet
-- `TRAEFIK_ENTRYPOINT`: Traefik-EntryPoint, standardmaessig `web`
-- `API_CORS_ORIGINS`: optionale CORS-Origin-Liste fuer direkte API-Zugriffe im Dev-Modus
-- `DOCKER_SOCKET_PROXY_IMAGE`: optionales Image-Pinning fuer den Docker-Socket-Proxy
+Alle Werte werden ueber `.env` gesetzt (Vorlage: `.env.example`).
 
-Optionale Feintuning-Parameter (Defaults greifen, wenn nicht gesetzt):
+| Variable                    | Pflicht | Default                          | Beschreibung                                              |
+| --------------------------- | :-----: | -------------------------------- | --------------------------------------------------------- |
+| `MONITOR_HOST`              |   ja    | –                                | Domain, auf die Traefik den Monitor routet                |
+| `TRAEFIK_ENTRYPOINT`        |   ja    | `web`                            | Traefik-EntryPoint                                        |
+| `API_CORS_ORIGINS`          |  nein   | leer                             | CORS-Origin-Liste fuer direkte API-Zugriffe (Dev)         |
+| `DOCKER_SOCKET_PROXY_IMAGE` |  nein   | gepinntes `tecnativa`-Image      | Image-Pinning fuer den Docker-Socket-Proxy                |
 
-- `DOCKER_STATS_TIMEOUT`: Timeout in Sekunden je Docker-Stats-Abfrage (Default `2.5`)
-- `DOCKER_INSPECT_TIMEOUT`: Timeout in Sekunden je Container-Inspect (Default `1.0`)
-- `MAX_DOCKER_WORKERS`: parallele Worker fuer Container-Metriken (Default `8`)
+**Optionale Feintuning-Parameter** (Defaults greifen, wenn nicht gesetzt):
 
-`MONITOR_PORT` ist veraltet und wird nicht mehr verwendet. Der Container hoert intern immer auf Port 80; Traefik routet auf `traefik.http.services.pi-monitor.loadbalancer.server.port=80`.
+| Variable                 | Default | Beschreibung                                  |
+| ------------------------ | ------- | --------------------------------------------- |
+| `DOCKER_STATS_TIMEOUT`   | `2.5`   | Timeout (Sek.) je Docker-Stats-Abfrage        |
+| `DOCKER_INSPECT_TIMEOUT` | `1.0`   | Timeout (Sek.) je Container-Inspect           |
+| `MAX_DOCKER_WORKERS`     | `8`     | Parallele Worker fuer Container-Metriken      |
+
+> `MONITOR_PORT` ist veraltet und wird ignoriert. Der Container hoert intern
+> immer auf Port 80; Traefik routet ebenfalls auf Port 80.
+
+---
+
+## API
+
+Alle Endpunkte liegen unter dem Praefix `/api`.
+
+| Methode | Pfad                      | Beschreibung                                      |
+| ------- | ------------------------- | ------------------------------------------------- |
+| `GET`   | `/api/`                   | Health-Check (`{"status": "live"}`)               |
+| `GET`   | `/api/metrics/host`       | Host-Metriken inkl. `warnings`                    |
+| `GET`   | `/api/metrics/containers` | Liste aller Docker-Container                      |
+| `GET`   | `/api/metrics/all`        | Kombiniert: `host`, `containers`, `docker`-Status |
+
+Host-Metriken tragen pro Block ein `available`-Flag und melden Lesefehler
+gesammelt in `host.warnings`, z. B.:
+
+```json
+{
+  "memory": { "usage_percent": 24.5, "available": true },
+  "temperature": { "celsius": 0.0, "available": false },
+  "warnings": ["Temperatur nicht lesbar"]
+}
+```
+
+---
+
+## Betrieb
+
+| Skript                  | Zweck                                                                        |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `scripts/start.sh`      | Image bauen und Monitor starten                                              |
+| `scripts/redeploy.sh`   | `git pull --ff-only`, neu bauen, starten und Smoke-Check ausfuehren          |
+| `scripts/stop.sh`       | Monitor stoppen                                                              |
+| `scripts/logs.sh`       | Logs verfolgen                                                               |
+| `scripts/smoke.sh`      | Nach-Deploy-Check: API, Frontend, Security-Header, Proxy-Block, Haertung     |
+| `scripts/diagnose.sh`   | Traefik-/Routing-/Container-Diagnose bei 404 oder fehlender Erreichbarkeit   |
+
+```bash
+./scripts/redeploy.sh            # Standard: pull + build + smoke
+./scripts/redeploy.sh --force    # Container-Recreate erzwingen
+./scripts/redeploy.sh --no-smoke # Smoke-Check ueberspringen
+```
+
+`scripts/smoke.sh` sollte nach jedem Deployment gruen durchlaufen. Es prueft die
+Compose-Konfiguration, alle API-Endpunkte, die statische Frontend-Auslieferung,
+die Security-Header, den POST-Block des Docker-Socket-Proxys und die
+Runtime-Haertung des `pi-monitor`-Containers.
+
+---
+
+## Sicherheit
+
+**Authentisierung am Edge.** Der Monitor bringt bewusst keine eigene Login-Maske
+mit. Authentisierung erfolgt ueber **Cloudflare Access**, das auf den kompletten
+Host-Pfad `/*` angewendet werden muss, damit sowohl statische Assets als auch
+API-Aufrufe geschuetzt sind.
+
+**Container-Haertung** (per `scripts/smoke.sh` verifiziert):
+
+- Non-root-Betrieb als User `app`
+- `read_only`-Root-Dateisystem, beschreibbarer Pfad nur als `tmpfs` (`/tmp`)
+- `cap_drop: ALL` und `no-new-privileges`
+- Base- und Proxy-Images per `@sha256`-Digest gepinnt (Dependabot haelt sie aktuell)
+- HTTP-Security-Header: Content-Security-Policy, X-Content-Type-Options,
+  Referrer-Policy, X-Frame-Options, Permissions-Policy
+
+**Docker-Socket.** Der Socket wird nicht direkt in den Monitor gemountet, sondern
+nur ueber `docker-socket-proxy` mit `POST=0` in einem rein internen Netz
+erreichbar gemacht (read-only Socket-Mount).
+
+---
+
+## Entwicklung & Tests
+
+Backend-Unit-Tests (pytest) decken die nicht-triviale Parsing- und Rechenlogik ab
+(`/proc`-Parsing, Docker-Stats-Auswertung, Aggregation, API-Struktur):
+
+```bash
+cd backend
+python -m pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+```
+
+Die **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) laeuft bei
+jedem Push und Pull Request:
+
+1. **Backend-Tests** mit pytest
+2. **Image-Build** (deckt `yarn build` inkl. ESLint und `pip install` ab)
+3. **Boot-Smoke**: Container starten und `/api/` pruefen
+
+Damit erhalten auch die woechentlichen **Dependabot**-PRs
+([`.github/dependabot.yml`](.github/dependabot.yml)) automatisch ein Build-Gate.
+
+---
+
+## Projektstruktur
+
+```
+.
+├── backend/
+│   ├── server.py                # FastAPI-App: Host- und Container-Metriken
+│   ├── requirements-docker.txt  # Laufzeit-Abhaengigkeiten
+│   ├── requirements-dev.txt     # Test-Abhaengigkeiten
+│   └── tests/                   # pytest-Unit-Tests
+├── frontend/                    # React-Dashboard (CRA + CRACO + Tailwind)
+│   ├── src/
+│   └── package.json
+├── scripts/                     # Betriebs-Skripte (start/stop/redeploy/smoke/...)
+├── .github/
+│   ├── workflows/ci.yml         # CI: Tests + Image-Build + Boot-Smoke
+│   └── dependabot.yml
+├── Dockerfile                   # Multi-Stage-Image (nginx + supervisor + uvicorn)
+├── compose.yaml                 # Monitor + docker-socket-proxy
+├── .env.example
+└── LICENSE
+```
+
+---
+
+## Roadmap / Bekannte Einschraenkungen
+
+Offene, bewusst zurueckgestellte Punkte (vor allem die schrittweise Haertung des
+Proxys, die direkt auf dem Pi validiert werden muss):
+
+- **Docker-Socket-Proxy weiter haerten** – Non-root-Betrieb, `read_only`,
+  `cap_drop: ALL`; jeweils auf dem Pi mit Proxy-Healthcheck verifizieren, da der
+  Socket-Zugriff sonst die Container-Anzeige brechen kann.
+- **Host-Mounts minimieren** – pruefen, ob alle `/proc`-, `/sys`- und
+  `/etc/hostname`-Mounts noetig sind, und so klein wie moeglich halten.
+- **Frontend-Toolchain modernisieren** – Migration von `react-scripts` (CRA) auf
+  eine gepflegte Build-Toolchain (z. B. Vite) pruefen.
+- **Lokalen Compose-Betrieb robuster machen** – ohne externes `traefik-network`
+  schlaegt der Start lokal fehl; ein dokumentiertes Override bereitstellen.
+
+---
 
 ## Abgrenzung zu PI-SETUP
 
-`PI-MONI` startet keinen Reverse Proxy und keine Infrastruktur-Dienste. Wenn der Monitor per Domain, Cloudflare Tunnel oder Traefik erreichbar sein soll, wird das im Projekt `PI-SETUP` verdrahtet.
+`PI-MONI` startet keinen Reverse-Proxy und keine Infrastruktur-Dienste. Wenn der
+Monitor per Domain, Cloudflare Tunnel oder Traefik erreichbar sein soll, wird das
+im Projekt `PI-SETUP` verdrahtet.
+
+---
 
 ## Lizenz
 
-Apache License 2.0. Copyright 2026 Robin Gathmann. Den vollstaendigen Lizenztext enthaelt die Datei `LICENSE`.
+Apache License 2.0. Copyright 2026 Robin Gathmann. Den vollstaendigen Lizenztext
+enthaelt die Datei [`LICENSE`](LICENSE).
