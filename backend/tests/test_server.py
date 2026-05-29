@@ -49,6 +49,7 @@ def test_get_memory_info_parses_meminfo(tmp_path, monkeypatch):
     assert 0 < mem["usage_percent"] < 100
     assert mem["swap_total_mb"] == 1000000 // 1024
     assert mem["swap_used_mb"] == (1000000 - 800000) // 1024
+    assert mem["available"] is True
 
 
 def test_get_memory_info_handles_missing_file(tmp_path, monkeypatch):
@@ -56,6 +57,7 @@ def test_get_memory_info_handles_missing_file(tmp_path, monkeypatch):
     mem = server.get_memory_info()
     assert mem["total_mb"] == 0
     assert mem["usage_percent"] == 0
+    assert mem["available"] is False
 
 
 def test_get_cpu_usage_first_call_zero_then_delta(tmp_path, monkeypatch):
@@ -78,7 +80,7 @@ def test_get_load_average(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "HOST_PROC", str(tmp_path))
 
     load = server.get_load_average()
-    assert load == {"1min": 0.5, "5min": 0.75, "15min": 1.0}
+    assert load == {"1min": 0.5, "5min": 0.75, "15min": 1.0, "available": True}
 
 
 def test_get_uptime_hours(tmp_path, monkeypatch):
@@ -91,7 +93,7 @@ def test_get_temperature(tmp_path, monkeypatch):
     zone = tmp_path / "class" / "thermal" / "thermal_zone0"
     write(str(zone / "temp"), "52123\n")
     monkeypatch.setattr(server, "HOST_SYS", str(tmp_path))
-    assert server.get_temperature() == 52.1
+    assert server.get_temperature() == {"celsius": 52.1, "available": True}
 
 
 # --------------------------------------------------------------------------
@@ -256,5 +258,27 @@ def test_api_host_metrics_structure():
     resp = client.get("/api/metrics/host")
     assert resp.status_code == 200
     body = resp.json()
-    for key in ("cpu", "memory", "disk", "load_average", "temperature", "uptime_hours"):
+    for key in ("cpu", "memory", "disk", "load_average", "temperature", "uptime_hours", "warnings"):
         assert key in body
+    assert isinstance(body["warnings"], list)
+
+
+def test_build_host_metrics_aggregates_warnings(monkeypatch):
+    # Nur der Speicher ist nicht lesbar -> genau eine passende Warnung,
+    # available-Flag wird durchgereicht, die anderen lesen sauber.
+    monkeypatch.setattr(server, "get_memory_info", lambda: {"usage_percent": 0, "available": False})
+    monkeypatch.setattr(server, "get_disk_info", lambda: {"usage_percent": 50, "available": True})
+    monkeypatch.setattr(server, "get_load_average", lambda: {"1min": 0.1, "available": True})
+    monkeypatch.setattr(server, "get_temperature", lambda: {"celsius": 45.0, "available": True})
+    monkeypatch.setattr(server, "get_cpu_usage", lambda: 5.0)
+    monkeypatch.setattr(server, "get_cpu_info", lambda: {"cores": 4, "frequency_mhz": 1500})
+    monkeypatch.setattr(server, "get_uptime", lambda: 1.0)
+    monkeypatch.setattr(server, "get_process_count", lambda: 100)
+    monkeypatch.setattr(server, "get_hostname", lambda: "pi")
+
+    host = server.build_host_metrics()
+
+    assert host["memory"]["available"] is False
+    assert "Host-Speicher nicht lesbar" in host["warnings"]
+    assert "Host-Disk nicht lesbar" not in host["warnings"]
+    assert len(host["warnings"]) == 1

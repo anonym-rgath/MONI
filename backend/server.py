@@ -87,17 +87,18 @@ def get_memory_info() -> Dict[str, Any]:
         swap_percent = round((swap_used / swap_total) * 100, 1) if swap_total > 0 else 0
         
         return {
-            "total_mb": total, 
-            "used_mb": used, 
-            "available_mb": available, 
+            "total_mb": total,
+            "used_mb": used,
+            "available_mb": available,
             "usage_percent": percent,
             "swap_total_mb": swap_total,
             "swap_used_mb": swap_used,
-            "swap_percent": swap_percent
+            "swap_percent": swap_percent,
+            "available": True
         }
     except Exception as e:
         logging.warning(f"Memory error: {e}")
-        return {"total_mb": 0, "used_mb": 0, "available_mb": 0, "usage_percent": 0, "swap_total_mb": 0, "swap_used_mb": 0, "swap_percent": 0}
+        return {"total_mb": 0, "used_mb": 0, "available_mb": 0, "usage_percent": 0, "swap_total_mb": 0, "swap_used_mb": 0, "swap_percent": 0, "available": False}
 
 def get_disk_info() -> Dict[str, Any]:
     """Get disk usage for root filesystem"""
@@ -115,11 +116,12 @@ def get_disk_info() -> Dict[str, Any]:
             "total_gb": total,
             "used_gb": used,
             "free_gb": free,
-            "usage_percent": percent
+            "usage_percent": percent,
+            "available": True
         }
     except Exception as e:
         logging.warning(f"Disk error: {e}")
-        return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "usage_percent": 0}
+        return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "usage_percent": 0, "available": False}
 
 def get_cpu_info() -> Dict[str, Any]:
     cores = os.cpu_count() or 4
@@ -132,23 +134,23 @@ def get_cpu_info() -> Dict[str, Any]:
         pass
     return {"cores": cores, "frequency_mhz": freq}
 
-def get_temperature() -> float:
+def get_temperature() -> Dict[str, Any]:
     try:
         temp_str = read_file(f'{HOST_SYS}/class/thermal/thermal_zone0/temp')
         if temp_str:
-            return round(int(temp_str) / 1000, 1)
-    except:
-        pass
-    return 0.0
+            return {"celsius": round(int(temp_str) / 1000, 1), "available": True}
+    except Exception as e:
+        logging.warning(f"Temp error: {e}")
+    return {"celsius": 0.0, "available": False}
 
-def get_load_average() -> Dict[str, float]:
+def get_load_average() -> Dict[str, Any]:
     try:
         with open(f'{HOST_PROC}/loadavg', 'r') as f:
             load = f.read().strip().split()
-        return {"1min": float(load[0]), "5min": float(load[1]), "15min": float(load[2])}
+        return {"1min": float(load[0]), "5min": float(load[1]), "15min": float(load[2]), "available": True}
     except Exception as e:
         logging.warning(f"Load error: {e}")
-        return {"1min": 0.0, "5min": 0.0, "15min": 0.0}
+        return {"1min": 0.0, "5min": 0.0, "15min": 0.0, "available": False}
 
 def get_uptime() -> float:
     try:
@@ -379,24 +381,50 @@ def get_containers_with_status() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
 
     return containers, docker_status
 
+def build_host_metrics() -> Dict[str, Any]:
+    """Host-Metriken einsammeln und Lesefehler transparent als warnings melden.
+
+    Jeder Getter liefert ein `available`-Flag. Schlaegt ein Read fehl, bleibt
+    der numerische Wert zwar 0, wird aber ueber `available=False` und die
+    aggregierte `warnings`-Liste als ungueltig markiert - so kann das Dashboard
+    echte Nullen von Lesefehlern unterscheiden.
+    """
+    cpu_info = get_cpu_info()
+    memory = get_memory_info()
+    disk = get_disk_info()
+    load = get_load_average()
+    temperature = get_temperature()
+
+    warnings = []
+    if not memory.get("available", True):
+        warnings.append("Host-Speicher nicht lesbar")
+    if not disk.get("available", True):
+        warnings.append("Host-Disk nicht lesbar")
+    if not load.get("available", True):
+        warnings.append("Load Average nicht lesbar")
+    if not temperature.get("available", True):
+        warnings.append("Temperatur nicht lesbar")
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "cpu": {"usage_percent": get_cpu_usage(), "cores": cpu_info["cores"], "frequency_mhz": cpu_info["frequency_mhz"]},
+        "memory": memory,
+        "disk": disk,
+        "load_average": load,
+        "temperature": temperature,
+        "uptime_hours": get_uptime(),
+        "process_count": get_process_count(),
+        "hostname": get_hostname(),
+        "warnings": warnings
+    }
+
 @api_router.get("/")
 async def root():
     return {"message": "Pi Monitor API", "status": "live"}
 
 @api_router.get("/metrics/host")
 def get_host_metrics():
-    cpu_info = get_cpu_info()
-    return {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "cpu": {"usage_percent": get_cpu_usage(), "cores": cpu_info["cores"], "frequency_mhz": cpu_info["frequency_mhz"]},
-        "memory": get_memory_info(),
-        "disk": get_disk_info(),
-        "load_average": get_load_average(),
-        "temperature": {"celsius": get_temperature()},
-        "uptime_hours": get_uptime(),
-        "process_count": get_process_count(),
-        "hostname": get_hostname()
-    }
+    return build_host_metrics()
 
 @api_router.get("/metrics/containers")
 def get_container_metrics():
@@ -404,20 +432,9 @@ def get_container_metrics():
 
 @api_router.get("/metrics/all")
 def get_all_metrics():
-    cpu_info = get_cpu_info()
     containers, docker_status = get_containers_with_status()
     return {
-        "host": {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "cpu": {"usage_percent": get_cpu_usage(), "cores": cpu_info["cores"], "frequency_mhz": cpu_info["frequency_mhz"]},
-            "memory": get_memory_info(),
-            "disk": get_disk_info(),
-            "load_average": get_load_average(),
-            "temperature": {"celsius": get_temperature()},
-            "uptime_hours": get_uptime(),
-            "process_count": get_process_count(),
-            "hostname": get_hostname()
-        },
+        "host": build_host_metrics(),
         "containers": containers,
         "docker": docker_status
     }

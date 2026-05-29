@@ -80,6 +80,11 @@ const buildReliabilityAlerts = (host, containers, dockerStatus) => {
   if (host.disk?.usage_percent > 75 && host.disk?.usage_percent <= 85) alerts.push({ level: 'warning', text: `Disk ${host.disk.usage_percent}%` });
   if (host.temperature?.celsius > 65 && host.temperature?.celsius <= 75) alerts.push({ level: 'warning', text: `Temp ${host.temperature.celsius}°C` });
 
+  // Lesefehler auf Host-Ebene transparent machen (statt falscher Nullen)
+  if (Array.isArray(host.warnings)) {
+    host.warnings.forEach(text => alerts.push({ level: 'warning', text }));
+  }
+
   if (dockerStatus && !dockerStatus.reachable) {
     alerts.push({ level: 'critical', text: 'Docker API nicht erreichbar' });
   }
@@ -430,7 +435,7 @@ function App() {
             />
             <MetricCard
               title="RAM"
-              value={hostMetrics?.memory.usage_percent}
+              value={hostMetrics?.memory?.available === false ? null : hostMetrics?.memory?.usage_percent}
               unit="%"
               icon={MemoryStick}
               color={getStatusColor(hostMetrics?.memory.usage_percent || 0)}
@@ -439,7 +444,7 @@ function App() {
             />
             <MetricCard
               title="Disk"
-              value={hostMetrics?.disk?.usage_percent}
+              value={hostMetrics?.disk?.available === false ? null : hostMetrics?.disk?.usage_percent}
               unit="%"
               icon={HardDrive}
               color={getStatusColor(hostMetrics?.disk?.usage_percent || 0)}
@@ -457,7 +462,7 @@ function App() {
             />
             <MetricCard
               title="Temp"
-              value={hostMetrics?.temperature?.celsius}
+              value={hostMetrics?.temperature?.available === false ? null : hostMetrics?.temperature?.celsius}
               unit="°C"
               icon={Thermometer}
               color={hostMetrics?.temperature?.celsius > 70 ? '#FF3366' : hostMetrics?.temperature?.celsius > 60 ? '#FFCC00' : '#00FF66'}
@@ -534,7 +539,7 @@ function App() {
       <footer className="border-t border-[#1A1A1A] mt-8">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between text-xs font-mono text-[#8A8A8A]">
-            <span>Pi Monitor v1.1</span>
+            <span>Pi Monitor v{process.env.REACT_APP_VERSION}</span>
             <span>{hostMetrics?.process_count} Prozesse</span>
           </div>
         </div>

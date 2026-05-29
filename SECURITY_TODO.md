@@ -60,9 +60,9 @@ Diese Liste sammelt die Security-Findings aus dem Review, damit sie schrittweise
 - [x] `.DS_Store` aus dem Repository entfernen
   - Erledigt: Datei aus dem Arbeitsbaum entfernt und `.gitignore` um `.DS_Store` ergaenzt.
 
-- [ ] API-Fehlerverhalten verbessern
-  - Backend gibt bei Docker-/Host-Lesefehlern oft stille Defaultwerte zurueck.
-  - Ziel: Fehlerzustand im API-Response sichtbar machen, damit das Dashboard falsche Nullen nicht als echte Metriken interpretiert.
+- [x] API-Fehlerverhalten verbessern
+  - Erledigt: Host-Metriken (memory, disk, load_average, temperature) tragen ein `available`-Flag; `build_host_metrics` aggregiert Lesefehler in `host.warnings`.
+  - Frontend zeigt bei `available=false` ein `-` statt einer falschen `0` und blendet die Warnungen in der ReliabilityStrip ein.
 
 - [x] Healthchecks erweitern
   - Erledigt: `scripts/smoke.sh` prueft `/api/`, `/api/metrics/host`, `/api/metrics/containers`, `/api/metrics/all` und statische Frontend-Auslieferung.
