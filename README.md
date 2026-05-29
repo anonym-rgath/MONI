@@ -8,7 +8,7 @@
 
 Das Projekt enthaelt ausschliesslich den Monitor selbst (Frontend, Backend,
 Betriebs-Skripte). Infrastruktur wie Traefik, Cloudflare Tunnel, DNS oder
-Backups liegt im separaten Projekt [`PI-SETUP`](#abgrenzung-zu-pi-setup).
+Backups liegt im separaten Projekt `PI-SETUP`.
 
 ---
 
@@ -17,15 +17,12 @@ Backups liegt im separaten Projekt [`PI-SETUP`](#abgrenzung-zu-pi-setup).
 - [Features](#features)
 - [Architektur](#architektur)
 - [Voraussetzungen](#voraussetzungen)
-- [Schnellstart](#schnellstart)
 - [Konfiguration](#konfiguration)
 - [API](#api)
 - [Betrieb](#betrieb)
 - [Sicherheit](#sicherheit)
 - [Entwicklung & Tests](#entwicklung--tests)
 - [Projektstruktur](#projektstruktur)
-- [Roadmap / Bekannte Einschraenkungen](#roadmap--bekannte-einschraenkungen)
-- [Abgrenzung zu PI-SETUP](#abgrenzung-zu-pi-setup)
 - [Lizenz](#lizenz)
 
 ---
@@ -94,32 +91,6 @@ Browser ──HTTPS──▶ Cloudflare Access ──▶ Traefik ──▶ pi-mo
 - Ein externes Docker-Netzwerk `traefik-network` (von der Infrastruktur bereitgestellt)
 - Fuer den produktiven Betrieb: Traefik als Reverse-Proxy und Cloudflare Access
   als Authentisierung am Edge (siehe [Sicherheit](#sicherheit))
-
----
-
-## Schnellstart
-
-```bash
-./scripts/start.sh
-```
-
-Das Startskript legt bei Bedarf `.env` aus `.env.example` an und ergaenzt
-fehlende Schluessel in bestehenden `.env`-Dateien. Anschliessend ist der Monitor
-ueber Traefik erreichbar:
-
-```
-http://<MONITOR_HOST>
-```
-
-Die Domain wird in `.env` gesetzt:
-
-```env
-MONITOR_HOST=monitor.example.com
-```
-
-> **Hinweis:** Fuer den produktiven Betrieb muss `MONITOR_HOST` auf die echte
-> Traefik-Domain zeigen. Die Skripte brechen mit dem Beispielwert
-> `monitor.example.com` ab, damit kein Container mit falscher Route deployt wird.
 
 ---
 
@@ -261,31 +232,6 @@ Damit erhalten auch die woechentlichen **Dependabot**-PRs
 ├── .env.example
 └── LICENSE
 ```
-
----
-
-## Roadmap / Bekannte Einschraenkungen
-
-Offene, bewusst zurueckgestellte Punkte (vor allem die schrittweise Haertung des
-Proxys, die direkt auf dem Pi validiert werden muss):
-
-- **Docker-Socket-Proxy weiter haerten** – Non-root-Betrieb, `read_only`,
-  `cap_drop: ALL`; jeweils auf dem Pi mit Proxy-Healthcheck verifizieren, da der
-  Socket-Zugriff sonst die Container-Anzeige brechen kann.
-- **Host-Mounts minimieren** – pruefen, ob alle `/proc`-, `/sys`- und
-  `/etc/hostname`-Mounts noetig sind, und so klein wie moeglich halten.
-- **Frontend-Toolchain modernisieren** – Migration von `react-scripts` (CRA) auf
-  eine gepflegte Build-Toolchain (z. B. Vite) pruefen.
-- **Lokalen Compose-Betrieb robuster machen** – ohne externes `traefik-network`
-  schlaegt der Start lokal fehl; ein dokumentiertes Override bereitstellen.
-
----
-
-## Abgrenzung zu PI-SETUP
-
-`PI-MONI` startet keinen Reverse-Proxy und keine Infrastruktur-Dienste. Wenn der
-Monitor per Domain, Cloudflare Tunnel oder Traefik erreichbar sein soll, wird das
-im Projekt `PI-SETUP` verdrahtet.
 
 ---
 
