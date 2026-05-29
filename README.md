@@ -199,6 +199,9 @@ python -m pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 ```
 
+> Die Test-Abhaengigkeiten setzen **Python 3.10+** voraus (pytest 9). Die CI
+> laeuft auf Python 3.11; das Laufzeit-Image nutzt Python 3.14.
+
 Die **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) laeuft bei
 jedem Push und Pull Request:
 
