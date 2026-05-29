@@ -1,7 +1,12 @@
 # Multi-stage build for Pi Monitor
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend-builder
+FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS frontend-builder
 
 WORKDIR /app/frontend
+# node:26-alpine bundelt weder Yarn noch corepack mehr - corepack via npm
+# nachinstallieren und aktivieren; Yarn-Version kommt aus dem
+# "packageManager"-Feld in package.json.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN npm install -g corepack && corepack enable
 COPY frontend/package.json frontend/yarn.lock* ./
 RUN yarn install --frozen-lockfile --non-interactive
 COPY frontend/ .
