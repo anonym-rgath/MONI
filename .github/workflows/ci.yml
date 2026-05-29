@@ -1,0 +1,59 @@
+# CI-Pipeline fuer MONI
+# ---------------------
+# Validiert jeden Push auf main und jeden Pull Request (inkl. Dependabot):
+#   1. Baut das vollstaendige Multi-stage-Image. Damit laufen automatisch
+#      `yarn build` (inkl. ESLint via CRACO) und `pip install` durch -
+#      Build-Fehler in Frontend- oder Backend-Dependencies fallen hier auf.
+#   2. Startet den Container und prueft, ob die API antwortet (Boot-Smoke).
+#
+# Die vollstaendige Runtime-Haertung (read_only, cap_drop, Docker-Socket-Proxy)
+# wird weiterhin auf dem Pi per scripts/smoke.sh verifiziert - sie braucht das
+# externe traefik-network und die Host-Mounts, die im CI-Runner fehlen.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build image & boot smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: pi-monitor:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot smoke test
+        run: |
+          docker run -d --name pi-monitor-ci -p 8080:80 pi-monitor:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/ | grep -q '"status":"live"'; then
+              echo "OK: API antwortet mit status=live"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "FAIL: API hat nach 30s nicht mit status=live geantwortet"
+          docker logs pi-monitor-ci
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f pi-monitor-ci || true
