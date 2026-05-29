@@ -377,7 +377,7 @@ async def root():
     return {"message": "Pi Monitor API", "status": "live"}
 
 @api_router.get("/metrics/host")
-async def get_host_metrics():
+def get_host_metrics():
     cpu_info = get_cpu_info()
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -392,11 +392,11 @@ async def get_host_metrics():
     }
 
 @api_router.get("/metrics/containers")
-async def get_container_metrics():
+def get_container_metrics():
     return get_containers()
 
 @api_router.get("/metrics/all")
-async def get_all_metrics():
+def get_all_metrics():
     cpu_info = get_cpu_info()
     containers, docker_status = get_containers_with_status()
     return {
