@@ -33,9 +33,9 @@ Diese Liste sammelt die Security-Findings aus dem Review, damit sie schrittweise
   - Zurueckgestellt: `cap_drop: ["ALL"]` am Proxy separat auf dem Pi validieren.
   - Ziel: Erst wieder aktivieren, wenn die Container-Liste ueber den Proxy stabil funktioniert.
 
-- [ ] Docker- und Base-Images pinnen
-  - `tecnativa/docker-socket-proxy:latest`, `node:20-alpine` und `python:3.11-slim` sind Floating Tags.
-  - Ziel: Images per Version/Digest pinnen und Update-Prozess dokumentieren.
+- [x] Docker- und Base-Images pinnen
+  - Erledigt: `node:20-alpine`, `python:3.11-slim` (Dockerfile) und `tecnativa/docker-socket-proxy:latest` (compose.yaml / .env.example) sind per `@sha256:`-Digest gepinnt.
+  - Update-Prozess: Dependabot (Docker-Ecosystem) hebt Tag + Digest kontrolliert per PR an; die CI baut den PR und prueft den Boot-Smoke, bevor gemergt wird.
 
 - [x] Frontend-Abhaengigkeiten reproduzierbar machen
   - Erledigt: `frontend/yarn.lock` erzeugt und Dockerfile auf `yarn install --frozen-lockfile --non-interactive` umgestellt.

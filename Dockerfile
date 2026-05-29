@@ -1,5 +1,5 @@
 # Multi-stage build for Pi Monitor
-FROM node:20-alpine AS frontend-builder
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/yarn.lock* ./
@@ -8,7 +8,7 @@ COPY frontend/ .
 RUN yarn build
 
 # Final Image
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0
 
 WORKDIR /app
 
