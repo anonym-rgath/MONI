@@ -1,19 +1,4 @@
 services:
-  docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476}
-    container_name: docker-socket-proxy
-    restart: unless-stopped
-    networks:
-      - monitor-internal
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    environment:
-      - CONTAINERS=1
-      - INFO=1
-      - POST=0
-    security_opt:
-      - no-new-privileges:true
-
   pi-monitor:
     build:
       context: .
@@ -25,10 +10,10 @@ services:
       - /tmp:size=64m,mode=1777
     cap_drop:
       - ALL
-    depends_on:
-      - docker-socket-proxy
     networks:
-      - monitor-internal
+      # Zentraler docker-socket-proxy lebt in PI-SETUP und stellt das
+      # socket-proxy-network bereit (external, internal: true).
+      - socket-proxy-network
       - traefik-network
     expose:
       - "80"
@@ -62,7 +47,7 @@ services:
       start_period: 20s
 
 networks:
-  monitor-internal:
-    internal: true
+  socket-proxy-network:
+    external: true
   traefik-network:
     external: true
