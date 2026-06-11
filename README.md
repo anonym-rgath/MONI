@@ -1,6 +1,6 @@
-# Pi Monitor
+# Linux Monitor
 
-> Schlankes Echtzeit-Monitoring-Dashboard fuer einen Raspberry Pi: Host-Metriken
+> Schlankes Echtzeit-Monitoring-Dashboard fuer beliebige Linux-Hosts: Host-Metriken
 > und Docker-Container-Status, ausgeliefert als ein einzelner, gehaerteter Container.
 
 [![CI](https://github.com/anonym-rgath/MONI/actions/workflows/ci.yml/badge.svg)](https://github.com/anonym-rgath/MONI/actions/workflows/ci.yml)
@@ -68,7 +68,7 @@ Monitor gemountet, sondern nur lesend ueber einen restriktiven Proxy erreichbar
 gemacht, der zentral in `PI-SETUP` betrieben wird.
 
 ```
-Browser ──HTTPS──▶ Cloudflare Access ──▶ Traefik ──▶ pi-monitor (:80, nginx)
+Browser ──HTTPS──▶ Cloudflare Access ──▶ Traefik ──▶ linux-monitor (:80, nginx)
                                                         ├── /      ▶ React-Build (statisch)
                                                         └── /api   ▶ uvicorn :8001 (FastAPI)
                                                                        ├── /proc, /sys, /etc/hostname  (read-only)
@@ -165,7 +165,7 @@ gesammelt in `host.warnings`, z. B.:
 `scripts/smoke.sh` sollte nach jedem Deployment gruen durchlaufen. Es prueft die
 Compose-Konfiguration, alle API-Endpunkte, die statische Frontend-Auslieferung,
 die Security-Header, den POST-Block des Docker-Socket-Proxys und die
-Runtime-Haertung des `pi-monitor`-Containers.
+Runtime-Haertung des `linux-monitor`-Containers.
 
 ---
 

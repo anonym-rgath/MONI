@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
-# Pi Monitor - Redeploy-Script nach git pull
+# Linux Monitor - Redeploy-Script nach git pull
 # ==========================================
 # Workflow:
 #   1. git pull (Fast-Forward, bricht bei Konflikt ab)
 #   2. .env aus .env.example pruefen/ergaenzen
-#   3. pi-monitor neu bauen + neu starten
+#   3. linux-monitor neu bauen + neu starten
 #   4. Status anzeigen
 #   5. Smoke-/Security-Check ausfuehren
 #
@@ -45,7 +45,7 @@ done
 
 echo ""
 echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}   Pi Monitor Redeploy${NC}"
+echo -e "${GREEN}   Linux Monitor Redeploy${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 
@@ -117,16 +117,16 @@ if grep -qE '^[[:space:]]*MONITOR_PORT=' "$ROOT_DIR/.env"; then
 fi
 
 echo ""
-echo -e "${YELLOW}[3/5] pi-monitor neu bauen + starten...${NC}"
+echo -e "${YELLOW}[3/5] linux-monitor neu bauen + starten...${NC}"
 if [ -n "$FORCE_RECREATE" ]; then
     echo "  (force-recreate aktiv)"
 fi
 
-docker compose up -d --build $FORCE_RECREATE pi-monitor
+docker compose up -d --build $FORCE_RECREATE linux-monitor
 
 echo ""
 echo -e "${YELLOW}[4/5] Status:${NC}"
-docker compose ps docker-socket-proxy pi-monitor
+docker compose ps docker-socket-proxy linux-monitor
 
 echo ""
 if [ "$RUN_SMOKE" -eq 1 ]; then

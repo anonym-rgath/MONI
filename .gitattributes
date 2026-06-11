@@ -1,7 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
-# Dateien, die in Linux-Containern / auf dem Pi laufen, brauchen immer LF.
+# Dateien, die in Linux-Containern / auf dem Linux-Host laufen, brauchen immer LF.
 # CRLF wuerde z. B. den Shebang von Shell-Skripten brechen.
 *.sh        text eol=lf
 Dockerfile  text eol=lf

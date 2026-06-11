@@ -1,4 +1,4 @@
-"""Unit-Tests fuer das Pi-Monitor-Backend.
+"""Unit-Tests fuer das Linux-Monitor-Backend.
 
 Schwerpunkt liegt auf der nicht-trivialen Parsing-/Rechen-Logik:
 - /proc-Parsing (Memory, CPU-Delta, Load, Uptime, Temperatur)

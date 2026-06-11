@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "Pi Monitor - Diagnose"
+echo "Linux Monitor - Diagnose"
 echo "====================="
 echo ""
 
@@ -26,24 +26,24 @@ echo "Services:"
 docker compose ps
 
 echo ""
-echo "pi-monitor Netzwerke:"
-docker inspect pi-monitor --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true
+echo "linux-monitor Netzwerke:"
+docker inspect linux-monitor --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true
 
 echo ""
-echo "pi-monitor Traefik Labels:"
-docker inspect pi-monitor --format '{{range $k, $v := .Config.Labels}}{{println $k "=" $v}}{{end}}' 2>/dev/null \
+echo "linux-monitor Traefik Labels:"
+docker inspect linux-monitor --format '{{range $k, $v := .Config.Labels}}{{println $k "=" $v}}{{end}}' 2>/dev/null \
     | sort \
     | sed -n '/traefik/p' || true
 
 echo ""
 echo "Interner Healthcheck:"
-docker compose exec -T pi-monitor curl -fsS -D - http://127.0.0.1/api/ || true
+docker compose exec -T linux-monitor curl -fsS -D - http://127.0.0.1/api/ || true
 
 echo ""
 echo "Host-Header-Test im Container:"
 MONITOR_HOST="$(sed -n 's/^MONITOR_HOST=//p' "$ROOT_DIR/.env" 2>/dev/null | tail -n 1)"
 if [ -n "$MONITOR_HOST" ]; then
-    docker compose exec -T pi-monitor curl -fsS -H "Host: $MONITOR_HOST" -D - http://127.0.0.1/ | head -n 20 || true
+    docker compose exec -T linux-monitor curl -fsS -H "Host: $MONITOR_HOST" -D - http://127.0.0.1/ | head -n 20 || true
 else
     echo "MONITOR_HOST leer, Host-Header-Test uebersprungen"
 fi
@@ -51,8 +51,8 @@ fi
 echo ""
 echo "Traefik Host-Header-Test auf dem Host:"
 if [ -n "$MONITOR_HOST" ]; then
-    TRAEFIK_INDEX="/tmp/pi-monitor-traefik-index.html"
-    TRAEFIK_HEADERS="/tmp/pi-monitor-traefik-headers.txt"
+    TRAEFIK_INDEX="/tmp/linux-monitor-traefik-index.html"
+    TRAEFIK_HEADERS="/tmp/linux-monitor-traefik-headers.txt"
 
     http_code="$(
         curl -sS -H "Host: $MONITOR_HOST" -D "$TRAEFIK_HEADERS" \
@@ -76,9 +76,9 @@ fi
 
 echo ""
 echo "Hinweis:"
-echo "Wenn die internen Checks 200 liefern, aber extern 404 kommt, liegt der Fehler vor pi-monitor:"
+echo "Wenn die internen Checks 200 liefern, aber extern 404 kommt, liegt der Fehler vor linux-monitor:"
 echo "- falscher Hostname"
 echo "- falscher Traefik EntryPoint"
-echo "- pi-monitor nicht im traefik-network"
+echo "- linux-monitor nicht im traefik-network"
 echo "- Traefik liest den Docker Provider/Labels nicht"
 echo "- Cloudflare Tunnel/Access routet nicht alle Pfade, insbesondere /static/* und /api/*"

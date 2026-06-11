@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo ""
-echo -e "${GREEN}   Pi Monitor - Start${NC}"
+echo -e "${GREEN}   Linux Monitor - Start${NC}"
 echo ""
 
 # Docker Check
@@ -71,14 +71,14 @@ if grep -qE '^[[:space:]]*MONITOR_PORT=' "$ROOT_DIR/.env"; then
     echo "Der Container hoert intern immer auf Port 80; Traefik routet ebenfalls auf Port 80."
 fi
 
-echo -e "${YELLOW}Baue und starte Pi Monitor...${NC}"
+echo -e "${YELLOW}Baue und starte Linux Monitor...${NC}"
 docker compose up -d --build
 
 # Status
 echo ""
 docker compose ps
 echo ""
-echo -e "${GREEN}Pi Monitor läuft${NC}"
+echo -e "${GREEN}Linux Monitor läuft${NC}"
 if [ -n "$MONITOR_HOST" ]; then
     echo -e "Endpoint: ${GREEN}http://${MONITOR_HOST}${NC}"
 fi

@@ -1,9 +1,9 @@
 services:
-  pi-monitor:
+  linux-monitor:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: pi-monitor
+    container_name: linux-monitor
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -19,10 +19,10 @@ services:
       - "80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.pi-monitor.rule=Host(`${MONITOR_HOST:?MONITOR_HOST muss in .env gesetzt sein}`)"
-      - "traefik.http.routers.pi-monitor.entrypoints=${TRAEFIK_ENTRYPOINT:?TRAEFIK_ENTRYPOINT muss in .env gesetzt sein}"
-      - "traefik.http.routers.pi-monitor.priority=100"
-      - "traefik.http.services.pi-monitor.loadbalancer.server.port=80"
+      - "traefik.http.routers.linux-monitor.rule=Host(`${MONITOR_HOST:?MONITOR_HOST muss in .env gesetzt sein}`)"
+      - "traefik.http.routers.linux-monitor.entrypoints=${TRAEFIK_ENTRYPOINT:?TRAEFIK_ENTRYPOINT muss in .env gesetzt sein}"
+      - "traefik.http.routers.linux-monitor.priority=100"
+      - "traefik.http.services.linux-monitor.loadbalancer.server.port=80"
       - "traefik.docker.network=traefik-network"
     volumes:
       - /proc:/host/proc:ro

@@ -380,7 +380,7 @@ function App() {
             <div className="flex items-center gap-3">
               <Server size={24} className="text-[#C51A4A]" strokeWidth={1.5} />
               <h1 className="text-xl md:text-2xl font-medium tracking-tight text-white">
-                Pi Monitor
+                Linux Monitor
               </h1>
               <div className="flex items-center gap-2 ml-4">
                 <span className="w-2 h-2 rounded-full bg-[#00FF66] live-indicator" />
@@ -416,7 +416,7 @@ function App() {
         {/* Host Section */}
         <section className="mb-8" data-testid="host-section">
           <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-lg font-medium text-white">Raspberry Pi</h2>
+            <h2 className="text-lg font-medium text-white">Host</h2>
             <span className="text-xs font-mono text-[#8A8A8A] bg-[#0A0A0A] px-2 py-1 rounded-sm border border-[#1A1A1A]">
               {hostMetrics?.hostname}
             </span>
@@ -539,7 +539,7 @@ function App() {
       <footer className="border-t border-[#1A1A1A] mt-8">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between text-xs font-mono text-[#8A8A8A]">
-            <span>Pi Monitor v{process.env.REACT_APP_VERSION}</span>
+            <span>Linux Monitor v{process.env.REACT_APP_VERSION}</span>
             <span>{hostMetrics?.process_count} Prozesse</span>
           </div>
         </div>

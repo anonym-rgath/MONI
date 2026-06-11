@@ -29,7 +29,7 @@ require_command() {
 }
 
 compose_exec() {
-    docker compose exec -T pi-monitor "$@"
+    docker compose exec -T linux-monitor "$@"
 }
 
 curl_pi_monitor() {
@@ -64,14 +64,14 @@ wait_for_api() {
 require_command docker
 docker compose version >/dev/null 2>&1 || fail "Docker Compose Plugin ist nicht installiert"
 
-echo "Pi Monitor - Smoke/Security Check"
+echo "Linux Monitor - Smoke/Security Check"
 echo "================================="
 echo ""
 
 docker compose config >/dev/null
 ok "Compose-Konfiguration ist gueltig"
 
-wait_for_running "pi-monitor" "pi-monitor"
+wait_for_running "linux-monitor" "linux-monitor"
 wait_for_running "docker-socket-proxy" "docker-socket-proxy"
 
 ok "Container laufen"
@@ -88,7 +88,7 @@ ok "Container-Metriken antworten"
 curl_pi_monitor http://127.0.0.1/api/metrics/all >/dev/null
 ok "Kombinierter Metrics-Endpunkt antwortet"
 
-headers="$(compose_exec curl -fsS -D - -o /tmp/pi-monitor-smoke-index.html http://127.0.0.1/)"
+headers="$(compose_exec curl -fsS -D - -o /tmp/linux-monitor-smoke-index.html http://127.0.0.1/)"
 printf '%s\n' "$headers" | grep -qi '^Content-Security-Policy:' \
     || fail "Content-Security-Policy Header fehlt"
 printf '%s\n' "$headers" | grep -qi '^X-Content-Type-Options: nosniff' \
@@ -102,7 +102,7 @@ printf '%s\n' "$headers" | grep -qi '^Permissions-Policy:' \
 ok "Frontend antwortet mit Security-Headern"
 
 post_status="$(
-    compose_exec curl -sS -o /tmp/pi-monitor-proxy-post.out -w '%{http_code}' \
+    compose_exec curl -sS -o /tmp/linux-monitor-proxy-post.out -w '%{http_code}' \
         -X POST http://docker-socket-proxy:2375/containers/create || true
 )"
 if [ "$post_status" != "403" ]; then
@@ -110,16 +110,16 @@ if [ "$post_status" != "403" ]; then
 fi
 ok "Docker-Socket-Proxy blockt POST Requests"
 
-inspect="$(docker inspect --format 'User={{.Config.User}} ReadonlyRootfs={{.HostConfig.ReadonlyRootfs}} CapDrop={{json .HostConfig.CapDrop}} SecurityOpt={{json .HostConfig.SecurityOpt}}' pi-monitor)"
+inspect="$(docker inspect --format 'User={{.Config.User}} ReadonlyRootfs={{.HostConfig.ReadonlyRootfs}} CapDrop={{json .HostConfig.CapDrop}} SecurityOpt={{json .HostConfig.SecurityOpt}}' linux-monitor)"
 printf '%s\n' "$inspect" | grep -q 'User=app' \
-    || fail "pi-monitor laeuft nicht als User app: $inspect"
+    || fail "linux-monitor laeuft nicht als User app: $inspect"
 printf '%s\n' "$inspect" | grep -q 'ReadonlyRootfs=true' \
-    || fail "pi-monitor Root-Dateisystem ist nicht read-only: $inspect"
+    || fail "linux-monitor Root-Dateisystem ist nicht read-only: $inspect"
 printf '%s\n' "$inspect" | grep -q '"ALL"' \
-    || fail "pi-monitor droppt nicht alle Capabilities: $inspect"
+    || fail "linux-monitor droppt nicht alle Capabilities: $inspect"
 printf '%s\n' "$inspect" | grep -q 'no-new-privileges:true' \
-    || fail "pi-monitor nutzt nicht no-new-privileges: $inspect"
-ok "pi-monitor Runtime-Haertung aktiv"
+    || fail "linux-monitor nutzt nicht no-new-privileges: $inspect"
+ok "linux-monitor Runtime-Haertung aktiv"
 
 proxy_inspect="$(docker inspect --format 'SecurityOpt={{json .HostConfig.SecurityOpt}} NetworkMode={{.HostConfig.NetworkMode}}' docker-socket-proxy)"
 printf '%s\n' "$proxy_inspect" | grep -q 'no-new-privileges:true' \
@@ -131,7 +131,7 @@ if docker inspect --format '{{json .NetworkSettings.Networks}}' docker-socket-pr
 fi
 ok "docker-socket-proxy ist nicht im Traefik-Netz"
 
-health="$(docker inspect --format '{{.State.Health.Status}}' pi-monitor 2>/dev/null || true)"
+health="$(docker inspect --format '{{.State.Health.Status}}' linux-monitor 2>/dev/null || true)"
 if [ "$health" = "healthy" ]; then
     ok "Docker Healthcheck ist healthy"
 elif [ "$health" = "starting" ]; then

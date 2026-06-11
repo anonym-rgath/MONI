@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo -e "${YELLOW}============================================${NC}"
-echo -e "${YELLOW}   Pi Monitor - Stop Script${NC}"
+echo -e "${YELLOW}   Linux Monitor - Stop Script${NC}"
 echo -e "${YELLOW}============================================${NC}"
 echo ""
 
@@ -37,7 +37,7 @@ docker compose down
 
 echo ""
 echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}   Pi Monitor gestoppt${NC}"
+echo -e "${GREEN}   Linux Monitor gestoppt${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 echo "Zum erneuten Starten:"

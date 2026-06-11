@@ -1,4 +1,4 @@
-# Multi-stage build for Pi Monitor
+# Multi-stage build for Linux Monitor
 FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS frontend-builder
 
 WORKDIR /app/frontend

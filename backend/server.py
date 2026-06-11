@@ -11,7 +11,7 @@ from urllib import request as urlrequest
 from typing import List, Dict, Any, Tuple
 from datetime import datetime, timezone
 
-app = FastAPI(title="Pi Monitor API")
+app = FastAPI(title="Linux Monitor API")
 api_router = APIRouter(prefix="/api")
 
 DOCKER_SOCKET = "/var/run/docker.sock"
@@ -420,7 +420,7 @@ def build_host_metrics() -> Dict[str, Any]:
 
 @api_router.get("/")
 async def root():
-    return {"message": "Pi Monitor API", "status": "live"}
+    return {"message": "Linux Monitor API", "status": "live"}
 
 @api_router.get("/metrics/host")
 def get_host_metrics():

@@ -7,7 +7,7 @@
 #   2. Startet den Container und prueft, ob die API antwortet (Boot-Smoke).
 #
 # Die vollstaendige Runtime-Haertung (read_only, cap_drop, Docker-Socket-Proxy)
-# wird weiterhin auf dem Pi per scripts/smoke.sh verifiziert - sie braucht das
+# wird weiterhin auf dem Ziel-Host per scripts/smoke.sh verifiziert - sie braucht das
 # externe traefik-network und die Host-Mounts, die im CI-Runner fehlen.
 
 name: CI
@@ -55,13 +55,13 @@ jobs:
         with:
           context: .
           load: true
-          tags: pi-monitor:ci
+          tags: linux-monitor:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Boot smoke test
         run: |
-          docker run -d --name pi-monitor-ci -p 8080:80 pi-monitor:ci
+          docker run -d --name linux-monitor-ci -p 8080:80 linux-monitor:ci
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/api/ | grep -q '"status":"live"'; then
               echo "OK: API antwortet mit status=live"
@@ -70,9 +70,9 @@ jobs:
             sleep 1
           done
           echo "FAIL: API hat nach 30s nicht mit status=live geantwortet"
-          docker logs pi-monitor-ci
+          docker logs linux-monitor-ci
           exit 1
 
       - name: Cleanup
         if: always()
-        run: docker rm -f pi-monitor-ci || true
+        run: docker rm -f linux-monitor-ci || true
