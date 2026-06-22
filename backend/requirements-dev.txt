@@ -1,5 +1,5 @@
 # Dev-/Test-Abhaengigkeiten (nicht im Laufzeit-Image enthalten).
 # Laufzeit-Pakete kommen aus requirements-docker.txt.
 -r requirements-docker.txt
-pytest==9.0.3
+pytest==9.1.1
 httpx==0.27.2
