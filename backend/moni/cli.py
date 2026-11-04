@@ -21,10 +21,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    store = TokenStore(Path(Settings.from_env().data_dir) / "tokens.json")
     try:
+        store = TokenStore(Path(Settings.from_env().data_dir) / "tokens.json")
         if args.cmd == "create":
-            exp = utcnow() + timedelta(days=args.expires_days) if args.expires_days else None
+            if args.expires_days is not None and args.expires_days < 1:
+                print("Fehler: --expires-days muss mindestens 1 sein.", file=sys.stderr)
+                return 2
+            exp = utcnow() + timedelta(days=args.expires_days) if args.expires_days is not None else None
             _, plain = store.create(args.name, expires_at=exp)
             print("Token wird nur jetzt angezeigt.")
             print(plain)
@@ -36,8 +39,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Kein Token mit der ID {args.id}.", file=sys.stderr)
                 return 1
             print(f"Token {args.id} widerrufen.")
-    except (OSError, RuntimeError) as e:
-        print(f"Fehler: Token-Datei nicht nutzbar ({e}). Ist das Datenverzeichnis vorhanden und beschreibbar?", file=sys.stderr)
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f"Fehler: Token-Datei oder Konfiguration nicht nutzbar ({e}). Ist das Datenverzeichnis vorhanden und beschreibbar?", file=sys.stderr)
         return 2
     return 0
 

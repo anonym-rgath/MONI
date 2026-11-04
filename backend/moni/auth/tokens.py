@@ -1,3 +1,4 @@
+import fcntl
 import hashlib
 import hmac
 import json
@@ -5,6 +6,7 @@ import logging
 import os
 import re
 import secrets
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -44,12 +46,23 @@ class TokenStore:
         except FileNotFoundError:
             return []
         except OSError as e:
+            log.error("Token-Datei %s nicht lesbar: %s", self.path, e.strerror)
             raise RuntimeError(f"Token-Datei nicht lesbar: {e.strerror}") from None
+        except UnicodeDecodeError:
+            raw = None
         try:
+            if raw is None:
+                raise ValueError
             data = json.loads(raw)
             if data["version"] != 1:
                 raise ValueError
-            return [Token(**t) for t in data["tokens"]]
+            tokens = [Token(**t) for t in data["tokens"]]
+            for t in tokens:
+                if not all(isinstance(v, str) for v in (t.id, t.name, t.scope, t.created_at, t.hash)):
+                    raise TypeError
+                if t.expires_at is not None:
+                    parse_iso(t.expires_at)  # ValueError/TypeError bei Unsinn
+            return tokens
         except (ValueError, KeyError, TypeError):
             log.error("Token-Datei %s ist beschädigt", self.path)
             raise RuntimeError(f"Token-Datei {self.path} ist beschädigt") from None
@@ -60,19 +73,31 @@ class TokenStore:
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump({"version": 1, "tokens": [asdict(t) for t in tokens]}, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self.path)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
 
+    @contextmanager
+    def _lock(self):
+        # Sidecar-Lock: schützt Lesen-Ändern-Schreiben über Prozesse hinweg
+        fd = os.open(self.path.with_name(self.path.name + ".lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
     def create(self, name: str, scope: str = "read", expires_at: datetime | None = None) -> tuple[Token, str]:
         if scope not in SCOPES:
             raise ValueError(f"Unbekannter Scope: {scope!r}")
-        tokens = self._load()
         tid = secrets.token_hex(4)
         plain = f"moni_{tid}_{secrets.token_urlsafe(32)}"
         tok = Token(tid, name, scope, iso(utcnow()), iso(expires_at) if expires_at else None, _hash(plain))
-        self._save([*tokens, tok])
+        with self._lock():
+            self._save([*self._load(), tok])
         return tok, plain
 
     def verify(self, plaintext: str, now: datetime | None = None) -> Token | None:
@@ -98,9 +123,10 @@ class TokenStore:
             return []
 
     def revoke(self, token_id: str) -> bool:
-        tokens = self._load()
-        rest = [t for t in tokens if t.id != token_id]
-        if len(rest) == len(tokens):
-            return False
-        self._save(rest)
-        return True
+        with self._lock():
+            tokens = self._load()
+            rest = [t for t in tokens if t.id != token_id]
+            if len(rest) == len(tokens):
+                return False
+            self._save(rest)
+            return True

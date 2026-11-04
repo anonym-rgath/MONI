@@ -66,3 +66,45 @@ def test_cli_unwritable_dir(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("MONI_DATA_DIR", str(tmp_path / "gibtsnicht" / "x"))
     assert cli.main(["token", "create", "--name", "a"]) == 2
     assert capsys.readouterr().err.strip()
+
+
+def test_binary_garbage_fails_closed(tmp_path):
+    p = tmp_path / "t.json"; p.write_bytes(b"\xff\xfe\x00garbage")
+    st = TokenStore(p)
+    assert st.verify("moni_deadbeef_abc") is None and st.list() == []
+    with pytest.raises(RuntimeError):
+        st.create("x")
+    assert p.read_bytes() == b"\xff\xfe\x00garbage"
+
+def test_unreadable_file_logs_error(tmp_path, caplog):
+    p = tmp_path / "t.json"; p.write_text("{}"); p.chmod(0)
+    try:
+        if os.access(p, os.R_OK):
+            pytest.skip("läuft als root")
+        assert TokenStore(p).verify("moni_deadbeef_abc") is None
+        assert "nicht lesbar" in caplog.text
+    finally:
+        p.chmod(0o600)
+
+@pytest.mark.parametrize("patch", [{"expires_at": "kein-datum"}, {"hash": 5}, {"expires_at": 7}])
+def test_semantically_corrupt_fails_closed(tmp_path, patch):
+    st = TokenStore(tmp_path / "t.json")
+    tok, plain = st.create("x")
+    data = json.loads(st.path.read_text()); data["tokens"][0].update(patch)
+    st.path.write_text(json.dumps(data))
+    assert st.verify(plain) is None and st.list() == []
+
+def test_lock_file_mode(tmp_path):
+    st = TokenStore(tmp_path / "t.json"); st.create("x")
+    assert oct(os.stat(tmp_path / "t.json.lock").st_mode & 0o777) == "0o600"
+
+@pytest.mark.parametrize("days", ["0", "-3"])
+def test_cli_rejects_nonpositive_expiry(tmp_path, monkeypatch, capsys, days):
+    monkeypatch.setenv("MONI_DATA_DIR", str(tmp_path))
+    assert cli.main(["token", "create", "--name", "a", "--expires-days", days]) == 2
+    assert not (tmp_path / "tokens.json").exists() and capsys.readouterr().err.strip()
+
+def test_cli_invalid_env(monkeypatch, capsys):
+    monkeypatch.setenv("MONI_ROLE", "quatsch")
+    assert cli.main(["token", "list"]) == 2
+    assert capsys.readouterr().err.strip()
