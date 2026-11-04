@@ -79,10 +79,13 @@ jobs:
           sleep 20   # mindestens eine Messung abwarten (Takt 15 s)
           curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9810/api/v1/snapshot > snap.json
           python3 -c "import json; s=json.load(open('snap.json')); assert s['docker']['reachable'], s['warnings']; assert s['host']['filesystems'], 'keine Dateisysteme'; print('OK', len(s['containers']), 'Container')"
-          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9810/metrics | grep -q '^moni_docker_up 1'
+          # Erst in Dateien schreiben: grep -q in einer Pipe kann unter pipefail per SIGPIPE falsch auswerten
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9810/metrics > metrics.txt
+          grep -q '^moni_docker_up 1' metrics.txt
           test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.agent.yaml ps -q moni-agent))" = "app true [ALL]"
           # Token darf nie im Log stehen (`!` allein würde set -e umgehen)
-          if docker compose -f compose.agent.yaml logs | grep -qF "$TOKEN"; then echo "FAIL: Token im Log"; exit 1; fi
+          docker compose -f compose.agent.yaml logs > smoke.log
+          if grep -qF "$TOKEN" smoke.log; then echo "FAIL: Token im Log"; exit 1; fi
 
       - name: Logs
         if: always()
