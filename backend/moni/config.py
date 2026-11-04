@@ -43,6 +43,8 @@ class Settings:
     retention_raw_hours: int = 48
     retention_minute_days: int = 30
     retention_hour_days: int = 365
+    bind_host: str = "0.0.0.0"
+    trust_local_proxy: bool = False
 
     @property
     def db_path(self) -> Path:
@@ -73,6 +75,8 @@ class Settings:
             retention_raw_hours=_int(env, "MONI_RETENTION_RAW_HOURS", "48"),
             retention_minute_days=_int(env, "MONI_RETENTION_MINUTE_DAYS", "30"),
             retention_hour_days=_int(env, "MONI_RETENTION_HOUR_DAYS", "365"),
+            bind_host=g("MONI_BIND_HOST", "0.0.0.0"),
+            trust_local_proxy=g("MONI_TRUST_LOCAL_PROXY", "") in ("1", "true"),
         )
         if s.role not in ("agent", "manager"):
             raise ValueError(f"MONI_ROLE muss agent oder manager sein, nicht {s.role!r}")

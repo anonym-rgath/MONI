@@ -1,3 +1,4 @@
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from moni.ratelimit import RateLimitMiddleware
 from moni.secretbox import SecretBox
 
 
-def create_app(settings: Settings | None = None, collector: Collector | None = None, poller=None) -> FastAPI:
+def create_app(settings: Settings | None = None, collector: Collector | None = None, poller: Poller | None = None) -> FastAPI:
     setup_logging()
     settings = settings or Settings.from_env()
     manager = settings.role == "manager"
@@ -29,13 +30,17 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     if manager:
         try:
             db.migrate(settings.db_path)
-        except Exception as e:
-            raise RuntimeError(f"Datenbank konnte nicht vorbereitet werden ({type(e).__name__}). "
-                               "Ist das Datenverzeichnis vorhanden und beschreibbar?") from None
+        except RuntimeError:
+            raise  # db.migrate liefert bereits klare deutsche Meldungen
+        except (OSError, sqlite3.Error) as e:
+            raise RuntimeError(f"Datenbank konnte nicht vorbereitet werden: {e}") from None
         box = SecretBox(settings.secret_key)  # ValueError ohne Schlüssel in der Meldung
         conn = db.connect(settings.db_path)
+        name = read_hostname(settings.host_etc)
         try:
-            ServerStore(conn, box).ensure_local(read_hostname(settings.host_etc))
+            ServerStore(conn, box).ensure_local(name)
+        except ValueError:
+            raise RuntimeError(f"Lokaler Servername '{name}' ist bereits durch einen Remote-Server belegt") from None
         finally:
             conn.close()
         poller = poller or Poller(settings, box, collector)
@@ -44,13 +49,15 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     async def lifespan(app: FastAPI):
         if own_col:
             collector.start()
-        if manager and own_pol:
-            poller.start()
         try:
-            yield
-        finally:
             if manager and own_pol:
-                poller.stop()
+                poller.start()
+            try:
+                yield
+            finally:
+                if manager and own_pol:
+                    poller.stop()
+        finally:
             if own_col:
                 collector.stop()
 

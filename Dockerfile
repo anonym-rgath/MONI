@@ -92,7 +92,7 @@ RUN echo 'server { \n\
         proxy_pass http://127.0.0.1:8001; \n\
         proxy_set_header Host $host; \n\
         proxy_set_header X-Real-IP $remote_addr; \n\
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; \n\
+        proxy_set_header X-Forwarded-For $remote_addr; \n\
         proxy_set_header X-Forwarded-Proto $scheme; \n\
         proxy_read_timeout 30s; \n\
     } \n\
@@ -109,13 +109,15 @@ childlogdir=/tmp \n\
 command=nginx -g "daemon off;" \n\
 autostart=true \n\
 autorestart=true \n\
-stdout_logfile=/tmp/nginx.log \n\
-stderr_logfile=/tmp/nginx.err.log \n\
+stdout_logfile=/dev/stdout \n\
+stdout_logfile_maxbytes=0 \n\
+stderr_logfile=/dev/stderr \n\
+stderr_logfile_maxbytes=0 \n\
 \n\
 [program:backend] \n\
 command=python -m moni \n\
 directory=/app \n\
-environment=MONI_ROLE="manager",MONI_PORT="8001",MONI_DATA_DIR="/data" \n\
+environment=MONI_ROLE="manager",MONI_PORT="8001",MONI_DATA_DIR="/data",MONI_BIND_HOST="127.0.0.1",MONI_TRUST_LOCAL_PROXY="1" \n\
 autostart=true \n\
 autorestart=true \n\
 stdout_logfile=/dev/stdout \n\

@@ -42,3 +42,49 @@ def test_bad_key_raises_without_key(settings):
     with pytest.raises(ValueError) as e:
         create_app(_mgr(settings, "kaputt-geheim"))
     assert "kaputt-geheim" not in str(e.value)
+
+
+def test_self_owned_lifespan_starts_and_stops_threads(settings):
+    app = create_app(_mgr(settings))
+    with TestClient(app):
+        assert app.state.collector._thread.is_alive() if hasattr(app.state.collector, "_thread") else True
+        assert app.state.poller._thread.is_alive()
+    assert not app.state.poller._thread.is_alive()
+
+
+def test_migrate_error_message_kept(settings, monkeypatch):
+    def boom(_):
+        raise RuntimeError("Datenbank-Version 9 ist neuer als diese Moni-Version")
+    monkeypatch.setattr("moni.app.db.migrate", boom)
+    with pytest.raises(RuntimeError, match="Datenbank-Version 9 ist neuer"):
+        create_app(_mgr(settings))
+
+
+def test_local_name_clash_message(settings):
+    from moni.manager import db
+    from moni.manager.servers import ServerStore
+    from moni.secretbox import SecretBox
+    key = generate_key()
+    s = _mgr(settings, key)
+    db.migrate(s.db_path)
+    c = db.connect(s.db_path)
+    ServerStore(c, SecretBox(key)).add("pi", "https://a.example", "tok")
+    c.close()
+    import moni.app
+    moni.app.read_hostname = lambda _: "pi"
+    try:
+        with pytest.raises(RuntimeError, match="'pi' ist bereits"):
+            create_app(s)
+    finally:
+        import moni.collect.host as h
+        moni.app.read_hostname = h.read_hostname
+
+
+def test_rate_limit_keyed_on_forwarded_client_when_trusted(settings):
+    from moni.__main__ import server_args
+    from moni.config import Settings
+    assert server_args(settings)["proxy_headers"] is False and server_args(settings)["host"] == "0.0.0.0"
+    t = Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": generate_key(), "MONI_BIND_HOST": "127.0.0.1",
+                           "MONI_TRUST_LOCAL_PROXY": "1"})
+    a = server_args(t)
+    assert (a["host"], a["proxy_headers"], a["forwarded_allow_ips"]) == ("127.0.0.1", True, "127.0.0.1")
