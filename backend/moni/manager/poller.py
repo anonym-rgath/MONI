@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
 from ..collector import Collector
@@ -26,6 +26,7 @@ _INFO_EVERY = 300
 _MAX_FUTURE = 300
 _MAX_PAST = 3 * 3600
 _MAX_WORKERS = 8
+_GRACE = 5  # Sekunden über 3 Anfragen x Timeout hinaus, bevor ein Abruf als hängend gilt
 
 
 class AgentError(Exception):
@@ -42,7 +43,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+# Kein Proxy aus HTTP(S)_PROXY: Token und Header gingen sonst an einen Dritten (Proxy-Option: Paket 7, Doku).
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
 
 
 class AgentClient:
@@ -59,9 +61,14 @@ class AgentClient:
         if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
             raise AgentError("Agent-URL muss mit http:// oder https:// beginnen", fatal=True)
         err = body = None
+        deadline = time.monotonic() + self._timeout  # Gesamtfrist: urllib-Timeout gilt nur je Socket-Operation
         try:
             with _OPENER.open(urllib.request.Request(url, headers=self._headers), timeout=self._timeout) as resp:
-                body = resp.read(_MAX_BYTES + 1)
+                body = bytearray()
+                while len(body) <= _MAX_BYTES and (chunk := resp.read1(65536)):
+                    body += chunk
+                    if time.monotonic() > deadline:  # tröpfelnder Agent
+                        raise TimeoutError
         except urllib.error.HTTPError as e:
             e.close()
             err = AgentError("Agent lehnt Token ab", fatal=True) if e.code in (401, 403) else \
@@ -90,10 +97,15 @@ def _ts(snap) -> int | None:
 def fetch_new(client: AgentClient, last_ts: int | None, now: int, interval: int) -> list[dict]:
     snaps = []
     if last_ts is not None and now - last_ts > 2 * interval:
-        points = client.get("/api/v1/history", {"since": iso(datetime.fromtimestamp(last_ts, timezone.utc))}).get("points")
-        if not isinstance(points, list):
-            raise AgentError("Ungültige Antwort vom Agent")
-        snaps = list(points)
+        try:
+            points = client.get("/api/v1/history", {"since": iso(datetime.fromtimestamp(last_ts, timezone.utc))}).get("points")
+            if not isinstance(points, list):
+                raise AgentError("Ungültige Antwort vom Agent")
+            snaps = list(points)
+        except AgentError as e:
+            if e.fatal:
+                raise
+            log.info("Lückenfüllung übersprungen, Lücke bleibt: %s", e.message)  # sonst sperrt eine zu große Historie den Server aus
     snaps.append(client.get("/api/v1/snapshot"))
     out, seen = [], set()
     for s in snaps:
@@ -118,7 +130,7 @@ class Poller:
         self._client_factory = client_factory
         self._conn: sqlite3.Connection | None = None
         self._last_maintenance: int | None = None
-        self._info_at: dict[int, int] = {}
+        self._info_at: dict[int, int] = {}  # Zeitpunkt des letzten Info-Versuchs, ob erfolgreich oder nicht
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -128,10 +140,11 @@ class Poller:
             snaps = fetch_new(client, server.last_ts, now, self._settings.collect_interval_seconds)
             info = None
             if server.id not in self._info_at or now - self._info_at[server.id] >= _INFO_EVERY:
+                self._info_at[server.id] = now  # je Server ein eigener Schlüssel, nur dieser Worker schreibt ihn
                 try:
                     info = client.get("/api/v1/info")
                 except AgentError:
-                    pass  # Info ist Beiwerk; nächster Zyklus versucht es erneut
+                    pass  # Info ist Beiwerk; nächster Versuch nach _INFO_EVERY
             return snaps, info
         except AgentError as e:
             return e
@@ -139,40 +152,54 @@ class Poller:
             log.error("Abruf von %s fehlgeschlagen (%s)", server.name, type(e).__name__)
             return AgentError("Ungültige Antwort vom Agent")
 
-    def _write(self, store: ServerStore, server, result, now: int) -> bool:
-        """Ergebnis eines Servers speichern. True, wenn Agent-Info mitgespeichert wurde."""
+    def _fail(self, store: ServerStore, server, now: int, message: str, fatal: bool = False) -> None:
+        status = store.record_failure(server.id, now, message, fatal=fatal)
+        # Warnung nur beim Statuswechsel, nicht alle 15 s
+        log.log(logging.WARNING if status != server.status else logging.DEBUG,
+                "Abruf von %s fehlgeschlagen: %s (Status %s)", server.name, message, status)
+
+    def _write(self, store: ServerStore, server, result, now: int) -> None:
         if isinstance(result, AgentError):
-            store.record_failure(server.id, now, result.message, fatal=result.fatal)
-            log.warning("Abruf von %s fehlgeschlagen: %s", server.name, result.message)
-            return False
+            return self._fail(store, server, now, result.message, result.fatal)
         snaps, info = result
+        if not snaps:  # nichts Neues seit last_ts: hängt der Agent (oder der lokale Sammler)?
+            if now - (server.last_seen or server.created_at) > 2 * self._settings.collect_interval_seconds:
+                self._fail(store, server, now, "Lokale Messung liefert keine neuen Daten" if server.is_local
+                           else "Agent liefert keine neuen Daten")
+            return
         plausible = [s for s in snaps if now - _MAX_PAST <= _ts(s) <= now + _MAX_FUTURE]
         if not plausible:
-            if snaps:
-                store.record_failure(server.id, now, "Zeitstempel des Agents unplausibel")
-                log.warning("Abruf von %s: Zeitstempel des Agents unplausibel", server.name)
-            return False  # leer = nichts Neues seit last_ts: weder Erfolg noch Fehler
+            return self._fail(store, server, now, "Zeitstempel des Agents unplausibel")
         newest = tsdb.write_snapshots(self._conn, server.id, plausible)
         latest = max(plausible, key=_ts)
         store.record_success(server.id, now, newest, json.dumps(latest), json.dumps(info) if info else None)
-        return info is not None
 
-    def _store(self, store: ServerStore, server, result, now: int) -> bool:
+    def _store(self, store: ServerStore, server, result, now: int) -> None:
         """Eigener Savepoint je Server: kaputte Daten eines Agents rollen nur dessen Schreibvorgänge zurück."""
         conn = self._conn
         conn.execute("SAVEPOINT server")
         try:
-            saved_info = self._write(store, server, result, now)
+            self._write(store, server, result, now)
         except sqlite3.OperationalError:  # DB-Problem (z. B. gesperrt), nicht Schuld des Agents: ganzer Zyklus
             raise
         except Exception as e:
             conn.execute("ROLLBACK TO server")
-            saved_info = False
             if store.get(server.id) is not None:  # während des Abrufs gelöscht: nichts mehr zu vermerken
                 log.error("Antwort von %s nicht speicherbar (%s)", server.name, type(e).__name__)
-                store.record_failure(server.id, now, "Ungültige Antwort vom Agent", fatal=True)
+                self._fail(store, server, now, "Ungültige Antwort vom Agent", fatal=True)
         conn.execute("RELEASE server")
-        return saved_info
+
+    def _fetch_all(self, jobs, now: int) -> dict:
+        """Parallel, außerhalb jeder DB-Transaktion; Nachzügler blockieren den Zyklus nicht."""
+        ex = ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(jobs)))
+        try:
+            futs = {ex.submit(self._fetch, s, c, now): s for s, c in jobs}
+            pending, end = set(futs), time.monotonic() + self._settings.poll_timeout_seconds * 3 + _GRACE
+            while pending and not self._stop.is_set() and (left := end - time.monotonic()) > 0:
+                _, pending = wait(pending, timeout=min(left, 0.5))  # in Schritten, damit stop() greift
+            return {s.id: AgentError("Agent nicht erreichbar") if f in pending else f.result() for f, s in futs.items()}
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
 
     def poll_once(self, now: int) -> None:
         if self._conn is None:
@@ -180,34 +207,30 @@ class Poller:
         conn = self._conn
         store = ServerStore(conn, self._box)
         enabled = [s for s in store.list() if s.enabled]
-        results = {}
+        results, jobs = {}, []
         for s in enabled:
             if s.is_local:
                 snap = self._collector.latest()
                 ts = _ts(snap) if snap is not None else None
-                if ts is not None and (s.last_ts is None or ts > s.last_ts):
-                    results[s.id] = ([snap], None)
-        jobs = []
-        for s in enabled:
-            if s.is_local:
+                results[s.id] = ([snap] if ts is not None and (s.last_ts is None or ts > s.last_ts) else [], None)
                 continue
             try:
                 token, headers = store.credentials(s.id)
-            except SecretError:
+                if not isinstance(headers, dict):
+                    raise ValueError
+            except (SecretError, ValueError):  # falscher Schlüssel oder kaputte Zeile; Text ohne Details
                 results[s.id] = AgentError("Zugangsdaten nicht entschlüsselbar", fatal=True)
                 continue
             jobs.append((s, self._client_factory(s.url, token, headers, self._settings.poll_timeout_seconds)))
-        if jobs:  # parallel und außerhalb jeder DB-Transaktion
-            with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(jobs))) as ex:
-                for (s, _), r in zip(jobs, ex.map(lambda j: self._fetch(j[0], j[1], now), jobs)):
-                    results[s.id] = r
+        if jobs:
+            results.update(self._fetch_all(jobs, now))
+        if self._stop.is_set():
+            return
         maintenance = self._last_maintenance is None or now - self._last_maintenance >= _MAINTENANCE_EVERY
-        got_info = []
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
         try:
             for s in enabled:
-                if s.id in results and self._store(store, s, results[s.id], now):
-                    got_info.append(s.id)
+                self._store(store, s, results[s.id], now)
             if maintenance:
                 tsdb.rollup(conn, now)
                 tsdb.prune(conn, now, self._settings)
@@ -217,7 +240,6 @@ class Poller:
             raise
         if maintenance:
             self._last_maintenance = now
-        self._info_at.update(dict.fromkeys(got_info, now))
 
     def close(self) -> None:
         if self._conn is not None:
@@ -249,4 +271,4 @@ class Poller:
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=self._settings.poll_timeout_seconds * 3 + 5)
+            self._thread.join(timeout=10)

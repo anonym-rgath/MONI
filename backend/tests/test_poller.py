@@ -180,9 +180,29 @@ def test_short_gap_fetches_only_snapshot(poller, servers, agents):
     servers.record_success(a, T, T, "{}", None)
     poller.poll_once(now=T + 30)  # 30 <= 2 * 15
     assert [p for _, p, _ in agents.calls if p != "/api/v1/info"] == ["/api/v1/snapshot"]
-    poller.poll_once(now=T + 45)  # gleicher Snapshot nochmal: nichts Neues, Status bleibt
+    poller.poll_once(now=T + 45)  # gleicher Snapshot, aber erst 15 s seit last_seen: kein Fehler
     g = servers.get(a)
     assert g.status == "ok" and g.failures == 0 and g.last_ts == T + 30 and g.last_seen == T + 30
+
+
+def test_stuck_agent_becomes_unreachable_then_recovers(poller, servers, agents):  # P2-R5
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T)] * 4 + [snap(T + 75)],
+                                   "/api/v1/history": [{"points": []}] * 4})
+    poller.poll_once(now=T)
+    for now in (T + 31, T + 46, T + 61):  # > 2 * 15 s seit last_seen ohne neue Daten
+        poller.poll_once(now=now)
+    g = servers.get(a)
+    assert g.status == "unreachable" and g.failures == 3 and g.last_error == "Agent liefert keine neuen Daten"
+    poller.poll_once(now=T + 76)
+    assert servers.get(a).status == "ok" and servers.get(a).failures == 0
+
+
+def test_never_answering_new_server_uses_created_at(poller, servers, agents, conn):  # P2-R5
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T)]})
+    conn.execute("UPDATE servers SET last_ts=?, created_at=? WHERE id=?", (T, T - 100, a))
+    conn.commit()
+    poller.poll_once(now=T + 10)  # last_seen fehlt -> created_at zählt
+    assert servers.get(a).last_error == "Agent liefert keine neuen Daten"
 
 
 def test_wrong_secret_key_marks_only_that_server(poller, servers, agents, conn):  # Review Focus 3
@@ -245,8 +265,12 @@ def test_local_server_stored(poller, servers, conn, local_collector):
     assert g.status == "ok" and g.last_ts == T and g.last_seen == T + 5
     stored = conn.execute("SELECT last_snapshot FROM servers WHERE id=?", (loc.id,)).fetchone()[0]
     assert json.loads(stored) == before and local_collector.snap == before
-    poller.poll_once(now=T + 10)  # nicht neuer -> nichts
-    assert servers.get(loc.id).last_seen == T + 5 and count_raw_points(conn, loc.id, M) == 1
+    poller.poll_once(now=T + 10)  # nicht neuer, erst 5 s -> nichts
+    assert servers.get(loc.id).last_seen == T + 5 and servers.get(loc.id).failures == 0
+    poller.poll_once(now=T + 36)  # hängender lokaler Sammler (P2-R5)
+    g = servers.get(loc.id)
+    assert g.failures == 1 and g.last_error == "Lokale Messung liefert keine neuen Daten"
+    assert count_raw_points(conn, loc.id, M) == 1
 
 
 def test_disabled_server_not_polled(poller, servers, agents):
@@ -296,7 +320,22 @@ class _Handler(BaseHTTPRequestHandler):
         routes = {"/ok": (200, b'{"a": 1}'), "/redirect": (302, b""), "/broken": (200, b"{nope"),
                   "/list": (200, b"[1]"), "/big": (200, b'{"x": "' + b"a" * 2000 + b'"}'), "/fail": (500, b"secret body"),
                   "/forbidden": (403, b""), "/slow": None}
-        r = routes.get(self.path.split("?")[0], (404, b""))
+        if self.path.startswith("/trickle/"):  # Kopf sofort, Rumpf 1 Byte je 0,2 s
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            try:
+                for _ in range(100):
+                    self.wfile.write(b" ")
+                    self.wfile.flush()
+                    time.sleep(0.2)
+            except OSError:
+                pass
+            return
+        if self.path.startswith("/good/"):
+            r = (200, json.dumps(snap(int(time.time())) if self.path.endswith("/snapshot") else {}).encode())
+        else:
+            r = routes.get(self.path.split("?")[0], (404, b""))
         if r is None:
             time.sleep(1)
             r = (200, b"{}")
@@ -417,3 +456,112 @@ def test_server_deleted_during_fetch_does_not_break_cycle(poller, servers, agent
     add(servers, agents, "c", {"/api/v1/snapshot": [AgentError("Agent nicht erreichbar")]})
     poller.poll_once(now=T)
     assert servers.get(a) is None and servers.get(b).status == "ok" and count_raw_points(conn, b, M) == 1
+
+
+def test_trickling_agent_hits_total_deadline_and_others_are_written(http_url, tmp_path, conn, servers):  # Fix 1
+    t0 = time.monotonic()
+    with pytest.raises(AgentError) as e:
+        AgentClient(http_url + "trickle", "t", {}, 1).get("/x")
+    assert e.value.message == "Agent nicht erreichbar" and time.monotonic() - t0 < 1.6
+    a = servers.add("a", http_url + "trickle", "t").id
+    b = servers.add("b", http_url + "good", "t").id
+    s = Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": "x", "MONI_DATA_DIR": str(tmp_path),
+                           "MONI_POLL_TIMEOUT": "1"})
+    p = Poller(s, servers._box, StubCollector())
+    try:
+        p.poll_once(int(time.time()))
+    finally:
+        p.close()
+    assert servers.get(a).last_error == "Agent nicht erreichbar" and servers.get(b).status == "ok"
+
+
+def test_hanging_fetch_does_not_block_cycle(settings, box, servers, agents, monkeypatch):  # Fix 1
+    release = threading.Event()
+    monkeypatch.setattr(pmod, "_GRACE", 0)
+    s = Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": settings.secret_key,
+                           "MONI_DATA_DIR": settings.data_dir, "MONI_POLL_TIMEOUT": "0.1"})
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [lambda: release.wait(5) and snap(T)]})
+    b = add(servers, agents, "b", {"/api/v1/snapshot": [snap(T)]})
+    p = Poller(s, box, StubCollector(), client_factory=agents.factory)
+    try:
+        t0 = time.monotonic()
+        p.poll_once(now=T)
+        assert time.monotonic() - t0 < 2
+    finally:
+        release.set()
+        p.close()
+    assert servers.get(a).last_error == "Agent nicht erreichbar" and servers.get(b).status == "ok"
+
+
+def test_failed_history_still_stores_snapshot(poller, servers, agents, conn, caplog):  # Fix 3
+    a = add(servers, agents, "a", {"/api/v1/history": [AgentError("Ungültige Antwort vom Agent")],
+                                   "/api/v1/snapshot": [snap(T + 300)]})
+    servers.record_success(a, T, T, "{}", None)
+    with caplog.at_level("INFO", logger="moni.poller"):
+        poller.poll_once(now=T + 300)
+    g = servers.get(a)
+    assert g.status == "ok" and g.last_ts == T + 300 and count_raw_points(conn, a, M) == 1
+    assert "Lückenfüllung übersprungen" in caplog.text and "tok-a" not in caplog.text
+
+
+def test_fatal_history_error_still_fatal(poller, servers, agents):
+    a = add(servers, agents, "a", {"/api/v1/history": [AgentError("Agent lehnt Token ab", fatal=True)]})
+    servers.record_success(a, T, T, "{}", None)
+    poller.poll_once(now=T + 300)
+    assert servers.get(a).status == "error"
+
+
+def test_corrupt_credentials_row_marks_only_that_server(poller, servers, agents, conn, box):
+    a = add(servers, agents, "a", {})
+    c = add(servers, agents, "c", {})
+    b = add(servers, agents, "b", {"/api/v1/snapshot": [snap(T)]})
+    conn.execute("UPDATE servers SET headers_enc=? WHERE id=?", (box.encrypt("{kaputt"), a))
+    conn.execute("UPDATE servers SET headers_enc=? WHERE id=?", (box.encrypt("[1]"), c))
+    conn.commit()
+    poller.poll_once(now=T)
+    for sid in (a, c):
+        assert servers.get(sid).status == "error" and servers.get(sid).last_error == "Zugangsdaten nicht entschlüsselbar"
+    assert servers.get(b).status == "ok"
+
+
+def test_proxy_env_is_ignored(http_url):  # P2-R6
+    # Eigener Prozess: der Opener entsteht beim Import, die Umgebung muss also vorher gesetzt sein.
+    import os
+    import subprocess
+    import sys
+    env = {k: v for k, v in os.environ.items() if k.lower() != "no_proxy"}
+    env.update({k: "http://127.0.0.1:9" for k in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy")})
+    code = ("import sys; from moni.manager.poller import AgentClient; "
+            "assert AgentClient(sys.argv[1], 't', {}, 2).get('/ok') == {'a': 1}")
+    r = subprocess.run([sys.executable, "-c", code, http_url], env=env, cwd=os.path.dirname(os.path.dirname(__file__)),
+                       capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr[-500:]
+
+
+def test_stop_between_fetch_and_write_skips_writing(poller, servers, agents):
+    def stop_then_snap():
+        poller._stop.set()
+        return snap(T)
+
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [stop_then_snap]})
+    poller.poll_once(now=T)
+    assert servers.get(a).status == "unknown" and servers.get(a).last_ts is None
+
+
+def test_info_failure_not_retried_every_cycle(poller, servers, agents):
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T), snap(T + 15), snap(T + 300)],
+                                   "/api/v1/history": [{"points": []}],
+                                   "/api/v1/info": [AgentError("Agent antwortet mit HTTP 404"), {"version": "x"}]})
+    for now in (T, T + 15, T + 300):
+        poller.poll_once(now=now)
+    assert [p for _, p, _ in agents.calls].count("/api/v1/info") == 2
+    assert servers.get(a).status == "ok"
+
+
+def test_warning_logged_only_on_status_change(poller, servers, agents, caplog):
+    add(servers, agents, "a", {"/api/v1/snapshot": [AgentError("Agent nicht erreichbar")] * 5})
+    with caplog.at_level("DEBUG", logger="moni.poller"):
+        for i in range(5):
+            poller.poll_once(now=T + 15 * i)
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == ["Abruf von a fehlgeschlagen: Agent nicht erreichbar (Status unreachable)"]

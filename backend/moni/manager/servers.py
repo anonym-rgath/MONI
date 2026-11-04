@@ -26,11 +26,12 @@ class Server:
     last_error: str | None
     last_seen: int | None
     last_ts: int | None
+    created_at: int
 
 
 def _server(r: sqlite3.Row) -> Server:
     return Server(r["id"], r["name"], r["url"], bool(r["is_local"]), json.loads(r["header_names"]), bool(r["enabled"]),
-                  r["status"], r["failures"], r["last_error"], r["last_seen"], r["last_ts"])
+                  r["status"], r["failures"], r["last_error"], r["last_seen"], r["last_ts"], r["created_at"])
 
 
 def _visible_ascii(value: str, allow_space: bool = False) -> bool:
