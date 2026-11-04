@@ -15,7 +15,7 @@ from ..timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
 
-SCOPES = frozenset({"read"})
+SCOPES = frozenset({"read", "admin"})
 _ID_RE = re.compile(r"[0-9a-f]{8}")
 
 

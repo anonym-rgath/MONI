@@ -73,7 +73,7 @@ def test_missing_scope_is_403(client, auth, monkeypatch):
     from dataclasses import replace
     tokens = client.app.state.tokens
     real = tokens.verify
-    monkeypatch.setattr(tokens, "verify", lambda p: replace(real(p), scope="admin"))
+    monkeypatch.setattr(tokens, "verify", lambda p: replace(real(p), scope="root"))
     r = client.get("/api/v1/info", headers=auth)
     assert r.status_code == 403 and r.headers["content-type"].startswith("application/problem+json")
 
@@ -97,3 +97,12 @@ def test_cors_preflight_allows_authorization(settings, collector):
 def test_corrupt_token_file_is_401(client, auth, settings):
     (Path(settings.data_dir) / "tokens.json").write_text("{kaputt")
     assert client.get("/api/v1/info", headers=auth).status_code == 401
+
+
+def test_admin_token_can_read(client, store):
+    _, plain = store.create("adm", scope="admin")
+    assert client.get("/api/v1/info", headers={"Authorization": f"Bearer {plain}"}).status_code == 200
+
+
+def test_info_tls_from_settings(client, auth):
+    assert client.get("/api/v1/info", headers=auth).json()["tls"] == "off"

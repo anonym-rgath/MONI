@@ -20,7 +20,7 @@ def test_expired_token(tmp_path):
 
 def test_unknown_scope(tmp_path):
     with pytest.raises(ValueError):
-        TokenStore(tmp_path / "t.json").create("x", scope="admin")
+        TokenStore(tmp_path / "t.json").create("x", scope="root")
 
 def test_corrupt_file_fails_closed_and_is_not_overwritten(tmp_path):
     p = tmp_path / "t.json"; p.write_text("{kaputt")
@@ -108,3 +108,8 @@ def test_cli_invalid_env(monkeypatch, capsys):
     monkeypatch.setenv("MONI_ROLE", "quatsch")
     assert cli.main(["token", "list"]) == 2
     assert capsys.readouterr().err.strip()
+
+
+def test_admin_scope_allowed(tmp_path):
+    tok, _ = TokenStore(tmp_path / "t.json").create("x", scope="admin")
+    assert tok.scope == "admin"

@@ -19,6 +19,6 @@ def require_scope(scope: str) -> Callable:
             raise HTTPException(500, "Interner Fehler") from None
         if tok is None:
             raise HTTPException(401, "Token fehlt oder ist ungültig", headers=_UNAUTH)
-        if tok.scope != scope:
+        if tok.scope not in ({"read", "admin"} if scope == "read" else {scope}):  # admin schließt read ein
             raise HTTPException(403, "Token hat nicht den nötigen Scope")
     return dep

@@ -49,3 +49,27 @@ def test_json_formatter():
     out = json.loads(logs.JsonFormatter().format(rec))
     assert out["level"] == "WARNING" and out["msg"] == "Hallo Welt" and out["logger"] == "moni"
     assert out["ts"].endswith("Z")
+
+
+def test_manager_requires_secret_key():
+    with pytest.raises(ValueError, match="MONI_SECRET_KEY"):
+        Settings.from_env({"MONI_ROLE": "manager"})
+
+
+def test_secret_key_not_in_repr():
+    s = Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": "geheim123"})
+    assert "geheim123" not in repr(s)
+
+
+def test_manager_defaults_and_db_path():
+    s = Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": "x", "MONI_DATA_DIR": "/d"})
+    assert (s.poll_timeout_seconds, s.retention_raw_hours, s.retention_minute_days, s.retention_hour_days) == (10.0, 48, 30, 365)
+    assert str(s.db_path) == "/d/moni.db"
+
+
+@pytest.mark.parametrize("env,name", [({"MONI_PORT": "abc"}, "MONI_PORT"), ({"MONI_PORT": "70000"}, "MONI_PORT"),
+                                      ({"MONI_RETENTION_RAW_HOURS": "0"}, "MONI_RETENTION_RAW_HOURS"),
+                                      ({"DOCKER_STATS_TIMEOUT": "0"}, "DOCKER_STATS_TIMEOUT")])
+def test_invalid_values_name_the_variable(env, name):
+    with pytest.raises(ValueError, match=name):
+        Settings.from_env(env)

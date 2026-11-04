@@ -20,7 +20,7 @@ def health():
 def info(request: Request):
     return {"version": __version__, "role": "agent", "api_version": "v1",
             "hostname": read_hostname(request.app.state.settings.host_etc),
-            "capabilities": ["snapshot", "history", "metrics"], "paired": False, "tls": "off"}
+            "capabilities": ["snapshot", "history", "metrics"], "paired": False, "tls": request.app.state.settings.tls}
 
 
 @router.get("/snapshot", dependencies=[read])
