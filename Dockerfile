@@ -12,8 +12,35 @@ RUN yarn install --frozen-lockfile --non-interactive
 COPY frontend/ .
 RUN yarn build
 
-# Final Image
-FROM python:3.14-slim@sha256:c845af9399020c7e562969a13689e929074a10fd057acd1b1fad06a2fb068e97
+# Agent-Image: nur der Messdienst (kein nginx, kein Frontend)
+FROM python:3.14-slim@sha256:c845af9399020c7e562969a13689e929074a10fd057acd1b1fad06a2fb068e97 AS agent
+
+WORKDIR /app
+
+COPY backend/requirements-docker.txt ./backend/
+RUN pip install --no-cache-dir -r backend/requirements-docker.txt
+
+COPY backend/moni /app/moni
+
+RUN addgroup --system app \
+    && adduser --system --ingroup app --home /app app \
+    && mkdir -p /data \
+    && chown -R app:app /app /data
+
+ENV MONI_DATA_DIR=/data PYTHONUNBUFFERED=1
+
+USER app
+
+EXPOSE 9810
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9810/api/v1/health', timeout=3)"]
+
+CMD ["python", "-m", "moni"]
+
+# Manager-Image (Uebergang bis Paket 2)
+# shortcut: Manager-Stufe startet bis Paket 2 den Agent-Code hinter nginx; alte UI ist auf diesem Branch außer Betrieb.
+FROM python:3.14-slim@sha256:c845af9399020c7e562969a13689e929074a10fd057acd1b1fad06a2fb068e97 AS manager
 
 WORKDIR /app
 
@@ -30,7 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements-docker.txt ./backend/
 RUN pip install --no-cache-dir -r backend/requirements-docker.txt
 
-COPY backend/server.py ./backend/
+COPY backend/moni ./moni
 
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
@@ -86,8 +113,9 @@ stdout_logfile=/tmp/nginx.log \n\
 stderr_logfile=/tmp/nginx.err.log \n\
 \n\
 [program:backend] \n\
-command=uvicorn server:app --host 0.0.0.0 --port 8001 \n\
-directory=/app/backend \n\
+command=sh -c "mkdir -p /tmp/moni-data && exec python -m moni" \n\
+directory=/app \n\
+environment=MONI_ROLE="agent",MONI_PORT="8001",MONI_DATA_DIR="/tmp/moni-data" \n\
 autostart=true \n\
 autorestart=true \n\
 stdout_logfile=/tmp/backend.log \n\
@@ -101,6 +129,6 @@ USER app
 EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1/api/ || exit 1
+    CMD curl -fsS http://127.0.0.1/api/v1/health || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

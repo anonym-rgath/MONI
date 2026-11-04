@@ -40,7 +40,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/api/"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/api/v1/health"]
       interval: 30s
       timeout: 5s
       retries: 3

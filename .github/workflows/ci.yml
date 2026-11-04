@@ -1,14 +1,11 @@
 # CI-Pipeline fuer MONI
 # ---------------------
 # Validiert jeden Push auf main und jeden Pull Request (inkl. Dependabot):
-#   1. Baut das vollstaendige Multi-stage-Image. Damit laufen automatisch
-#      `yarn build` (inkl. ESLint via CRACO) und `pip install` durch -
-#      Build-Fehler in Frontend- oder Backend-Dependencies fallen hier auf.
-#   2. Startet den Container und prueft, ob die API antwortet (Boot-Smoke).
-#
-# Die vollstaendige Runtime-Haertung (read_only, cap_drop, Docker-Socket-Proxy)
-# wird weiterhin auf dem Ziel-Host per scripts/smoke.sh verifiziert - sie braucht das
-# externe traefik-network und die Host-Mounts, die im CI-Runner fehlen.
+#   1. Backend-Unit-Tests.
+#   2. Baut beide Image-Targets (agent, manager). Damit laufen `yarn build`
+#      und `pip install` durch.
+#   3. Startet compose.agent.yaml (Agent + Socket-Proxy) auf dem Runner und
+#      prueft Health, Auth, Snapshot, Metriken und die Container-Haertung.
 
 name: CI
 
@@ -40,8 +37,28 @@ jobs:
         run: python -m pytest tests/ -v
         working-directory: backend
 
+jobs:
+  backend-tests:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Run pytest
+        run: python -m pytest tests/ -v
+        working-directory: backend
+
   build:
-    name: Build image & boot smoke
+    name: Build images & agent smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -50,29 +67,43 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Build agent image
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: agent
           load: true
-          tags: linux-monitor:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: moni-agent:ci
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
 
-      - name: Boot smoke test
+      - name: Build manager image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: manager
+          load: true
+          tags: moni-manager:ci
+          cache-from: type=gha,scope=manager
+          cache-to: type=gha,mode=max,scope=manager
+
+      - name: Agent smoke test
         run: |
-          docker run -d --name linux-monitor-ci -p 8080:80 linux-monitor:ci
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8080/api/ | grep -q '"status":"live"'; then
-              echo "OK: API antwortet mit status=live"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "FAIL: API hat nach 30s nicht mit status=live geantwortet"
-          docker logs linux-monitor-ci
-          exit 1
+          set -euo pipefail
+          docker compose -f compose.agent.yaml up -d --build
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:9810/api/v1/health | grep -q '"ok"' && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9810/api/v1/snapshot)" = 401
+          TOKEN=$(docker compose -f compose.agent.yaml exec -T moni-agent python -m moni.cli token create --name ci | tail -n1)
+          sleep 20   # mindestens eine Messung abwarten (Takt 15 s)
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9810/api/v1/snapshot > snap.json
+          python3 -c "import json; s=json.load(open('snap.json')); assert s['docker']['reachable'], s['warnings']; assert s['host']['filesystems'], 'keine Dateisysteme'; print('OK', len(s['containers']), 'Container')"
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9810/metrics | grep -q '^moni_docker_up 1'
+          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.agent.yaml ps -q moni-agent))" = "app true [ALL]"
+
+      - name: Logs
+        if: always()
+        run: docker compose -f compose.agent.yaml logs
 
       - name: Cleanup
         if: always()
-        run: docker rm -f linux-monitor-ci || true
+        run: docker compose -f compose.agent.yaml down -v

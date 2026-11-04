@@ -1,7 +1,7 @@
 import os
 import sys
 
-# backend/ in den Importpfad legen, damit `import server` funktioniert,
+# backend/ in den Importpfad legen, damit `import moni` funktioniert,
 # egal von wo pytest gestartet wird.
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_DIR not in sys.path:

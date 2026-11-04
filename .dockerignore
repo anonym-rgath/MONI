@@ -10,3 +10,7 @@ frontend/.env.development.local
 frontend/.env.test.local
 frontend/.env.production.local
 *.log
+backend/tests
+backend/.venv
+backend/.pytest_cache
+**/__pycache__
