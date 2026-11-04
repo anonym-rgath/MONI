@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from moni import __version__, errors
-from moni.agent.api import router
+from moni.agent.api import metrics_router, router
 from moni.auth.tokens import TokenStore
 from moni.collector import Collector
 from moni.config import Settings
@@ -35,6 +35,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     app.state.tokens = TokenStore(Path(settings.data_dir) / "tokens.json")
     errors.install(app)
     app.include_router(router)
+    app.include_router(metrics_router)
     app.add_middleware(RateLimitMiddleware, per_minute=settings.rate_limit_per_minute)
     if settings.cors_origins:  # zuletzt = aussen, damit auch 429 CORS-Header bekommt
         app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["GET"],
