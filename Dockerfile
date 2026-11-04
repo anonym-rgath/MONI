@@ -25,7 +25,7 @@ COPY backend/moni /app/moni
 RUN addgroup --system app \
     && adduser --system --ingroup app --home /app app \
     && mkdir -p /data \
-    && chown -R app:app /app /data
+    && chown app:app /data
 
 ENV MONI_DATA_DIR=/data PYTHONUNBUFFERED=1
 

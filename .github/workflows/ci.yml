@@ -37,26 +37,6 @@ jobs:
         run: python -m pytest tests/ -v
         working-directory: backend
 
-jobs:
-  backend-tests:
-    name: Backend unit tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: pip install -r backend/requirements-dev.txt
-
-      - name: Run pytest
-        run: python -m pytest tests/ -v
-        working-directory: backend
-
   build:
     name: Build images & agent smoke
     runs-on: ubuntu-latest
@@ -91,7 +71,9 @@ jobs:
         run: |
           set -euo pipefail
           docker compose -f compose.agent.yaml up -d --build
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:9810/api/v1/health | grep -q '"ok"' && break; sleep 1; done
+          ok=0
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:9810/api/v1/health | grep -q '"ok"' && { ok=1; break; }; sleep 1; done
+          [ "$ok" = 1 ] || { echo "FAIL: /api/v1/health nicht erreichbar"; exit 1; }
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9810/api/v1/snapshot)" = 401
           TOKEN=$(docker compose -f compose.agent.yaml exec -T moni-agent python -m moni.cli token create --name ci | tail -n1)
           sleep 20   # mindestens eine Messung abwarten (Takt 15 s)
