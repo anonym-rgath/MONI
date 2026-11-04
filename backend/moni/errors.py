@@ -1,5 +1,6 @@
 """RFC 9457 Problem Details fuer alle Fehlerantworten."""
 import logging
+from http import HTTPStatus
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -12,7 +13,6 @@ PROBLEM = "application/problem+json"
 
 def problem(status: int, detail: str, title: str | None = None, headers: dict | None = None) -> JSONResponse:
     if title is None:
-        from http import HTTPStatus
         try:
             title = HTTPStatus(status).phrase
         except ValueError:

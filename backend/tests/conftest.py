@@ -66,7 +66,7 @@ def measured(collector, monkeypatch):
 
 
 @pytest.fixture
-def client(settings, collector, token):  # token: Datei vor dem App-Start anlegen
+def client(settings, collector, token):  # token: stellt sicher, dass `auth` und die Token-Datei zusammenpassen
     from fastapi.testclient import TestClient
     from moni.app import create_app
     return TestClient(create_app(settings, collector))

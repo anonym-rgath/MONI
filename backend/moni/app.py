@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from moni import errors
+from moni import __version__, errors
 from moni.agent.api import router
 from moni.auth.tokens import TokenStore
 from moni.collector import Collector
@@ -29,7 +29,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
             if own:
                 collector.stop()
 
-    app = FastAPI(title="Moni Agent", docs_url="/api/v1/docs", openapi_url="/api/v1/openapi.json",
+    app = FastAPI(title="Moni Agent", version=__version__, docs_url="/api/v1/docs", openapi_url="/api/v1/openapi.json",
                   redoc_url=None, lifespan=lifespan)
     app.state.settings, app.state.collector = settings, collector
     app.state.tokens = TokenStore(Path(settings.data_dir) / "tokens.json")
@@ -37,5 +37,6 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     app.include_router(router)
     app.add_middleware(RateLimitMiddleware, per_minute=settings.rate_limit_per_minute)
     if settings.cors_origins:  # zuletzt = aussen, damit auch 429 CORS-Header bekommt
-        app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["GET"])
+        app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["GET"],
+                           allow_headers=["Authorization"])
     return app

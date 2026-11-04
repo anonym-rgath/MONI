@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from moni import __version__
 from moni.auth.deps import require_scope
 from moni.collect.host import read_hostname
 from moni.timeutil import parse_iso
@@ -15,7 +16,7 @@ def health():
 
 @router.get("/info", dependencies=[read])
 def info(request: Request):
-    return {"version": "2.0.0", "role": "agent", "api_version": "v1",
+    return {"version": __version__, "role": "agent", "api_version": "v1",
             "hostname": read_hostname(request.app.state.settings.host_etc),
             "capabilities": ["snapshot", "history", "metrics"], "paired": False, "tls": "off"}
 

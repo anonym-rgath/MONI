@@ -1,4 +1,5 @@
 import logging
+import types
 
 
 def test_health_needs_no_token(client):
@@ -35,9 +36,10 @@ def test_revoked_token_401(client, auth, store, token):
     store.revoke(token.id)
     assert client.get("/api/v1/info", headers=auth).status_code == 401
 
-def test_rate_limit(client, auth):
+def test_rate_limit(client, auth, monkeypatch):
+    monkeypatch.setattr("moni.ratelimit.time", types.SimpleNamespace(time=lambda: 30.0))  # kein Fensterwechsel
     codes = [client.get("/api/v1/info", headers=auth).status_code for _ in range(6)]
-    assert codes[-1] == 429
+    assert codes[:5] == [200] * 5 and codes[-1] == 429
     r = client.get("/api/v1/info", headers=auth)
     assert int(r.headers["retry-after"]) >= 1 and r.headers["content-type"].startswith("application/problem+json")
     assert client.get("/api/v1/health").status_code == 200   # ausgenommen
@@ -60,3 +62,32 @@ def test_docs_paths(client):
     assert client.get("/api/v1/openapi.json").status_code == 200
     assert client.get("/api/v1/docs").status_code == 200
     assert client.get("/docs").status_code == 404 and client.get("/openapi.json").status_code == 404
+
+def test_version_matches_package(client, auth):
+    from moni import __version__
+    assert client.get("/api/v1/info", headers=auth).json()["version"] == __version__
+    assert client.get("/api/v1/openapi.json").json()["info"]["version"] == __version__
+
+def test_missing_scope_is_403(client, auth, monkeypatch):
+    from dataclasses import replace
+    tokens = client.app.state.tokens
+    real = tokens.verify
+    monkeypatch.setattr(tokens, "verify", lambda p: replace(real(p), scope="admin"))
+    r = client.get("/api/v1/info", headers=auth)
+    assert r.status_code == 403 and r.headers["content-type"].startswith("application/problem+json")
+
+def test_verify_exception_is_500_without_details(client, auth, monkeypatch):
+    def boom(p): raise RuntimeError("geheim-xyz")
+    monkeypatch.setattr(client.app.state.tokens, "verify", boom)
+    r = client.get("/api/v1/info", headers=auth)
+    assert r.status_code == 500 and r.headers["content-type"].startswith("application/problem+json")
+    assert "geheim-xyz" not in r.text
+
+def test_cors_preflight_allows_authorization(settings, collector):
+    from dataclasses import replace
+    from fastapi.testclient import TestClient
+    from moni.app import create_app
+    c = TestClient(create_app(replace(settings, cors_origins=("http://x.test",)), collector))
+    r = c.options("/api/v1/info", headers={"Origin": "http://x.test", "Access-Control-Request-Method": "GET",
+                                           "Access-Control-Request-Headers": "Authorization"})
+    assert r.status_code == 200 and "authorization" in r.headers["access-control-allow-headers"].lower()
