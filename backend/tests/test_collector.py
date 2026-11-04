@@ -74,3 +74,18 @@ def test_stop_ends_thread(monkeypatch):
     c.start()
     c.stop()
     assert not c._thread.is_alive()
+    assert c.latest() is not None
+
+def test_history_ignores_subsecond_part(monkeypatch):
+    c = collector.Collector(Settings.from_env({"MONI_COLLECT_INTERVAL": "15", "MONI_BUFFER_SECONDS": "60"}), client=object())
+    monkeypatch.setattr(collector, "read_raw", lambda s, cl: raw(T0 + timedelta(seconds=15, milliseconds=400)))
+    c.collect_once()
+    assert c.history(T0 + timedelta(seconds=15))[0] == []
+    assert len(c.history(T0 + timedelta(seconds=14))[0]) == 1
+
+def test_start_is_idempotent(monkeypatch):
+    c = collector.Collector(Settings.from_env({"MONI_COLLECT_INTERVAL": "15", "MONI_BUFFER_SECONDS": "60"}), client=object())
+    monkeypatch.setattr(collector, "read_raw", lambda s, cl: raw(T0))
+    c.start(); t = c._thread; c.start()
+    assert c._thread is t
+    c.stop()

@@ -110,7 +110,7 @@ class Collector:
         snap = derive(self._prev_raw, cur)
         self._prev_raw = cur
         with self._lock:
-            self._buffer.append((cur["taken_at"], snap))
+            self._buffer.append((cur["taken_at"].replace(microsecond=0), snap))  # wie der emittierte Zeitstempel
         return snap
 
     def latest(self) -> dict | None:
@@ -130,11 +130,14 @@ class Collector:
             log.exception("Messzyklus fehlgeschlagen")
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
+        while True:
             self._run_one_cycle()
-            self._stop.wait(self._settings.collect_interval_seconds)
+            if self._stop.wait(self._settings.collect_interval_seconds):
+                break
 
     def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="moni-collector", daemon=True)
         self._thread.start()
