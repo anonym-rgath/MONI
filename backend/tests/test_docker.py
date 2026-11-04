@@ -57,3 +57,33 @@ def test_unknown_health_and_list_fallback():
     assert c["health"] == "unknown"
     c = docker.container_metrics(Fake({"/containers/" + "a" * 64 + "/json": {"State": {}}}), RUNNING, None, 2.5, 1.0)
     assert c["health"] == "none"
+
+def test_worker_exception_drops_only_that_container():
+    class Boom(Fake):
+        def get(self, endpoint, timeout):
+            if "b" * 64 in endpoint: raise RuntimeError("kaputt")
+            return super().get(endpoint, timeout)
+    routes = {"/containers/json": [RUNNING, RUNNING | {"Id": "b" * 64, "Names": ["/bad"]}]}
+    cs, st, _ = docker.collect_containers(Boom(routes), Settings.from_env({}), None)
+    assert [c["name"] for c in cs] == ["web"] and st["container_count"] == 1
+
+def test_running_uptime_is_int():
+    import time
+    c = docker.container_metrics(Fake({}), RUNNING | {"Created": int(time.time()) - 60}, None, 2.5, 1.0)
+    assert isinstance(c["uptime_seconds"], int) and c["uptime_seconds"] >= 0
+
+def test_non_list_payload_is_unreachable():
+    for payload in ({"message": "x"}, 5):
+        cs, st, warn = docker.collect_containers(Fake({"/containers/json": payload}), Settings.from_env({}), None)
+        assert cs == [] and st["reachable"] is False and warn == ["Docker API nicht erreichbar"]
+
+def test_client_get_swallows_http_exception(monkeypatch):
+    import http.client
+    def boom(*a, **k): raise http.client.BadStatusLine("x")
+    monkeypatch.setattr(docker.urlrequest, "urlopen", boom)
+    assert docker.DockerClient("http://x").get("/containers/json", 1.0) is None
+
+def test_no_networks_and_null_limit():
+    s = stats(); del s["networks"]; s["memory_stats"]["limit"] = None
+    c = docker.container_metrics(Fake({"/containers/" + "a" * 64 + "/stats": s}), RUNNING, None, 2.5, 1.0)
+    assert c["rx_bytes"] is None and c["tx_bytes"] is None and c["memory_limit_bytes"] is None

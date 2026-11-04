@@ -1,4 +1,5 @@
 """Rein lesende Docker-Messung über die Engine-API (Socket-Proxy). Rohwerte in Bytes."""
+import http.client
 import json
 import logging
 import socket
@@ -35,7 +36,7 @@ class DockerClient:
                     response += chunk
             if b"\r\n\r\n" in response:
                 return json.loads(response.split(b"\r\n\r\n", 1)[1])
-        except (OSError, ValueError) as e:  # Socket-, Timeout- und JSON-Fehler
+        except (OSError, ValueError, http.client.HTTPException) as e:  # Socket-, Timeout-, JSON-, HTTP-Fehler
             log.warning("Docker API Fehler: %s", e)
         return None
 
@@ -67,7 +68,7 @@ def _memory(stats: dict, host_total_mem_bytes: int | None) -> tuple[int | None, 
         inactive = detail.get("inactive_file") or detail.get("total_inactive_file") or 0
         if usage - inactive > 0:
             usage -= inactive
-    limit = mem.get("limit", 0)
+    limit = mem.get("limit") or 0
     if limit == 0 or limit > NO_LIMIT:
         limit = host_total_mem_bytes or None  # ohne eigenes Limit darf der Container den Host nutzen
     if usage is None:
@@ -100,8 +101,9 @@ def container_metrics(client: DockerClient, c: dict, host_total_mem_bytes: int |
         m["cpu_percent"] = _cpu_percent(stats)
         m["memory_usage_bytes"], m["memory_limit_bytes"], m["memory_percent"] = _memory(stats, host_total_mem_bytes)
         nets = (stats.get("networks") or {}).values()
-        m["rx_bytes"] = sum(n.get("rx_bytes", 0) for n in nets)
-        m["tx_bytes"] = sum(n.get("tx_bytes", 0) for n in nets)
+        if nets:  # ohne networks (z. B. Host-Netzwerk) bleibt es unbekannt
+            m["rx_bytes"] = sum(n.get("rx_bytes", 0) for n in nets)
+            m["tx_bytes"] = sum(n.get("tx_bytes", 0) for n in nets)
 
     inspect = client.get(f"/containers/{full_id}/json", inspect_timeout)
     if inspect:
@@ -116,7 +118,7 @@ def collect_containers(client: DockerClient, settings: Settings,
     status = {"reachable": False, "container_count": 0, "running_count": 0, "stats_available_count": 0,
               "health": {"healthy": 0, "unhealthy": 0, "starting": 0, "none": 0}}
     data = client.get("/containers/json?all=true", settings.docker_stats_timeout)
-    if data is None:
+    if not isinstance(data, list):
         return [], status, ["Docker API nicht erreichbar"]
     status["reachable"] = True
 
