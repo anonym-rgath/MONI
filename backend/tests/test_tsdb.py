@@ -114,3 +114,64 @@ def test_label_filter_and_list_series(conn, sid):
     r = tsdb.query(conn, sid, "moni_container_cpu_usage_percent", T, T + 10, "raw", {"name": "db"})
     assert [x["labels"]["name"] for x in r["series"]] == ["db"] and r["series"][0]["points"][0][1] == 7.0
     assert {"metric": "moni_container_cpu_usage_percent", "labels": {"name": "web"}} in tsdb.list_series(conn, sid)
+
+
+def _count(conn, table, sid_):
+    return conn.execute(f"SELECT COUNT(*) FROM {table} s JOIN series x ON x.id=s.series_id WHERE x.server_id=? AND x.name=?", (sid_, M)).fetchone()[0]
+
+
+def test_backfill_after_long_outage_is_rolled_up(conn, sid):
+    tsdb.write_snapshots(conn, sid, [snap(T, 1.0)])
+    tsdb.rollup(conn, now=T + 120)
+    for now in range(T + 420, T + 110 * 60 + 300, 300):  # Ausfall: Verdichtung läuft leer weiter
+        tsdb.rollup(conn, now=now)
+    tsdb.write_snapshots(conn, sid, [snap(T + 60 * i, float(i)) for i in range(1, 111)])  # Rückfüllung
+    tsdb.rollup(conn, now=T + 7200 + 5)
+    assert _count(conn, "samples_1m", sid) == 111
+    h = conn.execute("SELECT h.ts, h.count FROM samples_1h h JOIN series x ON x.id=h.series_id WHERE x.name=? ORDER BY h.ts", (M,)).fetchall()
+    assert [tuple(r) for r in h] == [(T, 60), (T + 3600, 51)]
+
+
+def test_rollup_and_prune_use_no_table_scan(conn, sid, settings):
+    stmts = [(tsdb._rollup_sql(size, src, dst, agg), (0, 10)) for _, size, src, dst, agg in tsdb._ROLLUPS]
+    stmts += [(tsdb._prune_sql(t), (0,)) for t in ("samples_raw", "samples_1m", "samples_1h")]
+    for sql, params in stmts:
+        plan = " | ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
+        print(plan)
+        assert "SCAN samples_" not in plan and "SEARCH" in plan
+
+
+def test_auto_falls_back_to_coarser_resolution(conn, sid, settings):
+    tsdb.write_snapshots(conn, sid, [snap(T, 5.0)])
+    tsdb.rollup(conn, now=T + 120)
+    tsdb.prune(conn, now=T + 3 * 86400, settings=settings)  # Rohdaten weg, Minutenwerte da
+    r = tsdb.query(conn, sid, M, T - 100, T + 3600, "auto")
+    assert r["resolution"] == "1m" and r["series"][0]["points"] == [["2026-11-04T12:00:00Z", 5.0, 5.0, 5.0]]
+
+
+def test_prune_removes_orphan_series(conn, sid, settings):
+    a = snap(T, 1.0)
+    a["containers"] = [{"name": "alt", "cpu_percent": 3.0}]
+    tsdb.write_snapshots(conn, sid, [a, snap(T + 49 * 3600, 2.0)])
+    tsdb.prune(conn, now=T + 49 * 3600, settings=settings)
+    assert [s["metric"] for s in tsdb.list_series(conn, sid)] == ["moni_docker_up", M]
+
+
+def test_prune_minute_and_hour_boundaries(conn, sid, settings):
+    tsdb.write_snapshots(conn, sid, [snap(T, 1.0)])
+    sr = conn.execute("SELECT id FROM series").fetchone()[0]
+    now = T + 400 * 86400
+    for table, days in (("samples_1m", 30), ("samples_1h", 365)):
+        for ts in (now - days * 86400 - 1, now - days * 86400):
+            conn.execute(f"INSERT INTO {table} VALUES (?, ?, 1, 1, 1, 1)", (sr, ts))
+    tsdb.prune(conn, now=now, settings=settings)
+    assert conn.execute("SELECT ts FROM samples_1m").fetchall()[0][0] == now - 30 * 86400
+    assert conn.execute("SELECT ts FROM samples_1h").fetchall()[0][0] == now - 365 * 86400
+    assert _count(conn, "samples_1m", sid) == 1 and _count(conn, "samples_1h", sid) == 1
+
+
+def test_non_finite_and_huge_values_skipped(conn, sid):
+    s = snap(T, float("nan"))
+    s["host"]["load"] = {"load1": float("inf"), "load5": 10 ** 400, "load15": 2.0}
+    assert tsdb.write_snapshots(conn, sid, [s]) == T
+    assert [x["metric"] for x in tsdb.list_series(conn, sid)] == ["moni_docker_up", "moni_host_load15"]
