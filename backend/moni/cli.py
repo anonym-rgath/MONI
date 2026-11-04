@@ -5,12 +5,15 @@ from pathlib import Path
 
 from .auth.tokens import TokenStore
 from .config import Settings
+from .secretbox import generate_key
 from .timeutil import utcnow
 
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="moni.cli")
-    t = p.add_subparsers(dest="group", required=True).add_parser("token").add_subparsers(dest="cmd", required=True)
+    g = p.add_subparsers(dest="group", required=True)
+    g.add_parser("secret").add_subparsers(dest="cmd", required=True).add_parser("generate")
+    t = g.add_parser("token").add_subparsers(dest="cmd", required=True)
     c = t.add_parser("create")
     c.add_argument("--name", required=True)
     c.add_argument("--expires-days", type=int)
@@ -21,6 +24,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.group == "secret":  # braucht weder Konfiguration noch Datenverzeichnis
+        print(generate_key())
+        return 0
     try:
         store = TokenStore(Path(Settings.from_env().data_dir) / "tokens.json")
         if args.cmd == "create":
