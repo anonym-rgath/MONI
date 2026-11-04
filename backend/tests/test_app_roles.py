@@ -47,7 +47,7 @@ def test_bad_key_raises_without_key(settings):
 def test_self_owned_lifespan_starts_and_stops_threads(settings):
     app = create_app(_mgr(settings))
     with TestClient(app):
-        assert app.state.collector._thread.is_alive() if hasattr(app.state.collector, "_thread") else True
+        assert app.state.collector._thread.is_alive()
         assert app.state.poller._thread.is_alive()
     assert not app.state.poller._thread.is_alive()
 

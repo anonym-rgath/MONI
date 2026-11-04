@@ -75,3 +75,25 @@ def test_manager_defaults_and_db_path():
 def test_invalid_values_name_the_variable(env, name):
     with pytest.raises(ValueError, match=name):
         Settings.from_env(env)
+
+
+@pytest.mark.parametrize("v,exp", [("", False), ("0", False), ("1", True), ("true", True), ("TRUE", True), ("False", False)])
+def test_trust_local_proxy_values(v, exp):
+    assert Settings.from_env({"MONI_TRUST_LOCAL_PROXY": v}).trust_local_proxy is exp
+
+
+@pytest.mark.parametrize("v", ["yes", "on", "ture", "2"])
+def test_trust_local_proxy_invalid(v):
+    with pytest.raises(ValueError, match="MONI_TRUST_LOCAL_PROXY"):
+        Settings.from_env({"MONI_TRUST_LOCAL_PROXY": v})
+
+
+@pytest.mark.parametrize("v", ["0.0.0.0", "127.0.0.1", "::1", "localhost", "moni-1.example.com"])
+def test_bind_host_valid(v):
+    assert Settings.from_env({"MONI_BIND_HOST": v}).bind_host == v
+
+
+@pytest.mark.parametrize("v", ["", "a b", "bad_host", "-x", "x-", "1.2.3.999;", "host/"])
+def test_bind_host_invalid(v):
+    with pytest.raises(ValueError, match="MONI_BIND_HOST"):
+        Settings.from_env({"MONI_BIND_HOST": v})

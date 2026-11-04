@@ -1,5 +1,7 @@
+import ipaddress
 import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +20,21 @@ def _int(env, name, default):
 
 def _float(env, name, default):
     return _num(float, "eine Zahl", env, name, default)
+
+
+def _flag(raw: str) -> bool:
+    v = raw.strip().lower()
+    if v not in ("", "0", "1", "true", "false"):
+        raise ValueError("MONI_TRUST_LOCAL_PROXY muss 0, 1, true oder false sein")
+    return v in ("1", "true")
+
+
+def _check_host(host: str) -> None:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?", host):
+            raise ValueError("MONI_BIND_HOST muss eine IP-Adresse oder ein Hostname sein") from None
 
 
 @dataclass(frozen=True)
@@ -76,10 +93,11 @@ class Settings:
             retention_minute_days=_int(env, "MONI_RETENTION_MINUTE_DAYS", "30"),
             retention_hour_days=_int(env, "MONI_RETENTION_HOUR_DAYS", "365"),
             bind_host=g("MONI_BIND_HOST", "0.0.0.0"),
-            trust_local_proxy=g("MONI_TRUST_LOCAL_PROXY", "") in ("1", "true"),
+            trust_local_proxy=_flag(g("MONI_TRUST_LOCAL_PROXY", "")),
         )
         if s.role not in ("agent", "manager"):
             raise ValueError(f"MONI_ROLE muss agent oder manager sein, nicht {s.role!r}")
+        _check_host(s.bind_host)
         if s.tls != "off":
             raise ValueError("MONI_TLS kennt in diesem Paket nur 'off'")
         if s.collect_interval_seconds < 1:
