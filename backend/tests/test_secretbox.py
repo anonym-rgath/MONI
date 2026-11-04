@@ -48,3 +48,16 @@ def test_cli_secret_generate(capsys, monkeypatch, tmp_path):
     assert len(out.splitlines()) == 1
     SecretBox(out.strip())
     assert not (tmp_path / "gibtsnicht").exists()
+
+
+def test_encrypt_bad_text_leaks_nothing():
+    with pytest.raises(ValueError) as e:
+        SecretBox(generate_key()).encrypt("geheim\ud800")
+    assert str(e.value) == "Geheimnis kann nicht gespeichert werden"
+    assert e.value.__cause__ is None and e.value.__context__ is None and "geheim" not in repr(e.value)
+
+
+def test_decrypt_error_has_no_context():
+    with pytest.raises(SecretError) as e:
+        SecretBox(generate_key()).decrypt(SecretBox(generate_key()).encrypt("x"))
+    assert e.value.__context__ is None

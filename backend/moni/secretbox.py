@@ -21,13 +21,22 @@ class SecretBox:
             raise ValueError(_BAD_KEY) from None
 
     def encrypt(self, plaintext: str) -> str:
-        return self._f.encrypt(plaintext.encode()).decode()
+        try:
+            data = plaintext.encode()
+        except Exception:
+            data = None
+        if data is None:  # außerhalb von except: sonst hängt die Ausnahme mit dem Klartext als __context__ dran
+            raise ValueError("Geheimnis kann nicht gespeichert werden") from None
+        return self._f.encrypt(data).decode()
 
     def decrypt(self, token: str) -> str:
         try:
-            return self._f.decrypt(token.encode()).decode()
+            text = self._f.decrypt(token.encode()).decode()
         except Exception:  # InvalidToken, falscher Typ, kaputtes UTF-8
+            text = None
+        if text is None:  # außerhalb von except: __context__ bleibt leer
             raise SecretError("Geheimnis nicht entschlüsselbar") from None
+        return text
 
     def rotate(self, token: str) -> str:
         try:

@@ -5,14 +5,26 @@ from pathlib import Path
 
 from .auth.tokens import TokenStore
 from .config import Settings
-from .secretbox import generate_key
+from .manager import db
+from .manager.servers import ServerStore
+from .secretbox import SecretBox, SecretError, generate_key
 from .timeutil import utcnow
 
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="moni.cli")
     g = p.add_subparsers(dest="group", required=True)
-    g.add_parser("secret").add_subparsers(dest="cmd", required=True).add_parser("generate")
+    sec = g.add_parser("secret").add_subparsers(dest="cmd", required=True)
+    sec.add_parser("generate")
+    sec.add_parser("reencrypt")
+    sv = g.add_parser("server").add_subparsers(dest="cmd", required=True)
+    a = sv.add_parser("add", allow_abbrev=False)  # sonst würde --token als --token-file gelten
+    a.add_argument("--name", required=True)
+    a.add_argument("--url", required=True)
+    a.add_argument("--token-file", required=True, help="Datei mit dem Agent-Token, '-' für stdin")
+    a.add_argument("--header", action="append", default=[], metavar="NAME=WERT")
+    sv.add_parser("list")
+    sv.add_parser("remove").add_argument("id", type=int)
     t = g.add_parser("token").add_subparsers(dest="cmd", required=True)
     c = t.add_parser("create")
     c.add_argument("--name", required=True)
@@ -22,11 +34,59 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _read_token(path: str) -> str:
+    text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+    # genau ein abschließender Zeilenumbruch; alles weitere prüft ServerStore.add
+    return text.removesuffix("\n").removesuffix("\r") if text.endswith("\n") else text
+
+
+def _manager(args) -> int:
+    try:
+        s = Settings.from_env()
+        if not s.secret_key:
+            raise ValueError("MONI_SECRET_KEY fehlt – erzeugen mit: python -m moni.cli secret generate")
+        db.migrate(s.db_path)
+        conn = db.connect(s.db_path)
+        try:
+            store = ServerStore(conn, SecretBox(s.secret_key))
+            if args.group == "secret":
+                print(f"Neu verschlüsselt: {store.reencrypt_all()}")
+            elif args.cmd == "add":
+                headers = {}
+                for h in args.header:
+                    k, sep, v = h.partition("=")
+                    if not sep:
+                        raise ValueError("--header erwartet NAME=WERT")
+                    headers[k] = v
+                try:
+                    token = _read_token(args.token_file)
+                except (OSError, UnicodeDecodeError):
+                    raise ValueError("Token-Datei nicht lesbar") from None
+                srv = store.add(args.name, args.url, token, headers)
+                print(f"Server {srv.id} ({srv.name}) angelegt.")
+            elif args.cmd == "list":
+                for v in store.list():
+                    print(f"{v.id}  {v.name}  {v.url or 'lokal'}  {v.status}  {','.join(v.header_names) or '-'}")
+            elif not store.delete(args.id):
+                print(f"Kein Server mit der ID {args.id}.", file=sys.stderr)
+                return 1
+            else:
+                print(f"Server {args.id} entfernt.")
+        finally:
+            conn.close()
+    except (OSError, RuntimeError, ValueError, SecretError) as e:
+        print(f"Fehler: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.group == "secret":  # braucht weder Konfiguration noch Datenverzeichnis
+    if args.group == "secret" and args.cmd == "generate":  # braucht weder Konfiguration noch Datenverzeichnis
         print(generate_key())
         return 0
+    if args.group in ("server", "secret"):
+        return _manager(args)
     try:
         store = TokenStore(Path(Settings.from_env().data_dir) / "tokens.json")
         if args.cmd == "create":
