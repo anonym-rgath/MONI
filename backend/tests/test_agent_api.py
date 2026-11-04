@@ -104,5 +104,19 @@ def test_admin_token_can_read(client, store):
     assert client.get("/api/v1/info", headers={"Authorization": f"Bearer {plain}"}).status_code == 200
 
 
-def test_info_tls_from_settings(client, auth):
-    assert client.get("/api/v1/info", headers=auth).json()["tls"] == "off"
+def test_info_tls_from_settings(settings, collector, auth):
+    from dataclasses import replace
+    from fastapi.testclient import TestClient
+    from moni.app import create_app
+    c = TestClient(create_app(replace(settings, tls="x"), collector))
+    assert c.get("/api/v1/info", headers=auth).json()["tls"] == "x"
+
+
+def test_admin_scope_boundary(client, store):
+    from fastapi import Depends
+    from moni.auth.deps import require_scope
+    client.app.add_api_route("/api/v1/_admin_only", lambda: {"ok": True}, dependencies=[Depends(require_scope("admin"))])
+    h = lambda p: {"Authorization": f"Bearer {p}"}  # noqa: E731
+    assert client.get("/api/v1/_admin_only").status_code == 401
+    assert client.get("/api/v1/_admin_only", headers=h(store.create("r", scope="read")[1])).status_code == 403
+    assert client.get("/api/v1/_admin_only", headers=h(store.create("a", scope="admin")[1])).status_code == 200

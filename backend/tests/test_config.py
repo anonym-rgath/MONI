@@ -69,7 +69,9 @@ def test_manager_defaults_and_db_path():
 
 @pytest.mark.parametrize("env,name", [({"MONI_PORT": "abc"}, "MONI_PORT"), ({"MONI_PORT": "70000"}, "MONI_PORT"),
                                       ({"MONI_RETENTION_RAW_HOURS": "0"}, "MONI_RETENTION_RAW_HOURS"),
-                                      ({"DOCKER_STATS_TIMEOUT": "0"}, "DOCKER_STATS_TIMEOUT")])
+                                      ({"DOCKER_STATS_TIMEOUT": "0"}, "DOCKER_STATS_TIMEOUT"),
+                                      ({"MONI_POLL_TIMEOUT": "nan"}, "MONI_POLL_TIMEOUT"),
+                                      ({"DOCKER_INSPECT_TIMEOUT": "inf"}, "DOCKER_INSPECT_TIMEOUT")])
 def test_invalid_values_name_the_variable(env, name):
     with pytest.raises(ValueError, match=name):
         Settings.from_env(env)

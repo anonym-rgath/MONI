@@ -1,3 +1,4 @@
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -91,7 +92,7 @@ class Settings:
                 raise ValueError(f"{name} muss >= 1 sein")
         for name, v in [("DOCKER_STATS_TIMEOUT", s.docker_stats_timeout), ("DOCKER_INSPECT_TIMEOUT", s.docker_inspect_timeout),
                         ("MONI_POLL_TIMEOUT", s.poll_timeout_seconds)]:
-            if not v > 0:  # auch NaN
+            if not (math.isfinite(v) and v > 0):  # nan/inf
                 raise ValueError(f"{name} muss > 0 sein")
         if s.role == "manager" and not s.secret_key:
             raise ValueError("MONI_SECRET_KEY fehlt – erzeugen mit: python -m moni.cli secret generate")
