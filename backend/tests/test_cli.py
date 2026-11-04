@@ -50,3 +50,10 @@ def test_cli_secret_reencrypt(env, capsys):
     assert add(env) == 0
     assert cli.main(["secret", "reencrypt"]) == 0
     assert capsys.readouterr().out.strip().endswith("1")
+
+
+def test_cli_token_scope(env, capsys):
+    from moni.auth.tokens import TokenStore
+    assert cli.main(["token", "create", "--name", "a", "--scope", "admin"]) == 0
+    assert cli.main(["token", "create", "--name", "r"]) == 0
+    assert [t.scope for t in TokenStore(env / "tokens.json").list()] == ["admin", "read"]

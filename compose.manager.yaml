@@ -1,0 +1,74 @@
+services:
+  moni-manager:
+    build:
+      context: .
+      target: manager
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - /etc/hostname:/host/etc/hostname:ro
+      - moni-manager-data:/data
+    environment:
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
+      - HOST_ETC=/host/etc
+      - HOST_ROOT=/host/root
+      - DOCKER_API_BASE=http://docker-socket-proxy:2375
+      - MONI_SECRET_KEY=${MONI_SECRET_KEY:?MONI_SECRET_KEY muss gesetzt sein (python -m moni.cli secret generate)}
+      - API_CORS_ORIGINS=${API_CORS_ORIGINS:-}
+      - DOCKER_STATS_TIMEOUT=${DOCKER_STATS_TIMEOUT:-2.5}
+      - DOCKER_INSPECT_TIMEOUT=${DOCKER_INSPECT_TIMEOUT:-1.0}
+      - MAX_DOCKER_WORKERS=${MAX_DOCKER_WORKERS:-8}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Nur localhost, solange kein Reverse-Proxy mit TLS davorsteht.
+    ports:
+      - "${MONI_MANAGER_BIND:-127.0.0.1}:8080:80"
+    networks:
+      - default
+      - socket-proxy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    restart: unless-stopped
+    # CONTAINERS=1 erlaubt alle GET unter /containers (inkl. logs/archive); engere Allowlist folgt in Paket 7.
+    environment:
+      - CONTAINERS=1
+      - POST=0
+      - LOG_LEVEL=warning
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - socket-proxy
+
+networks:
+  socket-proxy:
+    internal: true
+
+volumes:
+  moni-manager-data:

@@ -38,8 +38,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 CMD ["python", "-m", "moni"]
 
-# Manager-Image (Uebergang bis Paket 2)
-# shortcut: Manager-Stufe startet bis Paket 2 den Agent-Code hinter nginx; alte UI ist auf diesem Branch außer Betrieb.
+# Manager-Image: nginx (Frontend + /api-Proxy) und Manager-Backend unter supervisord
 FROM python:3.14-slim@sha256:c845af9399020c7e562969a13689e929074a10fd057acd1b1fad06a2fb068e97 AS manager
 
 WORKDIR /app
@@ -63,7 +62,8 @@ COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
 RUN addgroup --system app \
     && adduser --system --ingroup app --home /app app \
-    && chown -R app:app /app
+    && mkdir -p /data \
+    && chown app:app /data
 
 # Nginx config
 RUN echo 'server { \n\
@@ -113,13 +113,15 @@ stdout_logfile=/tmp/nginx.log \n\
 stderr_logfile=/tmp/nginx.err.log \n\
 \n\
 [program:backend] \n\
-command=sh -c "mkdir -p /tmp/moni-data && exec python -m moni" \n\
+command=python -m moni \n\
 directory=/app \n\
-environment=MONI_ROLE="agent",MONI_PORT="8001",MONI_DATA_DIR="/tmp/moni-data" \n\
+environment=MONI_ROLE="manager",MONI_PORT="8001",MONI_DATA_DIR="/data" \n\
 autostart=true \n\
 autorestart=true \n\
-stdout_logfile=/tmp/backend.log \n\
-stderr_logfile=/tmp/backend.err.log \n\
+stdout_logfile=/dev/stdout \n\
+stdout_logfile_maxbytes=0 \n\
+stderr_logfile=/dev/stderr \n\
+stderr_logfile_maxbytes=0 \n\
 ' > /etc/supervisor/conf.d/supervisord.conf
 
 RUN mkdir -p /var/log/supervisor

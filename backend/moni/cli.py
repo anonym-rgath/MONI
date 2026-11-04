@@ -28,6 +28,7 @@ def _parser() -> argparse.ArgumentParser:
     t = g.add_parser("token").add_subparsers(dest="cmd", required=True)
     c = t.add_parser("create")
     c.add_argument("--name", required=True)
+    c.add_argument("--scope", choices=["read", "admin"], default="read")
     c.add_argument("--expires-days", type=int)
     t.add_parser("list")
     t.add_parser("revoke").add_argument("id")
@@ -94,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("Fehler: --expires-days muss mindestens 1 sein.", file=sys.stderr)
                 return 2
             exp = utcnow() + timedelta(days=args.expires_days) if args.expires_days is not None else None
-            _, plain = store.create(args.name, expires_at=exp)
+            _, plain = store.create(args.name, args.scope, expires_at=exp)
             print("Token wird nur jetzt angezeigt.")
             print(plain)
         elif args.cmd == "list":

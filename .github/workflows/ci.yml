@@ -6,6 +6,8 @@
 #      und `pip install` durch.
 #   3. Startet compose.agent.yaml (Agent + Socket-Proxy) auf dem Runner und
 #      prueft Health, Auth, Snapshot, Metriken und die Container-Haertung.
+#   4. Startet compose.manager.yaml und prueft Health, Admin-Token, lokalen
+#      Server mit Verlauf, Geheimnis-freie Logs und die Container-Haertung.
 
 name: CI
 
@@ -38,7 +40,7 @@ jobs:
         working-directory: backend
 
   build:
-    name: Build images & agent smoke
+    name: Build images & smoke tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -87,10 +89,48 @@ jobs:
           docker compose -f compose.agent.yaml logs > smoke.log
           if grep -qF "$TOKEN" smoke.log; then echo "FAIL: Token im Log"; exit 1; fi
 
+      - name: Manager smoke test
+        env:
+          COMPOSE_PROJECT_NAME: moni-manager
+        run: |
+          set -euo pipefail
+          MONI_SECRET_KEY=$(docker run --rm moni-manager:ci python -m moni.cli secret generate)
+          export MONI_SECRET_KEY
+          docker compose -f compose.manager.yaml up -d --build
+          ok=0
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/api/v1/health > health.json 2>/dev/null && grep -q '"ok"' health.json && { ok=1; break; }; sleep 1; done
+          [ "$ok" = 1 ] || { echo "FAIL: Manager /api/v1/health nicht erreichbar"; exit 1; }
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v1/servers)" = 401
+          TOKEN=$(docker compose -f compose.manager.yaml exec -T moni-manager python -m moni.cli token create --name ci --scope admin | tail -n1)
+          sleep 35   # mindestens zwei Messungen abwarten (Takt 15 s)
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/v1/servers > servers.json
+          python3 -c "import json; s=[x for x in json.load(open('servers.json')) if x['is_local']]; assert len(s)==1 and s[0]['status']=='ok', s; open('local_id','w').write(str(s[0]['id'])); print('OK lokaler Server', s[0]['name'])"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/v1/servers/$(cat local_id)/history?metric=moni_host_memory_usage_percent" > history.json
+          python3 -c "import json; n=sum(len(x['points']) for x in json.load(open('history.json'))['series']); assert n>=2, n; print('OK', n, 'Punkte')"
+          # Erst in Dateien schreiben: grep -q in einer Pipe kann unter pipefail per SIGPIPE falsch auswerten
+          docker compose -f compose.manager.yaml logs > manager.log
+          if grep -qF "$TOKEN" manager.log; then echo "FAIL: Token im Log"; exit 1; fi
+          if grep -qF "$MONI_SECRET_KEY" manager.log; then echo "FAIL: MONI_SECRET_KEY im Log"; exit 1; fi
+          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.manager.yaml ps -q moni-manager))" = "app true [ALL]"
+
       - name: Logs
         if: always()
         run: docker compose -f compose.agent.yaml logs
 
+      - name: Manager logs
+        if: always()
+        env:
+          COMPOSE_PROJECT_NAME: moni-manager
+          MONI_SECRET_KEY: ci-platzhalter  # nur damit compose die Datei auflöst
+        run: docker compose -f compose.manager.yaml logs
+
       - name: Cleanup
         if: always()
         run: docker compose -f compose.agent.yaml down -v
+
+      - name: Manager cleanup
+        if: always()
+        env:
+          COMPOSE_PROJECT_NAME: moni-manager
+          MONI_SECRET_KEY: ci-platzhalter
+        run: docker compose -f compose.manager.yaml down -v
