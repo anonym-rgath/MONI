@@ -88,3 +88,25 @@ def test_rate_limit_keyed_on_forwarded_client_when_trusted(settings):
                            "MONI_TRUST_LOCAL_PROXY": "1"})
     a = server_args(t)
     assert (a["host"], a["proxy_headers"], a["forwarded_allow_ips"]) == ("127.0.0.1", True, "127.0.0.1")
+
+
+def test_renamed_host_clashing_with_remote_keeps_local_name(settings, monkeypatch, caplog):  # Final 5
+    from moni.manager import db
+    from moni.manager.servers import ServerStore
+    from moni.secretbox import SecretBox
+    key = generate_key()
+    s = _mgr(settings, key)
+    db.migrate(s.db_path)
+    c = db.connect(s.db_path)
+    st = ServerStore(c, SecretBox(key))
+    st.ensure_local("alt")
+    st.add("neu", "https://a.example", "tok")
+    c.close()
+    monkeypatch.setattr("moni.app.read_hostname", lambda _: "neu")
+    monkeypatch.setattr("moni.app.setup_logging", lambda: None)  # sonst entfernt basicConfig(force=True) caplog
+    app = create_app(s, collector=Dummy(), poller=Dummy())
+    with TestClient(app) as tc:
+        h = {"Authorization": f"Bearer {app.state.tokens.create('t', 'read')[1]}"}
+        names = {x["name"]: x["is_local"] for x in tc.get("/api/v1/servers", headers=h).json()}
+    assert names == {"alt": True, "neu": False}
+    assert any(r.levelname == "WARNING" and "'neu'" in r.getMessage() for r in caplog.records)

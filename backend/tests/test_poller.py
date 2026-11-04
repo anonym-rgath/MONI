@@ -63,6 +63,9 @@ class StubCollector:
     def latest(self):
         return self.snap
 
+    def history(self, since):
+        return [self.snap] if self.snap and pmod._ts(self.snap) > since.timestamp() else [], None
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -176,13 +179,13 @@ def test_gap_fill_uses_history_and_skips_known(poller, servers, agents, conn):  
 
 
 def test_short_gap_fetches_only_snapshot(poller, servers, agents):
-    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T + 30), snap(T + 30)]})
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T + 15), snap(T + 15)], "/api/v1/history": [{"points": []}]})
     servers.record_success(a, T, T, "{}", None)
-    poller.poll_once(now=T + 30)  # 30 <= 2 * 15
+    poller.poll_once(now=T + 15)  # 15 <= 1 * 15 (P2-R8)
     assert [p for _, p, _ in agents.calls if p != "/api/v1/info"] == ["/api/v1/snapshot"]
-    poller.poll_once(now=T + 45)  # gleicher Snapshot, aber erst 15 s seit last_seen: kein Fehler
+    poller.poll_once(now=T + 30)  # gleicher Snapshot, aber erst 15 s seit last_seen: kein Fehler
     g = servers.get(a)
-    assert g.status == "ok" and g.failures == 0 and g.last_ts == T + 30 and g.last_seen == T + 30
+    assert g.status == "ok" and g.failures == 0 and g.last_ts == T + 15 and g.last_seen == T + 15
 
 
 def test_stuck_agent_becomes_unreachable_then_recovers(poller, servers, agents):  # P2-R5
@@ -565,3 +568,108 @@ def test_warning_logged_only_on_status_change(poller, servers, agents, caplog):
             poller.poll_once(now=T + 15 * i)
     warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert warnings == ["Abruf von a fehlgeschlagen: Agent nicht erreichbar (Status unreachable)"]
+
+
+# --- Final-Review-Fixwelle --------------------------------------------------
+
+def test_extreme_values_do_not_stop_storage(poller, servers, agents, conn):  # Final 1a
+    big = 1.7e308
+    pts = [snap(T, big), snap(T + 15, big), snap(T + 60, -big), snap(T + 75, -big)]
+    a = add(servers, agents, "a", {"/api/v1/history": [{"points": pts}], "/api/v1/snapshot": [snap(T + 3600)]})
+    b = add(servers, agents, "b", {"/api/v1/snapshot": [snap(T + 3600, cpu=2.0)]})
+    servers.record_success(a, T - 15, T - 15, "{}", None)
+    poller.poll_once(now=T + 3600)
+    assert servers.get(a).status == "ok" and servers.get(b).status == "ok"
+    assert count_raw_points(conn, a, M) == 1 and count_raw_points(conn, b, M) == 1
+    assert conn.execute("SELECT value FROM meta WHERE key='rollup_1h_until'").fetchone()[0] == str(T + 3600)
+
+
+def test_failed_maintenance_keeps_server_writes_and_retries(poller, servers, agents, conn, caplog):  # Final 1b
+    b = add(servers, agents, "b", {"/api/v1/snapshot": [snap(T + 3600), snap(T + 3615)]})
+    sid = conn.execute("INSERT INTO series (server_id, name, labels) VALUES (?, 'x', '[]')", (b,)).lastrowid
+    conn.executemany("INSERT INTO samples_raw VALUES (?, ?, ?)",  # an write_snapshots vorbei: AVG ±inf, Stunde NaN
+                     [(sid, T, 1.7e308), (sid, T + 1, 1.7e308), (sid, T + 60, -1.7e308), (sid, T + 61, -1.7e308)])
+    conn.commit()
+    with caplog.at_level("ERROR", logger="moni.poller"):
+        poller.poll_once(now=T + 3600)
+    assert servers.get(b).status == "ok" and count_raw_points(conn, b, M) == 1
+    assert "Verdichtung fehlgeschlagen" in caplog.text and poller._last_maintenance is None
+    conn.execute("DELETE FROM samples_raw WHERE series_id=?", (sid,))
+    conn.commit()
+    poller.poll_once(now=T + 3615)  # nächster Zyklus versucht es erneut
+    assert poller._last_maintenance == T + 3615 and not conn.in_transaction
+
+
+class ClockAgent:
+    """Agent mit 15-s-Takt: Punkte bei T, T+15, … bis zu `now`."""
+
+    def __init__(self):
+        self.now = T
+
+    def get(self, path, params=None):
+        pts = [snap(t) for t in range(T, self.now + 1, 15)]
+        if path == "/api/v1/history":
+            since = int(datetime.fromisoformat(params["since"]).timestamp())
+            return {"points": [p for p in pts if pmod._ts(p) > since]}
+        return pts[-1] if path == "/api/v1/snapshot" else {}
+
+
+def test_slow_poll_cycle_loses_no_remote_points(settings, box, servers, conn):  # Final 2
+    agent = ClockAgent()
+    a = servers.add("a", "https://a.example.org", "t").id
+    p = Poller(settings, box, StubCollector(), client_factory=lambda *x: agent)
+    try:
+        for now in range(T, T + 301, 20):  # Abruf alle 20 s gegen einen 15-s-Agent
+            agent.now = now
+            p.poll_once(now=now)
+    finally:
+        p.close()
+    assert count_raw_points(conn, a, M) == len(range(T, T + 301, 15))
+
+
+def test_slow_poll_cycle_loses_no_local_points(settings, box, servers, conn, monkeypatch):  # Final 2
+    from moni import collector as cmod
+    from moni.collector import Collector
+    clock = [T]
+    monkeypatch.setattr(cmod, "read_raw", lambda s, c: raw(datetime.fromtimestamp(clock[0], timezone.utc)))
+    col = Collector(settings, client=object())
+    loc = servers.ensure_local("pi").id
+    p = Poller(settings, box, col)
+    try:
+        for now in range(T, T + 301, 5):
+            clock[0] = now
+            if now % 15 == 0:
+                col.collect_once()
+            if now % 20 == 0:
+                p.poll_once(now=now)
+    finally:
+        p.close()
+    n = conn.execute("SELECT COUNT(DISTINCT r.ts) FROM samples_raw r JOIN series s ON s.id = r.series_id "
+                     "WHERE s.server_id=?", (loc,)).fetchone()[0]
+    assert n == len(range(T, T + 301, 15))
+
+
+def test_more_servers_than_old_pool_all_contacted(poller, servers, agents):  # Final 4
+    n = 12
+    together = threading.Barrier(n, timeout=3)  # nur erreichbar, wenn alle gleichzeitig laufen
+
+    def ok():
+        together.wait()
+        return snap(T)
+
+    ids = [add(servers, agents, f"s{i}", {"/api/v1/snapshot": [ok]}) for i in range(n)]
+    poller.poll_once(now=T)
+    assert [servers.get(i).status for i in ids] == ["ok"] * n
+
+
+def test_nan_snapshot_keeps_previous_json(poller, servers, agents, conn, caplog):  # Final 8
+    bad = snap(T + 15, cpu=float("nan"))
+    bad["host"]["uptime_seconds"] = 5.0
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T), bad]})
+    poller.poll_once(now=T)
+    with caplog.at_level("WARNING", logger="moni.poller"):
+        poller.poll_once(now=T + 15)
+    stored = conn.execute("SELECT last_snapshot FROM servers WHERE id=?", (a,)).fetchone()[0]
+    assert json.loads(stored, parse_constant=lambda c: pytest.fail(c)) == snap(T)
+    assert servers.get(a).last_ts == T + 15 and count_raw_points(conn, a, "moni_host_uptime_seconds") == 1
+    assert "nicht als JSON speicherbar" in caplog.text

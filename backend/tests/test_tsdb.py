@@ -175,3 +175,11 @@ def test_non_finite_and_huge_values_skipped(conn, sid):
     s["host"]["load"] = {"load1": float("inf"), "load5": 10 ** 400, "load15": 2.0}
     assert tsdb.write_snapshots(conn, sid, [s]) == T
     assert [x["metric"] for x in tsdb.list_series(conn, sid)] == ["moni_docker_up", "moni_host_load15"]
+
+
+def test_values_beyond_int64_skipped_and_query_never_non_finite(conn, sid):  # Final 1
+    assert tsdb.write_snapshots(conn, sid, [snap(T, 1.7e308), snap(T + 15, -2.0 ** 64), snap(T + 30, 2.0 ** 63)]) == T + 30
+    assert [p[1] for p in tsdb.query(conn, sid, M, T, T + 60, "raw")["series"][0]["points"]] == [2.0 ** 63]
+    sr = conn.execute("SELECT id FROM series WHERE server_id=? AND name=?", (sid, M)).fetchone()[0]
+    conn.execute("INSERT INTO samples_1m VALUES (?, ?, ?, ?, ?, ?)", (sr, T, float("-inf"), float("inf"), float("inf"), 2))
+    assert tsdb.query(conn, sid, M, T, T + 60, "1m")["series"][0]["points"] == [["2026-11-04T12:00:00Z", None, None, None]]

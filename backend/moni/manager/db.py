@@ -7,8 +7,14 @@ from pathlib import Path
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
+def _create_private(path: Path) -> None:
+    """Legt die Datei mit 0600 an, falls sie fehlt; SQLite übernimmt den Modus für -wal und -shm."""
+    os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+
+
 def connect(path: Path) -> sqlite3.Connection:
     """Neue Verbindung. check_same_thread bleibt aktiv: jeder Thread/jede Anfrage öffnet eine eigene."""
+    _create_private(path)
     conn = sqlite3.connect(path)
     try:
         conn.row_factory = sqlite3.Row
@@ -44,6 +50,28 @@ def _pending(current: int) -> list[tuple[int, Path]]:
     return [(n, f) for f in files if (n := int(f.name[:4])) > current]
 
 
+def _backup(path: Path, version: int) -> None:
+    """Sicherung vor dem Upgrade. Eigene Leseverbindung: die migrierende hält die Schreibsperre (WAL erlaubt Lesen)."""
+    # Kein zweites Backup bei Crash-Loop: nach Rollback bleibt die DB auf derselben Version.
+    if any(not b.name.endswith(".tmp") for b in path.parent.glob(f"{path.name}.bak-v{version}-*")):
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    final = path.with_name(f"{path.name}.bak-v{version}-{stamp}")
+    tmp = final.with_name(final.name + ".tmp")
+    _create_private(tmp)
+    src, bak = sqlite3.connect(path), sqlite3.connect(tmp)
+    try:
+        src.backup(bak)
+        bak.close()
+        os.replace(tmp, final)
+    except BaseException:
+        bak.close()
+        tmp.unlink(missing_ok=True)
+        raise
+    finally:
+        src.close()
+
+
 def migrate(path: Path) -> int:
     path = Path(path)
     if not path.parent.is_dir():
@@ -56,28 +84,21 @@ def migrate(path: Path) -> int:
         newest = max((int(f.name[:4]) for f in MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql")), default=0)
         if current > newest:
             raise RuntimeError(f"Datenbank-Version {current} ist neuer als diese Moni-Version")
-        pending = _pending(current)
-        # Kein zweites Backup bei Crash-Loop: nach Rollback bleibt die DB auf derselben Version.
-        has_bak = any(not b.name.endswith(".tmp") for b in path.parent.glob(f"{path.name}.bak-v{current}-*"))
-        if pending and existed and current > 0 and not has_bak:
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-            final = path.with_name(f"{path.name}.bak-v{current}-{stamp}")
-            tmp = final.with_name(final.name + ".tmp")
-            bak = sqlite3.connect(tmp)
-            try:
-                conn.backup(bak)
-                bak.close()
-                os.replace(tmp, final)
-            except BaseException:
-                bak.close()
-                tmp.unlink(missing_ok=True)
-                raise
         # Tabellen-Umbauten (DROP + RENAME) dürfen keine ON-DELETE-CASCADE auslösen;
         # das PRAGMA wirkt nur außerhalb einer Transaktion.
         conn.execute("PRAGMA foreign_keys=OFF")
-        for n, f in pending:
+        backed_up = False
+        for n, f in _pending(current):
             try:
-                conn.execute("BEGIN")
+                # Schreibsperre vor dem Lesen der Version: App-Start und CLI können gleichzeitig migrieren.
+                conn.execute("BEGIN IMMEDIATE")
+                current = conn.execute("PRAGMA user_version").fetchone()[0]
+                if current >= n:  # schon von der anderen Instanz angewendet
+                    conn.execute("COMMIT")
+                    continue
+                if not backed_up and existed and current > 0:
+                    _backup(path, current)
+                backed_up = True
                 for stmt in _statements(f.read_text(encoding="utf-8")):
                     conn.execute(stmt)
                 conn.execute(f"PRAGMA user_version = {n}")

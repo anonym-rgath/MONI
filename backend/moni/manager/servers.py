@@ -9,6 +9,9 @@ from urllib.parse import urlsplit
 from ..secretbox import SecretBox
 
 _HEADER_NAME = re.compile(r"^[A-Za-z0-9-]+$")
+# Steuern Verbindung/Rahmung der Anfrage; als eigener Header würden sie Request Smuggling oder Proxy-Missbrauch erlauben
+_FORBIDDEN_HEADERS = {"content-length", "transfer-encoding", "connection", "upgrade", "proxy-authorization", "te",
+                      "trailer", "keep-alive"}
 _UNREACHABLE_AFTER = 3
 
 
@@ -58,6 +61,8 @@ def _check_url(url) -> None:
         raise ValueError("URL muss mit http:// oder https:// beginnen und einen Host enthalten")
     if "@" in u.netloc:
         raise ValueError("URL darf keine Zugangsdaten enthalten")
+    if "?" in url or "#" in url:  # auch leere: der Poller hängt die API-Pfade an
+        raise ValueError("URL darf keine Query oder Fragment (? oder #) enthalten")
 
 
 class ServerStore:
@@ -106,6 +111,8 @@ class ServerStore:
                 raise ValueError("Header-Name darf nur Buchstaben, Ziffern und Bindestriche enthalten")
             if k.lower() == "authorization":
                 raise ValueError("Der Header Authorization ist reserviert (Agent-Token)")
+            if k.lower() in _FORBIDDEN_HEADERS:
+                raise ValueError(f"Der Header {k} ist nicht erlaubt (steuert die Verbindung)")
             _check_secret(v, f"Wert des Headers {k}", allow_space=True)
         try:
             with self._tx():
@@ -142,10 +149,11 @@ class ServerStore:
             raise ValueError("Keine Zugangsdaten für diesen Server")
         return self._box.decrypt(r["token_enc"]), json.loads(self._box.decrypt(r["headers_enc"]))
 
-    def record_success(self, server_id: int, now: int, last_ts: int, snapshot_json: str, info_json: str | None) -> None:
+    def record_success(self, server_id: int, now: int, last_ts: int, snapshot_json: str | None, info_json: str | None) -> None:
         with self._tx():
             self._conn.execute(
-                "UPDATE servers SET status='ok', failures=0, last_error=NULL, last_seen=?, last_ts=?, last_snapshot=?, "
+                "UPDATE servers SET status='ok', failures=0, last_error=NULL, last_seen=?, last_ts=?, "
+            "last_snapshot=COALESCE(?, last_snapshot), "
                 "agent_info=COALESCE(?, agent_info) WHERE id=?", (now, last_ts, snapshot_json, info_json, server_id))
 
     # `now` ist noch ungenutzt (Signatur laut Plan; reserviert für einen Fehlerzeitstempel).

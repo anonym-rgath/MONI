@@ -25,7 +25,7 @@ _MAINTENANCE_EVERY = 300
 _INFO_EVERY = 300
 _MAX_FUTURE = 300
 _MAX_PAST = 3 * 3600
-_MAX_WORKERS = 8
+_MAX_WORKERS = 32  # je Server ein Worker, damit hängende Agents keine anderen verdrängen
 _GRACE = 5  # Sekunden über 3 Anfragen x Timeout hinaus, bevor ein Abruf als hängend gilt
 
 
@@ -94,9 +94,17 @@ def _ts(snap) -> int | None:
         return None
 
 
+def _dumps(obj) -> str | None:
+    """Nur Standard-JSON speichern: die API gibt den Text unverändert aus."""
+    try:
+        return json.dumps(obj, allow_nan=False)
+    except ValueError:
+        return None
+
+
 def fetch_new(client: AgentClient, last_ts: int | None, now: int, interval: int) -> list[dict]:
     snaps = []
-    if last_ts is not None and now - last_ts > 2 * interval:
+    if last_ts is not None and now - last_ts > interval:  # P2-R8: jeder verpasste Agent-Takt wird nachgeholt
         try:
             points = client.get("/api/v1/history", {"since": iso(datetime.fromtimestamp(last_ts, timezone.utc))}).get("points")
             if not isinstance(points, list):
@@ -171,8 +179,10 @@ class Poller:
         if not plausible:
             return self._fail(store, server, now, "Zeitstempel des Agents unplausibel")
         newest = tsdb.write_snapshots(self._conn, server.id, plausible)
-        latest = max(plausible, key=_ts)
-        store.record_success(server.id, now, newest, json.dumps(latest), json.dumps(info) if info else None)
+        snap_json = _dumps(max(plausible, key=_ts))
+        if snap_json is None:  # Werte stehen trotzdem in der Zeitreihe; die API liefert den vorigen Snapshot
+            log.warning("Snapshot von %s nicht als JSON speicherbar (NaN/inf), vorheriger bleibt", server.name)
+        store.record_success(server.id, now, newest, snap_json, _dumps(info) if info else None)
 
     def _store(self, store: ServerStore, server, result, now: int) -> None:
         """Eigener Savepoint je Server: kaputte Daten eines Agents rollen nur dessen Schreibvorgänge zurück."""
@@ -191,7 +201,7 @@ class Poller:
 
     def _fetch_all(self, jobs, now: int) -> dict:
         """Parallel, außerhalb jeder DB-Transaktion; Nachzügler blockieren den Zyklus nicht."""
-        ex = ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(jobs)))
+        ex = ThreadPoolExecutor(max_workers=max(1, min(_MAX_WORKERS, len(jobs))))
         try:
             futs = {ex.submit(self._fetch, s, c, now): s for s, c in jobs}
             pending, end = set(futs), time.monotonic() + self._settings.poll_timeout_seconds * 3 + _GRACE
@@ -201,6 +211,21 @@ class Poller:
         finally:
             ex.shutdown(wait=False, cancel_futures=True)
 
+    def _maintain(self, now: int) -> bool:
+        """Verdichten und Aufräumen im eigenen Savepoint: ein Fehler darf die Serverdaten des Zyklus nicht kosten."""
+        conn = self._conn
+        conn.execute("SAVEPOINT maintenance")
+        try:
+            tsdb.rollup(conn, now)
+            tsdb.prune(conn, now, self._settings)
+        except Exception as e:
+            conn.execute("ROLLBACK TO maintenance")
+            conn.execute("RELEASE maintenance")
+            log.error("Verdichtung fehlgeschlagen (%s), neuer Versuch im nächsten Zyklus", type(e).__name__)
+            return False
+        conn.execute("RELEASE maintenance")
+        return True
+
     def poll_once(self, now: int) -> None:
         if self._conn is None:
             self._conn = db.connect(self._settings.db_path)
@@ -209,10 +234,11 @@ class Poller:
         enabled = [s for s in store.list() if s.enabled]
         results, jobs = {}, []
         for s in enabled:
-            if s.is_local:
-                snap = self._collector.latest()
-                ts = _ts(snap) if snap is not None else None
-                results[s.id] = ([snap] if ts is not None and (s.last_ts is None or ts > s.last_ts) else [], None)
+            if s.is_local:  # alle Punkte seit last_ts aus dem Puffer, nicht nur den jüngsten (P2-R8)
+                snaps = [self._collector.latest()] if s.last_ts is None else \
+                    self._collector.history(datetime.fromtimestamp(s.last_ts, timezone.utc))[0]
+                results[s.id] = ([x for x in snaps if x is not None and (ts := _ts(x)) is not None
+                                  and (s.last_ts is None or ts > s.last_ts)], None)
                 continue
             try:
                 token, headers = store.credentials(s.id)
@@ -232,8 +258,7 @@ class Poller:
             for s in enabled:
                 self._store(store, s, results[s.id], now)
             if maintenance:
-                tsdb.rollup(conn, now)
-                tsdb.prune(conn, now, self._settings)
+                maintenance = self._maintain(now)
             conn.commit()
         except BaseException:
             conn.rollback()

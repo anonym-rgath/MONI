@@ -192,3 +192,33 @@ def test_detail_never_leaks(client, admin_auth):
                                                "headers": {"CF-Access-Client-Secret": "geheim-h"}}, headers=admin_auth).json()["id"]
     body = client.get(f"/api/v1/servers/{sid}", headers=admin_auth).text
     assert "geheim" not in body and "CF-Access-Client-Secret" in body
+
+
+def test_history_with_infinite_rollup_is_200_with_null(client, read_auth, local_id, conn):  # Final 1c
+    sid = conn.execute("INSERT INTO series (server_id, name, labels) VALUES (?, 'x', '[]')", (local_id,)).lastrowid
+    conn.execute("INSERT INTO samples_1m VALUES (?, 1793793600, ?, ?, ?, 2)", (sid, float("-inf"), float("inf"), float("inf")))
+    conn.commit()
+    r = client.get(f"/api/v1/servers/{local_id}/history?metric=x&from=2026-11-04T12:00:00Z&to=2026-11-04T12:05:00Z"
+                   "&resolution=1m", headers=read_auth)
+    assert r.status_code == 200 and r.json()["series"][0]["points"] == [["2026-11-04T12:00:00Z", None, None, None]]
+
+
+@pytest.mark.parametrize("method,path,attr,body", [
+    ("post", "/api/v1/servers", "add", {"name": "a", "url": "https://a", "token": "geheim-t"}),
+    ("patch", "/api/v1/servers/1", "set_enabled", {"enabled": False}),
+    ("delete", "/api/v1/servers/1", "delete", None),
+])
+def test_locked_db_is_503(client, admin_auth, monkeypatch, method, path, attr, body):  # Final 10
+    from moni.manager.servers import ServerStore
+    monkeypatch.setattr(ServerStore, attr, lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+    r = client.request(method.upper(), path, json=body, headers=admin_auth)
+    assert r.status_code == 503 and r.headers["Retry-After"] == "5"
+    assert r.headers["content-type"] == "application/problem+json"
+    assert r.json()["detail"] == "Datenbank ist gerade beschäftigt, bitte erneut versuchen" and "geheim" not in r.text
+
+
+def test_other_operational_error_stays_500(client, admin_auth, monkeypatch):
+    from moni.manager.servers import ServerStore
+    monkeypatch.setattr(ServerStore, "add", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")))
+    c = TestClient(client.app, raise_server_exceptions=False)
+    assert c.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "t"}, headers=admin_auth).status_code == 500

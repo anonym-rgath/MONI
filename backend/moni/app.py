@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,6 +20,8 @@ from moni.logs import setup_logging
 from moni.ratelimit import RateLimitMiddleware
 from moni.secretbox import SecretBox
 
+log = logging.getLogger("moni.app")
+
 
 def create_app(settings: Settings | None = None, collector: Collector | None = None, poller: Poller | None = None) -> FastAPI:
     setup_logging()
@@ -38,9 +41,13 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         conn = db.connect(settings.db_path)
         name = read_hostname(settings.host_etc)
         try:
-            ServerStore(conn, box).ensure_local(name)
+            store = ServerStore(conn, box)
+            store.ensure_local(name)
         except ValueError:
-            raise RuntimeError(f"Lokaler Servername '{name}' ist bereits durch einen Remote-Server belegt") from None
+            if not any(s.is_local for s in store.list()):  # erster Start: kein bisheriger Name, auf den man ausweichen kann
+                raise RuntimeError(f"Lokaler Servername '{name}' ist bereits durch einen Remote-Server belegt") from None
+            log.warning("Lokaler Servername '%s' ist bereits durch einen Remote-Server belegt; "
+                        "der lokale Server behält seinen bisherigen Namen", name)
         finally:
             conn.close()
         poller = poller or Poller(settings, box, collector)

@@ -34,7 +34,8 @@ def write_snapshots(conn: sqlite3.Connection, server_id: int, snapshots: list[di
                 value = float(s.value)
             except OverflowError:
                 continue
-            if s.name == "moni_snapshot_timestamp_seconds" or not math.isfinite(value):
+            # > 2**63: kein plausibler Messwert; Summen in der Verdichtung könnten sonst zu ±inf/NaN überlaufen
+            if s.name == "moni_snapshot_timestamp_seconds" or not math.isfinite(value) or abs(value) > 2 ** 63:
                 continue
             key = (s.name, _labels_json(s.labels))
             if key not in ids:
@@ -100,6 +101,10 @@ def pick_resolution(start: int, end: int) -> str:
     return "raw" if span <= 6 * 3600 else "1m" if span <= 7 * 86400 else "1h"
 
 
+def _finite(v):
+    return v if v is None or math.isfinite(v) else None  # JSON kennt kein inf/NaN
+
+
 def _query(conn, server_id, metric, start, end, res, labels) -> dict:
     cols = "value" if res == "raw" else "min, avg, max"
     out = []
@@ -111,7 +116,8 @@ def _query(conn, server_id, metric, start, end, res, labels) -> dict:
             continue
         pts = conn.execute(f"SELECT ts, {cols} FROM {_TABLES[res]} WHERE series_id=? AND ts BETWEEN ? AND ? ORDER BY ts",
                            (r["id"], start, end)).fetchall()
-        out.append({"labels": lab, "points": [[iso(datetime.fromtimestamp(p[0], timezone.utc)), *p[1:]] for p in pts]})
+        out.append({"labels": lab, "points": [[iso(datetime.fromtimestamp(p[0], timezone.utc)), *map(_finite, p[1:])]
+                                              for p in pts]})
     return {"resolution": res, "series": out}
 
 

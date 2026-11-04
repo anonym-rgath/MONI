@@ -103,3 +103,36 @@ def test_statements_skip_stray_semicolons():
 def test_missing_data_dir_raises_german_error(tmp_path):
     with pytest.raises(RuntimeError, match="Datenverzeichnis"):
         db.migrate(tmp_path / "fehlt" / "moni.db")
+
+
+def test_concurrent_migrate_applies_once(tmp_path, monkeypatch):  # Final 3
+    p = tmp_path / "moni.db"; db.migrate(p)
+    _bad_dir(tmp_path, monkeypatch, "CREATE TABLE x (a INT);")
+    real = db._pending
+
+    def racing(current):  # die CLI migriert zwischen Versionsabfrage und Schritt
+        monkeypatch.setattr(db, "_pending", real)
+        assert db.migrate(p) == 2
+        return real(current)
+
+    monkeypatch.setattr(db, "_pending", racing)
+    assert db.migrate(p) == 2
+    assert len(list(tmp_path.glob("moni.db.bak-v1-*"))) == 1
+
+
+def test_db_and_backup_files_are_private(tmp_path, monkeypatch):  # Final 11
+    import os
+    import stat
+    old = os.umask(0o022)
+    try:
+        p = tmp_path / "moni.db"; db.migrate(p)
+        c = db.connect(p); c.execute("CREATE TABLE IF NOT EXISTS t (a)"); c.commit()
+        _bad_dir(tmp_path, monkeypatch, "CREATE TABLE x (a INT);")
+        assert db.migrate(p) == 2
+        modes = {f.name: oct(stat.S_IMODE(f.stat().st_mode))
+                 for f in (p, *tmp_path.glob("moni.db-*"), *tmp_path.glob("moni.db.bak-*"))}
+        c.close()
+    finally:
+        os.umask(old)
+    assert any(".bak-" in n for n in modes) and any(n.endswith("-wal") for n in modes)
+    assert modes == dict.fromkeys(modes, "0o600")

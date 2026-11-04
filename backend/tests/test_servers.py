@@ -133,3 +133,17 @@ def test_reencrypt_all_rolls_back_on_foreign_key(store):
     assert not store._conn.in_transaction
     assert before == [tuple(r) for r in store._conn.execute("SELECT id, token_enc, headers_enc FROM servers ORDER BY id")]
     assert a.id != b.id
+
+
+@pytest.mark.parametrize("url", ["https://a/?x=1", "https://a#frag", "https://a/pfad?", "https://a/#"])
+def test_add_rejects_query_and_fragment(store, url):  # Final 6
+    with pytest.raises(ValueError, match="Query oder Fragment"):
+        store.add("x", url, "t")
+
+
+@pytest.mark.parametrize("name", ["Content-Length", "transfer-encoding", "CONNECTION", "Upgrade", "Proxy-Authorization",
+                                  "TE", "Trailer", "Keep-Alive"])
+def test_add_rejects_framing_headers(store, name):  # Final 7
+    with pytest.raises(ValueError, match="nicht erlaubt"):
+        store.add("x", "https://a", "t", {name: "1"})
+    assert store.list() == []
