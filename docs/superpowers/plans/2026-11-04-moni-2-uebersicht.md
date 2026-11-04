@@ -36,8 +36,8 @@ Die Pakete 4 und 5 sind voneinander unabhängig und können parallel laufen.
 
 ## Status
 
-- [ ] Paket 1 – Plan: [`2026-11-04-moni-2-paket-1-fundament-agent.md`](2026-11-04-moni-2-paket-1-fundament-agent.md)
-- [ ] Paket 2
+- [x] Paket 1 – Plan: [`2026-11-04-moni-2-paket-1-fundament-agent.md`](2026-11-04-moni-2-paket-1-fundament-agent.md) (umgesetzt, CI grün; Task 9 auf dem Pi offen)
+- [ ] Paket 2 – Plan: [`2026-11-04-moni-2-paket-2-manager-kern.md`](2026-11-04-moni-2-paket-2-manager-kern.md)
 - [ ] Paket 3
 - [ ] Paket 4
 - [ ] Paket 5
