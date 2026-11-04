@@ -27,6 +27,7 @@ def test_add_hides_secrets(store):
     ("x", "https://", "t", None), ("x", "https://u:p@a", "t", None),
     ("x", "https://a", "", None), ("x", "https://a", "t", {"Authorization": "y"}),
     ("x", "https://a", "t", {"authorization": "y"}), ("x", "https://a", "t", {"Bad Name": "y"}),
+    ("a\x00b", "https://a", "t", None), ("a\nb", "https://a", "t", None), (None, "https://a", "t", None),
 ])
 def test_add_validation(store, name, url, token, headers):
     with pytest.raises(ValueError):
@@ -37,6 +38,7 @@ def test_add_validation(store, name, url, token, headers):
     ("a\r\nX-Evil: 1", None), ("a\x00b", None), ("\ud800", None), (5, None),
     ("t", {"X-A": "a\r\nX-Evil: 1"}), ("t", {"X-A": "\ud800"}), ("t", {"X-A": ""}),
     ("t", {"X-A": "ä"}), ("t", {"X-A": "a\x7f"}),
+    ("tök", None), ("a\u200bb", None), ("a b", None),
 ])
 def test_add_rejects_bad_secret_values_without_leaking(store, token, headers):
     with pytest.raises(ValueError) as e:
@@ -104,3 +106,30 @@ def test_reencrypt_all(store):
     st2 = ServerStore(store._conn, SecretBox(f"{new},{old}"))
     assert st2.reencrypt_all() == 1
     assert ServerStore(store._conn, SecretBox(new)).credentials(s.id) == ("tok", {"X-A": "v"})
+
+
+@pytest.mark.parametrize("url", ["https://a\r\n/x", "https://a/\x1b[31m", "https://a\x00", "https://a b", " https://a",
+                                 "https://a\t", "https://a:99999", "https://a:abc", None, 5, "https://ä"])
+def test_add_rejects_bad_urls(store, url):
+    with pytest.raises(ValueError):
+        store.add("x", url, "t")
+    assert store.list() == []
+
+
+def test_delete_missing_is_false_and_local_is_atomic_refusal(store):
+    assert store.delete(999) is False
+    loc = store.ensure_local("pi")
+    with pytest.raises(ValueError):
+        store.delete(loc.id)
+    assert store.get(loc.id) is not None
+
+
+def test_reencrypt_all_rolls_back_on_foreign_key(store):
+    a = store.add("a", "https://a", "t1")
+    b = ServerStore(store._conn, SecretBox(generate_key())).add("b", "https://b", "t2")
+    before = [tuple(r) for r in store._conn.execute("SELECT id, token_enc, headers_enc FROM servers ORDER BY id")]
+    with pytest.raises(SecretError):
+        store.reencrypt_all()
+    assert not store._conn.in_transaction
+    assert before == [tuple(r) for r in store._conn.execute("SELECT id, token_enc, headers_enc FROM servers ORDER BY id")]
+    assert a.id != b.id

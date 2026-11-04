@@ -33,32 +33,29 @@ def _server(r: sqlite3.Row) -> Server:
                   r["status"], r["failures"], r["last_error"], r["last_seen"], r["last_ts"])
 
 
-def _check_secret(value, what: str, header: bool = False) -> None:
-    """Fehlermeldungen nennen nie den Wert."""
+def _visible_ascii(value: str, allow_space: bool = False) -> bool:
+    return all((0x21 if not allow_space else 0x20) <= ord(c) <= 0x7E for c in value)
+
+
+def _check_secret(value, what: str, allow_space: bool = False) -> None:
+    """Token und Header-Werte gehen in HTTP-Header: sichtbares ASCII. Fehlermeldungen nennen nie den Wert."""
     if not isinstance(value, str) or not value:
         raise ValueError(f"{what} darf nicht leer sein")
-    try:
-        value.encode("utf-8")
-        bad = False
-    except UnicodeEncodeError:
-        bad = True  # nicht hier raisen: __context__ würde den Wert enthalten
-    if header:  # HTTP-Header: sichtbares ASCII und Leerzeichen
-        bad = bad or any(not 0x20 <= ord(c) <= 0x7E for c in value)
-    else:  # keine Steuerzeichen (auch C1)
-        bad = bad or any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in value)
-    if bad:
+    if not _visible_ascii(value, allow_space):  # deckt auch Surrogate, Steuerzeichen und Nicht-ASCII ab
         raise ValueError(f"{what} enthält ungültige Zeichen")
 
 
 def _check_url(url) -> None:
+    if not isinstance(url, str) or not _visible_ascii(url):  # urlsplit würde Tab/CR/LF stillschweigend entfernen
+        raise ValueError("URL ist ungültig (nur sichtbares ASCII ohne Leerzeichen erlaubt)")
     try:
         u = urlsplit(url)
-        host, auth = u.hostname, "@" in u.netloc
-    except (ValueError, AttributeError):
+        host, _ = u.hostname, u.port
+    except ValueError:
         raise ValueError("URL ist ungültig") from None
     if u.scheme not in ("http", "https") or not host:
         raise ValueError("URL muss mit http:// oder https:// beginnen und einen Host enthalten")
-    if auth:
+    if "@" in u.netloc:
         raise ValueError("URL darf keine Zugangsdaten enthalten")
 
 
@@ -68,19 +65,21 @@ class ServerStore:
         self._box = box
 
     @contextmanager
-    def _tx(self):
+    def _tx(self, immediate: bool = False):
         """Committet nur, wenn die Transaktion hier begonnen wurde; sonst entscheidet der Aufrufer (Poller-Zyklus)."""
         if self._conn.in_transaction:
             yield
-        else:
-            with self._conn:
-                yield
+            return
+        if immediate:  # Schreibsperre vor dem SELECT, damit Prüfen und Einfügen atomar sind
+            self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            yield
 
     def _row(self, server_id: int) -> sqlite3.Row | None:
         return self._conn.execute("SELECT * FROM servers WHERE id=?", (server_id,)).fetchone()
 
     def ensure_local(self, name: str) -> Server:
-        with self._tx():
+        with self._tx(immediate=True):
             r = self._conn.execute("SELECT * FROM servers WHERE is_local=1").fetchone()
             try:
                 if r is None:
@@ -96,6 +95,8 @@ class ServerStore:
     def add(self, name: str, url: str, token: str, headers: dict[str, str] | None = None) -> Server:
         if not isinstance(name, str) or not name.strip() or len(name) > 64:
             raise ValueError("Name muss 1 bis 64 Zeichen lang sein")
+        if any(not c.isprintable() for c in name):
+            raise ValueError("Name enthält ungültige Zeichen")
         _check_url(url)
         _check_secret(token, "Token")
         headers = dict(headers or {})
@@ -104,7 +105,7 @@ class ServerStore:
                 raise ValueError("Header-Name darf nur Buchstaben, Ziffern und Bindestriche enthalten")
             if k.lower() == "authorization":
                 raise ValueError("Der Header Authorization ist reserviert (Agent-Token)")
-            _check_secret(v, f"Wert des Headers {k}", header=True)
+            _check_secret(v, f"Wert des Headers {k}", allow_space=True)
         try:
             with self._tx():
                 cur = self._conn.execute(
@@ -123,11 +124,12 @@ class ServerStore:
         return _server(r) if r else None
 
     def delete(self, server_id: int) -> bool:
-        r = self._row(server_id)
-        if r is not None and r["is_local"]:
-            raise ValueError("Der lokale Server kann nicht gelöscht werden")
         with self._tx():
-            return self._conn.execute("DELETE FROM servers WHERE id=?", (server_id,)).rowcount > 0
+            if self._conn.execute("DELETE FROM servers WHERE id=? AND is_local=0", (server_id,)).rowcount:
+                return True
+        if self._row(server_id) is not None:
+            raise ValueError("Der lokale Server kann nicht gelöscht werden")
+        return False
 
     def set_enabled(self, server_id: int, enabled: bool) -> bool:
         with self._tx():
@@ -145,6 +147,7 @@ class ServerStore:
                 "UPDATE servers SET status='ok', failures=0, last_error=NULL, last_seen=?, last_ts=?, last_snapshot=?, "
                 "agent_info=COALESCE(?, agent_info) WHERE id=?", (now, last_ts, snapshot_json, info_json, server_id))
 
+    # `now` ist noch ungenutzt (Signatur laut Plan; reserviert für einen Fehlerzeitstempel).
     def record_failure(self, server_id: int, now: int, error: str, fatal: bool = False) -> str:
         with self._tx():
             self._conn.execute(
