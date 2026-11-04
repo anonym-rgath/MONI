@@ -81,6 +81,8 @@ jobs:
           python3 -c "import json; s=json.load(open('snap.json')); assert s['docker']['reachable'], s['warnings']; assert s['host']['filesystems'], 'keine Dateisysteme'; print('OK', len(s['containers']), 'Container')"
           curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:9810/metrics | grep -q '^moni_docker_up 1'
           test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.agent.yaml ps -q moni-agent))" = "app true [ALL]"
+          # Token darf nie im Log stehen (`!` allein würde set -e umgehen)
+          if docker compose -f compose.agent.yaml logs | grep -qF "$TOKEN"; then echo "FAIL: Token im Log"; exit 1; fi
 
       - name: Logs
         if: always()

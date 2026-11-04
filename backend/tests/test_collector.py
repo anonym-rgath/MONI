@@ -89,3 +89,31 @@ def test_start_is_idempotent(monkeypatch):
     c.start(); t = c._thread; c.start()
     assert c._thread is t
     c.stop()
+
+
+def test_real_read_raw_with_unreachable_docker_and_two_cycles(tmp_path):
+    proc, sys_ = tmp_path / "proc", tmp_path / "sys"
+    proc.mkdir(); sys_.mkdir()
+    (proc / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 400 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n")
+    (proc / "stat").write_text("cpu  10 0 10 80 0 0 0 0 0 0\n")
+    (proc / "loadavg").write_text("0.5 0.75 1.0 1/100 123\n")
+    (proc / "uptime").write_text("100.5 90.0\n")
+    s = Settings.from_env({"HOST_PROC": str(proc), "HOST_SYS": str(sys_), "HOST_ETC": str(tmp_path),
+                           "HOST_ROOT": str(tmp_path), "MONI_DATA_DIR": str(tmp_path)})
+
+    class NoDocker:
+        def get(self, endpoint, timeout): return None
+    r = collector.read_raw(s, NoDocker())
+    assert r["host"]["memory"]["available"] is True and r["host"]["memory"]["total_bytes"] == 1000 * 1024
+    assert r["docker"]["reachable"] is False and "Docker API nicht erreichbar" in r["warnings"]
+    c = collector.Collector(s, client=NoDocker())
+    c._run_one_cycle(); c._run_one_cycle()
+    assert len(c._buffer) == 2 and c.latest()["docker"]["reachable"] is False
+
+def test_failing_cycle_is_logged_and_survives(monkeypatch, caplog):
+    def boom(s, c): raise RuntimeError("kaputt")
+    monkeypatch.setattr(collector, "read_raw", boom)
+    c = collector.Collector(Settings.from_env({}), client=object())
+    with caplog.at_level("ERROR", logger="moni.collector"):
+        c._run_one_cycle()
+    assert "Messzyklus fehlgeschlagen" in caplog.text and c.latest() is None

@@ -53,7 +53,7 @@ def test_temperatures_all_zones(tmp_path):
         write(tmp_path / f"class/thermal/thermal_zone{i}/temp", milli)
     t = host.read_temperatures(str(tmp_path))
     assert t["max_celsius"] == 61.0 and t["available"] is True
-    assert {"name": "cpu-thermal", "celsius": 52.5} in t["zones"]
+    assert {"id": "thermal_zone0", "name": "cpu-thermal", "celsius": 52.5} in t["zones"]
 
 
 def test_temperatures_none(tmp_path):

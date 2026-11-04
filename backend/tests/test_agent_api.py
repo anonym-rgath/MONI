@@ -1,5 +1,6 @@
 import logging
 import types
+from pathlib import Path
 
 
 def test_health_needs_no_token(client):
@@ -91,3 +92,8 @@ def test_cors_preflight_allows_authorization(settings, collector):
     r = c.options("/api/v1/info", headers={"Origin": "http://x.test", "Access-Control-Request-Method": "GET",
                                            "Access-Control-Request-Headers": "Authorization"})
     assert r.status_code == 200 and "authorization" in r.headers["access-control-allow-headers"].lower()
+
+
+def test_corrupt_token_file_is_401(client, auth, settings):
+    (Path(settings.data_dir) / "tokens.json").write_text("{kaputt")
+    assert client.get("/api/v1/info", headers=auth).status_code == 401

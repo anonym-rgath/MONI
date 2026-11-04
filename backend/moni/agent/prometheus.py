@@ -59,7 +59,7 @@ def render(snapshot: dict) -> str:
     add("moni_host_uptime_seconds", h.get("uptime_seconds"))
     add("moni_host_processes", h.get("process_count"))
     for z in (h.get("temperature") or {}).get("zones") or []:
-        add("moni_host_temperature_celsius", z.get("celsius"), zone=z.get("name"))
+        add("moni_host_temperature_celsius", z.get("celsius"), zone=z.get("name"), id=z.get("id"))
     for f in h.get("filesystems") or []:
         lab = {"mountpoint": f.get("mountpoint"), "device": f.get("device"), "fstype": f.get("fstype")}
         add("moni_filesystem_size_bytes", f.get("total_bytes"), **lab)
@@ -75,7 +75,7 @@ def render(snapshot: dict) -> str:
         add("moni_container_cpu_usage_percent", c.get("cpu_percent"), name=name)
         add("moni_container_memory_usage_bytes", c.get("memory_usage_bytes"), name=name)
         add("moni_container_restarts", c.get("restart_count"), name=name)
-        if c.get("health") not in (None, "none"):
+        if c.get("health") in ("healthy", "unhealthy"):
             add("moni_container_healthy", c["health"] == "healthy", name=name)
     reachable = (snapshot.get("docker") or {}).get("reachable")
     if reachable is not None:

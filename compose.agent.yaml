@@ -24,6 +24,11 @@ services:
       - HOST_ROOT=/host/root
       - DOCKER_API_BASE=http://docker-socket-proxy:2375
       - MONI_TLS=off
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Nur localhost, solange es kein TLS gibt.
     ports:
       - "${MONI_AGENT_BIND:-127.0.0.1}:9810:9810"
@@ -34,9 +39,16 @@ services:
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
     restart: unless-stopped
+    # CONTAINERS=1 erlaubt alle GET unter /containers (inkl. logs/archive); engere Allowlist folgt in Paket 7.
     environment:
       - CONTAINERS=1
       - POST=0
+      - LOG_LEVEL=warning
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     security_opt:

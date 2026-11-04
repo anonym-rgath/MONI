@@ -67,10 +67,43 @@ def test_worker_exception_drops_only_that_container():
     cs, st, _ = docker.collect_containers(Boom(routes), Settings.from_env({}), None)
     assert [c["name"] for c in cs] == ["web"] and st["container_count"] == 1
 
-def test_running_uptime_is_int():
-    import time
-    c = docker.container_metrics(Fake({}), RUNNING | {"Created": int(time.time()) - 60}, None, 2.5, 1.0)
-    assert isinstance(c["uptime_seconds"], int) and c["uptime_seconds"] >= 0
+def _inspect(**state): return {"/containers/" + "a" * 64 + "/json": {"State": state}}
+
+def test_uptime_from_started_at_with_nanoseconds():
+    from datetime import datetime, timedelta, timezone
+    t = (datetime.now(timezone.utc) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%S.123456789Z")
+    c = docker.container_metrics(Fake(_inspect(StartedAt=t)), RUNNING | {"Created": 0}, None, 2.5, 1.0)
+    assert isinstance(c["uptime_seconds"], int) and 55 <= c["uptime_seconds"] <= 65
+
+def test_uptime_none_without_inspect_or_valid_start():
+    assert docker.container_metrics(Fake({}), RUNNING, None, 2.5, 1.0)["uptime_seconds"] is None
+    for bad in ("0001-01-01T00:00:00Z", "quatsch", None):
+        c = docker.container_metrics(Fake(_inspect(StartedAt=bad)), RUNNING, None, 2.5, 1.0)
+        assert c["uptime_seconds"] is None
+
+def test_inspect_failure_gives_unknown_health_unless_list_has_it():
+    assert docker.container_metrics(Fake({}), RUNNING, None, 2.5, 1.0)["health"] == "unknown"
+
+def test_one_shot_stats_have_no_cpu_percent():
+    s = stats(); s["precpu_stats"] = {}
+    c = docker.container_metrics(Fake({"/containers/" + "a" * 64 + "/stats": s}), RUNNING, None, 2.5, 1.0)
+    assert c["cpu_percent"] is None and c["stats_available"] is True
+
+def _unix_get(monkeypatch, payload):
+    class Sock:
+        def __init__(self, *a): self.chunks = [payload, b""]
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def settimeout(self, t): pass
+        def connect(self, p): pass
+        def sendall(self, d): pass
+        def recv(self, n): return self.chunks.pop(0)
+    monkeypatch.setattr(docker.socket, "socket", Sock)
+    return docker.DockerClient("unix:///x").get("/containers/json", 1.0)
+
+def test_unix_socket_non_200_is_none(monkeypatch):
+    assert _unix_get(monkeypatch, b"HTTP/1.0 404 Not Found\r\n\r\n{\"message\": \"x\"}") is None
+    assert _unix_get(monkeypatch, b"HTTP/1.0 200 OK\r\n\r\n[1]") == [1]
 
 def test_non_list_payload_is_unreachable():
     for payload in ({"message": "x"}, 5):

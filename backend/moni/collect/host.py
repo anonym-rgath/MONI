@@ -128,7 +128,7 @@ def read_temperatures(sys: str) -> dict:
         except (TypeError, ValueError):
             continue
         name = (_read(f"{zone}/type") or os.path.basename(zone)).strip()
-        zones.append({"name": name, "celsius": celsius})
+        zones.append({"id": os.path.basename(zone), "name": name, "celsius": celsius})
     return {"max_celsius": max((z["celsius"] for z in zones), default=None),
             "zones": zones, "available": bool(zones)}
 

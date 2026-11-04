@@ -2,13 +2,14 @@
 import http.client
 import json
 import logging
+import re
 import socket
-import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib import request as urlrequest
 
 from moni.config import Settings
+from moni.timeutil import parse_iso, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -34,8 +35,12 @@ class DockerClient:
                 response = b""
                 while chunk := sock.recv(4096):
                     response += chunk
-            if b"\r\n\r\n" in response:
-                return json.loads(response.split(b"\r\n\r\n", 1)[1])
+            head, sep, body = response.partition(b"\r\n\r\n")
+            if sep:
+                parts = head.split(b"\r\n", 1)[0].split()
+                if len(parts) >= 2 and parts[1] == b"200":
+                    return json.loads(body)
+                log.warning("Docker API Status: %s", head.split(b"\r\n", 1)[0].decode("latin-1"))
         except (OSError, ValueError, http.client.HTTPException) as e:  # Socket-, Timeout-, JSON-, HTTP-Fehler
             log.warning("Docker API Fehler: %s", e)
         return None
@@ -49,6 +54,8 @@ def _health(value: Any) -> str:
 
 def _cpu_percent(stats: dict) -> float | None:
     cpu, pre = stats.get("cpu_stats", {}), stats.get("precpu_stats", {})
+    if not pre.get("system_cpu_usage"):  # one-shot: kein Vorwert, nur Mittelwert seit Start
+        return None
     cpu_usage = cpu.get("cpu_usage", {})
     cpu_delta = cpu_usage.get("total_usage", 0) - pre.get("cpu_usage", {}).get("total_usage", 0)
     system_delta = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
@@ -56,6 +63,16 @@ def _cpu_percent(stats: dict) -> float | None:
     if cpu_delta >= 0 and system_delta > 0:
         return round(cpu_delta / system_delta * num_cpus * 100, 1)
     return None
+
+
+def _uptime(started_at: Any) -> int | None:
+    if not isinstance(started_at, str) or started_at.startswith("0001-"):
+        return None
+    try:  # Docker liefert Nanosekunden; parse_iso kennt nur Mikrosekunden
+        started = parse_iso(re.sub(r"\.\d+", "", started_at))
+    except ValueError:
+        return None
+    return max(0, int((utcnow() - started).total_seconds()))
 
 
 def _memory(stats: dict, host_total_mem_bytes: int | None) -> tuple[int | None, int | None, float | None]:
@@ -89,7 +106,7 @@ def container_metrics(client: DockerClient, c: dict, host_total_mem_bytes: int |
         "stats_available": False, "cpu_percent": None,
         "memory_usage_bytes": None, "memory_limit_bytes": None, "memory_percent": None,
         "rx_bytes": None, "tx_bytes": None, "restart_count": None,
-        "uptime_seconds": int(time.time() - c["Created"]) if state == "running" and c.get("Created") else None,
+        "uptime_seconds": None,
     }
     if state != "running":
         return m
@@ -108,7 +125,11 @@ def container_metrics(client: DockerClient, c: dict, host_total_mem_bytes: int |
     inspect = client.get(f"/containers/{full_id}/json", inspect_timeout)
     if inspect:
         m["restart_count"] = inspect.get("RestartCount")
-        m["health"] = _health((inspect.get("State", {}).get("Health") or {}).get("Status"))
+        st = inspect.get("State") or {}
+        m["health"] = _health((st.get("Health") or {}).get("Status"))
+        m["uptime_seconds"] = _uptime(st.get("StartedAt"))
+    elif m["health"] == "none":  # Inspect fehlgeschlagen und Liste ohne Health: nicht "none" behaupten
+        m["health"] = "unknown"
     return m
 
 

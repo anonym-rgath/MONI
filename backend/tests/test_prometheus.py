@@ -4,7 +4,7 @@ SNAP = {"timestamp": "2026-11-04T12:00:00Z",
         "host": {"cpu": {"usage_percent": 12.5}, "load": {"load1": 0.5, "load5": None, "load15": 1.0},
                  "memory": {"total_bytes": 100, "used_bytes": 50, "usage_percent": 50.0, "swap_used_bytes": 0},
                  "uptime_seconds": 10.0, "process_count": 3,
-                 "temperature": {"zones": [{"name": "cpu", "celsius": 50.0}]},
+                 "temperature": {"zones": [{"id": "thermal_zone0", "name": "cpu", "celsius": 50.0}]},
                  "filesystems": [{"mountpoint": "/", "device": "/dev/root", "fstype": "ext4",
                                   "total_bytes": 4096000, "used_bytes": 1, "usage_percent": 66.7}],
                  "network": None},
@@ -22,6 +22,7 @@ def test_render():
     assert 'moni_container_up{name="we\\"b",image="nginx",status="running"} 1' in out
     assert 'moni_container_healthy{' not in out
     assert "moni_container_cpu_usage_percent" not in out
+    assert 'moni_host_temperature_celsius{zone="cpu",id="thermal_zone0"} 50.0' in out
     assert "moni_docker_up 1" in out
     assert "moni_snapshot_timestamp_seconds 1793793600" in out
 
@@ -53,3 +54,8 @@ def test_metrics_endpoint(client, auth, measured):
 def test_metrics_503_before_measurement(client, auth):
     r = client.get("/metrics", headers=auth)
     assert r.status_code == 503 and r.headers["content-type"].startswith("application/problem+json")
+
+
+def test_unknown_health_not_exported():
+    s = {**SNAP, "containers": [{"name": "a", "image": "i", "status": "running", "health": "unknown"}]}
+    assert "moni_container_healthy" not in prometheus.render(s)
