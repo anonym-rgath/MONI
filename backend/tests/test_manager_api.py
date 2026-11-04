@@ -144,3 +144,51 @@ def test_no_body_or_auth_logged(client, admin_auth, caplog):
     caplog.set_level(logging.DEBUG)
     client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t"}, headers=admin_auth)
     assert "geheim-t" not in caplog.text and admin_auth["Authorization"].split()[1] not in caplog.text
+
+
+@pytest.mark.parametrize("qs", ["from=0001-01-01T00:00:00%2B14:00", "to=0001-01-01T00:30:00Z", "from=9999-12-31T23:00:00-05:00"])
+def test_history_out_of_range_422(client, read_auth, local_id, qs):
+    assert client.get(f"/api/v1/servers/{local_id}/history?metric=x&{qs}", headers=read_auth).status_code == 422
+
+
+def _store_for(conn, app):
+    from moni.manager.servers import ServerStore
+    return ServerStore(conn, app.state.box)
+
+
+def test_hostile_agent_data_does_not_break_list(client, admin_auth, conn, app):
+    st = _store_for(conn, app)
+    a = st.add("a", "https://a", "t").id
+    b = st.add("b", "https://b", "t").id
+    c = st.add("c", "https://c", "t").id
+    st.record_success(a, 1762257600, 1, json.dumps({"warnings": 5}), '{"version": NaN, "capabilities": [NaN], "evil": 1}')
+    st.record_success(b, 1762257600, 1, json.dumps({"warnings": True}), json.dumps([1]))
+    st.record_success(c, 1762257600, 1, "{kaputt", "{kaputt")
+    conn.commit()
+    r = client.get("/api/v1/servers", headers=admin_auth)
+    assert r.status_code == 200 and all(x["warnings"] == 0 for x in r.json())
+    d = client.get(f"/api/v1/servers/{a}", headers=admin_auth)
+    assert d.status_code == 200 and d.json()["agent_info"] == {} and "evil" not in d.text
+    assert client.get(f"/api/v1/servers/{c}", headers=admin_auth).status_code == 200
+
+
+def test_huge_id_422(client, read_auth):
+    assert client.get(f"/api/v1/servers/{2**64}", headers=read_auth).status_code == 422
+    assert client.get("/api/v1/servers/0", headers=read_auth).status_code == 422
+
+
+def test_patch_strict(client, admin_auth, local_id):
+    for body in ({"enabled": "yes"}, {"enabled": 1}, {"enabled": True, "name": "x"}):
+        assert client.patch(f"/api/v1/servers/{local_id}", json=body, headers=admin_auth).status_code == 422
+
+
+def test_read_token_cannot_patch_delete(client, read_auth, local_id):
+    assert client.patch(f"/api/v1/servers/{local_id}", json={"enabled": False}, headers=read_auth).status_code == 403
+    assert client.delete(f"/api/v1/servers/{local_id}", headers=read_auth).status_code == 403
+
+
+def test_detail_never_leaks(client, admin_auth):
+    sid = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t",
+                                               "headers": {"CF-Access-Client-Secret": "geheim-h"}}, headers=admin_auth).json()["id"]
+    body = client.get(f"/api/v1/servers/{sid}", headers=admin_auth).text
+    assert "geheim" not in body and "CF-Access-Client-Secret" in body
