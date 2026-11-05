@@ -337,7 +337,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         routes = {"/ok": (200, b'{"a": 1}'), "/redirect": (302, b""), "/broken": (200, b"{nope"),
                   "/list": (200, b"[1]"), "/big": (200, b'{"x": "' + b"a" * 2000 + b'"}'), "/fail": (500, b"secret body"),
-                  "/forbidden": (403, b""), "/slow": None}
+                  "/forbidden": (403, b""), "/slow": None, "/empty": (204, b"")}
         if self.path.startswith("/trickle/"):  # Kopf sofort, Rumpf 1 Byte je 0,2 s
             self.send_response(200)
             self.send_header("Content-Length", "100")
@@ -363,6 +363,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(r[1])))
         self.end_headers()
         self.wfile.write(r[1])
+
+    do_POST = do_DELETE = do_GET
 
 
 @pytest.fixture
@@ -701,6 +703,9 @@ class _Pki:
             raise self.error
         return self.ctx
 
+    def ensure(self, now):
+        pass
+
 
 def _mtls_factory(agents, made):
     def factory(url, token, headers, timeout, ssl_context=None):
@@ -710,7 +715,7 @@ def _mtls_factory(agents, made):
 
 
 def test_mtls_server_polled_with_client_context_and_no_token(settings, box, servers, agents, local_collector):
-    sid = servers.add_mtls("pi", "https://pi.example", 1).id
+    sid = servers.add_mtls("pi", "https://pi.example", T + 90 * 86400).id
     tid = add(servers, agents, "tok", {"/api/v1/snapshot": [snap(T)]})
     agents.scripts["https://pi.example"] = {"/api/v1/snapshot": [snap(T)]}
     ctx, made = object(), []
@@ -725,10 +730,192 @@ def test_mtls_server_polled_with_client_context_and_no_token(settings, box, serv
 @pytest.mark.parametrize("pki", [None, _Pki(error=pmod.SecretError("Geheimnis nicht entschlüsselbar")),
                                  _Pki(error=OSError("kaputt"))])
 def test_mtls_server_without_usable_client_cert_is_error(settings, box, servers, agents, local_collector, pki):
-    sid = servers.add_mtls("pi", "https://pi.example", 1).id
+    sid = servers.add_mtls("pi", "https://pi.example", T + 90 * 86400).id
     made = []
     p = Poller(settings, box, local_collector, client_factory=_mtls_factory(agents, made), pki=pki)
     p.poll_once(now=T)
     p.close()
     s = servers.get(sid)
     assert made == [] and (s.status, s.last_error) == ("error", "Client-Zertifikat nicht verfügbar")
+
+
+# --- AgentClient: POST/DELETE und TLS-Abbrüche (Task 5, P4-R4a) ---------------
+
+def test_agent_client_post_and_delete(http_url):
+    c = AgentClient(http_url, "geheim-token", {}, 2)
+    assert c.post("/ok", {"x": 1}) == {"a": 1}
+    assert c.post("/empty", {}) is None and c.delete("/empty") is None
+    for call, message in ((lambda: c.post("/redirect", {}), "Agent antwortet mit HTTP 302"),
+                          (lambda: c.delete("/fail"), "Agent antwortet mit HTTP 500"),
+                          (lambda: c.post("/broken", {}), "Ungültige Antwort vom Agent")):
+        with pytest.raises(AgentError) as e:
+            call()
+        assert (e.value.message, e.value.fatal, e.value.__context__) == (message, False, None)
+
+
+def test_agent_client_get_list_only_when_asked(http_url):
+    c = AgentClient(http_url, "t", {}, 2)
+    assert c.get("/list", expect=list) == [1]
+    with pytest.raises(AgentError, match="Ungültige Antwort"):
+        c.get("/list")
+
+
+@pytest.mark.parametrize("exc,message,fatal", [
+    (pmod.ssl.SSLEOFError(8, "EOF"), "Agent nicht erreichbar", False),
+    (pmod.ssl.SSLZeroReturnError(6, "zero"), "Agent nicht erreichbar", False),
+    (pmod.urllib.error.URLError(pmod.ssl.SSLEOFError(8, "EOF")), "Agent nicht erreichbar", False),
+    (pmod.urllib.error.URLError(pmod.ssl.SSLZeroReturnError(6, "zero")), "Agent nicht erreichbar", False),
+    (pmod.ssl.SSLCertVerificationError(1, "verify"), "TLS-Prüfung des Agents fehlgeschlagen", True),
+    (pmod.urllib.error.URLError(pmod.ssl.SSLCertVerificationError(1, "verify")), "TLS-Prüfung des Agents fehlgeschlagen", True),
+    (pmod.ssl.SSLError(1, "[SSL: TLSV1_ALERT_UNKNOWN_CA] alert"), "TLS-Prüfung des Agents fehlgeschlagen", True),
+])
+def test_tls_abort_is_unreachable_only_verification_is_fatal(exc, message, fatal):
+    c = AgentClient("https://pi.example", "", {}, 1, ssl_context=pmod.pki.client_context(None))
+
+    def boom(*a, **kw):
+        raise exc
+    c._opener.open = boom
+    for call in (lambda: c.get("/x"), lambda: c.post("/x", {}), lambda: c.delete("/x")):
+        with pytest.raises(AgentError) as e:
+            call()
+        assert (e.value.message, e.value.fatal, e.value.__context__) == (message, fatal, None)
+
+
+# --- Zertifikatserneuerung gegen echten Agent (Task 5, D1) ---------------------
+
+def _at(ts):
+    return datetime.fromtimestamp(ts, timezone.utc)
+
+
+class Clock:
+    now = 0
+
+    def set(self, ts):
+        self.now = int(ts)
+
+
+@pytest.fixture
+def clock():
+    return Clock()
+
+
+@pytest.fixture
+def paired_env(agent_tls_server, tmp_path, settings, box, servers, conn, monkeypatch):
+    """Gekoppelt vor 61 Tagen: das Agent-Zertifikat hat jetzt (echte Uhr, TLS) noch 29 Tage."""
+    from types import SimpleNamespace
+
+    from moni import collector as cmod
+    from moni.manager import pairing
+    from moni.manager.ca import ManagerPki
+    real = int(time.time())
+    mp = ManagerPki(tmp_path / "mgr", box)
+    mp.ensure(_at(real))
+    exp = pairing.pair(agent_tls_server.url, agent_tls_server.code, mp, _at(real - 61 * 86400), 5)
+    sid = servers.add_mtls("pi", agent_tls_server.url, exp).id
+    monkeypatch.setattr(cmod, "read_raw", lambda st, cl: raw(datetime.now(timezone.utc)))
+    agent_tls_server.app.state.collector.collect_once()
+    csrs = []
+    real_csr = agent_tls_server.state.new_csr
+    monkeypatch.setattr(agent_tls_server.state, "new_csr", lambda: csrs.append(1) or real_csr())
+    p = Poller(settings, box, StubCollector(), pki=mp)
+    yield SimpleNamespace(poller=p, pki=mp, cert_not_after=exp, agent=agent_tls_server, agent_state=agent_tls_server.state,
+                          server=lambda: servers.get(sid), real=real, csrs=csrs,
+                          tried=lambda: conn.execute("SELECT cert_renew_tried FROM servers WHERE id=?", (sid,)).fetchone()[0])
+    p.stop()
+    p.close()
+
+
+def test_renewal_when_30_days_left(paired_env, clock):
+    clock.set(paired_env.cert_not_after - 29 * 86400)
+    paired_env.poller.poll_once(clock.now)
+    assert paired_env.server().cert_not_after > paired_env.cert_not_after
+    assert paired_env.agent_state.cert_not_after.timestamp() == paired_env.server().cert_not_after
+    assert paired_env.server().cert_not_after - clock.now > 89 * 86400 and paired_env.tried() is None
+    assert paired_env.server().status == "ok" and paired_env.csrs == [1]
+    paired_env.poller.poll_once(clock.now + 15)  # neues Zertifikat: kein weiterer Versuch, Abruf klappt
+    assert paired_env.csrs == [1] and paired_env.server().failures == 0
+
+
+def test_no_renewal_with_31_days_left(paired_env, clock):
+    clock.set(paired_env.cert_not_after - 31 * 86400)
+    paired_env.poller.poll_once(clock.now)
+    assert paired_env.csrs == [] and paired_env.tried() is None
+    assert paired_env.server().cert_not_after == paired_env.cert_not_after
+    assert paired_env.agent_state.cert_not_after.timestamp() == paired_env.cert_not_after
+
+
+def test_renewal_failure_keeps_old_cert_and_retries_hourly(paired_env, clock, monkeypatch, caplog):
+    from fastapi import HTTPException
+
+    def broken():
+        paired_env.csrs.append(1)
+        raise HTTPException(500, "geheimer-inhalt")
+    monkeypatch.setattr(paired_env.agent_state, "new_csr", broken)
+    clock.set(paired_env.real)
+    paired_env.poller.poll_once(clock.now)
+    assert paired_env.csrs == [1] and paired_env.tried() == clock.now
+    assert paired_env.server().cert_not_after == paired_env.cert_not_after
+    assert paired_env.agent_state.cert_not_after.timestamp() == paired_env.cert_not_after
+    assert "Zertifikat für pi konnte nicht erneuert werden: Agent antwortet mit HTTP 500" in [
+        r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert "geheimer-inhalt" not in caplog.text
+    paired_env.poller.poll_once(clock.now + 1800)  # nach 30 min: kein Versuch
+    assert paired_env.csrs == [1] and paired_env.tried() == clock.now
+    paired_env.poller.poll_once(clock.now + 3660)  # nach 61 min: erneut
+    assert paired_env.csrs == [1, 1] and paired_env.tried() == clock.now + 3660
+
+
+def test_client_cert_renewed_without_restart(paired_env, clock):
+    from moni import pki
+    mp, real = paired_env.pki, paired_env.real
+    (mp.dir / "client.crt").unlink()
+    mp.ensure(_at(real - 306 * 86400))  # Client-Zertifikat mit 59 Tagen Rest
+    old_crt, old_ctx = (mp.dir / "client.crt").read_bytes(), mp.client_context()
+    assert 58 < pki.days_left(pki.load_cert(old_crt), _at(real)) < 60
+    clock.set(real)
+    paired_env.poller.poll_once(clock.now)
+    assert paired_env.server().status == "ok"
+    new_crt = (mp.dir / "client.crt").read_bytes()
+    assert new_crt != old_crt and pki.days_left(pki.load_cert(new_crt), _at(real)) > 364
+    new_ctx = mp.client_context()
+    assert new_ctx is not old_ctx
+    assert AgentClient(paired_env.agent.url, "", {}, 5, ssl_context=new_ctx).get("/api/v1/info")["paired"] is True
+    paired_env.poller.poll_once(clock.now + 15)  # derselbe Poller, ohne Neustart, mit neuem Kontext
+    assert paired_env.server().failures == 0 and paired_env.server().last_error is None
+
+
+def test_client_cert_checked_at_most_hourly(paired_env, clock, monkeypatch):
+    calls = []
+    monkeypatch.setattr(paired_env.pki, "ensure", lambda now: calls.append(int(now.timestamp())))
+    clock.set(paired_env.cert_not_after - 31 * 86400)
+    for dt in (0, 15, 3599, 3600):
+        paired_env.poller.poll_once(clock.now + dt)
+    assert calls == [clock.now, clock.now + 3600]
+
+
+def test_expired_agent_cert_sets_status_error(paired_env, clock):
+    from moni import pki
+    st, real = paired_env.agent_state, paired_env.real
+    csr = pki.make_csr(pki.load_key((st.dir / "key.pem").read_bytes()), "moni-agent")
+    (st.dir / "cert.pem").write_bytes(paired_env.pki.sign_agent(csr, "127.0.0.1", _at(real - 100 * 86400)))
+    st._load()  # wie ein Agent, dessen Zertifikat seit 10 Tagen abgelaufen ist
+    clock.set(real)
+    paired_env.poller.poll_once(clock.now)
+    s = paired_env.server()
+    assert (s.status, s.last_error) == ("error", "TLS-Prüfung des Agents fehlgeschlagen")
+    assert paired_env.csrs == [] and paired_env.tried() == clock.now  # Erneuerung scheitert ebenso an der TLS-Prüfung
+
+
+def test_renewal_runs_after_cycle_commit(paired_env, clock, monkeypatch):
+    """Netzwerk nie bei gehaltener Schreibsperre: während der Erneuerung ist die DB frei."""
+    from moni.manager import pairing
+    seen = []
+    real_renew = pairing.renew
+
+    def spy(client, url, mp, now):
+        seen.append(paired_env.poller._conn.in_transaction)
+        return real_renew(client, url, mp, now)
+    monkeypatch.setattr(pairing, "renew", spy)
+    clock.set(paired_env.real)
+    paired_env.poller.poll_once(clock.now)
+    assert seen == [False]

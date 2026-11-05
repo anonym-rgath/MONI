@@ -143,6 +143,8 @@ class ServerStore:
         u = urlsplit(url)
         if u.scheme != "https":
             raise ValueError("mTLS braucht eine https://-URL")
+        if u.path not in ("", "/"):  # Kopplung und Erneuerung sprechen den Agent unter /api/v1 direkt an
+            raise ValueError("URL darf für gekoppelte Server keinen Pfad haben")
         pki.san_for_host(u.hostname)
         if self._conn.execute("SELECT 1 FROM servers WHERE name=?", (name,)).fetchone():
             raise ValueError("Name ist bereits vergeben")

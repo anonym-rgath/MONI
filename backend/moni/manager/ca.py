@@ -65,12 +65,18 @@ class ManagerPki:
         except Exception:  # fehlt, kaputt oder von alter CA: das Client-Zertifikat ist jederzeit ersetzbar
             return False
 
+    def agent_signer(self) -> Callable[[bytes, str, datetime], bytes]:
+        """Liest CA-Schlüssel und -Zertifikat sofort, damit lokale Fehler vor jedem Kontakt zum Agent auffallen (P4-R4)."""
+        ca_key, ca_cert = pki.load_key(self._key_pem("ca.key.enc")), pki.load_cert(self.ca_pem)
+
+        def sign(csr_pem: bytes, host: str, now: datetime) -> bytes:
+            """SAN kommt aus dem Host der Agent-URL, nie aus der CSR (D1)."""
+            return pki.cert_pem(pki.issue(ca_key, ca_cert, csr_pem, cn=_AGENT_CN, sans=pki.san_for_host(host),
+                                          usage="server", now=now, days=_AGENT_DAYS))
+        return sign
+
     def sign_agent(self, csr_pem: bytes, host: str, now: datetime) -> bytes:
-        """SAN kommt aus dem Host der Agent-URL, nie aus der CSR (D1)."""
-        sans = pki.san_for_host(host)
-        cert = pki.issue(pki.load_key(self._key_pem("ca.key.enc")), pki.load_cert(self.ca_pem), csr_pem, cn=_AGENT_CN,
-                         sans=sans, usage="server", now=now, days=_AGENT_DAYS)
-        return pki.cert_pem(cert)
+        return self.agent_signer()(csr_pem, host, now)
 
     def client_context(self) -> ssl.SSLContext:
         """Strikter Client-Kontext mit Moni-CA und Client-Zertifikat; neu gebaut, sobald sich client.crt ändert.

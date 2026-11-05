@@ -9,17 +9,21 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstraints
 
 from moni import __version__
+from moni.agent.pairing_api import NewToken as NewAgentToken  # gleiche Prüfung wie am Agent, extra=forbid
 from moni.auth import audit
 from moni.auth.deps import Principal, client_ip, require_scope
 from moni.collect.host import read_hostname
 from moni.manager import db, pairing, tsdb
 from moni.manager.pairing import PairingError
+from moni.manager.poller import AgentClient, AgentError
 from moni.manager.servers import Server, ServerStore
+from moni.secretbox import SecretError
 from moni.timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger("moni.manager.api")
 router = APIRouter(prefix="/api/v1")
 ServerId = Annotated[int, Path(ge=1, le=2**63 - 1)]
+AgentTokenId = Annotated[str, Path(pattern=r"^[0-9a-f]{8}$")]  # Format der Ids im TokenStore des Agents
 read = Depends(require_scope("read"))
 admin = Depends(require_scope("admin"))
 
@@ -206,3 +210,67 @@ def history(request: Request, server_id: ServerId, metric: str, from_: str | Non
             return tsdb.query(conn, server_id, metric, int(start.timestamp()), int(end.timestamp()), resolution, labels or None)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+
+
+# --- Agent-Tokens über den Manager (D9): nur für mTLS-Server, nie Token im Log oder Audit ----------------------------
+
+_AGENT_TOKEN_FIELDS = ("id", "name", "scope", "created_at", "expires_at")
+_UNREACHABLE = "Agent nicht erreichbar"
+
+
+def _agent(request: Request, server_id: int) -> tuple[Server, AgentClient]:
+    with _store(request) as (_, store):  # Verbindung vor dem Netzwerkaufruf wieder schließen
+        s = _get(store, server_id)
+    if s.security != "mtls":
+        raise HTTPException(422, "Nur für gekoppelte Server")
+    try:
+        ctx = request.app.state.pki.client_context()
+    except (SecretError, OSError, ValueError):
+        ctx = None
+    if ctx is None:
+        raise HTTPException(500, "Manager-Zertifikate nicht lesbar")
+    return s, AgentClient(s.url, "", {}, request.app.state.settings.poll_timeout_seconds, ssl_context=ctx)
+
+
+def _agent_token(t, extra: tuple[str, ...] = ()) -> dict:
+    """Antwort des Agents ist nicht vertrauenswürdig: nur bekannte Felder mit Text oder null."""
+    keys = _AGENT_TOKEN_FIELDS + extra
+    if not isinstance(t, dict) or not isinstance(t.get("id"), str) or \
+            not all(t.get(k) is None or isinstance(t.get(k), str) for k in keys):
+        raise HTTPException(502, _UNREACHABLE)
+    return {k: t.get(k) for k in keys}
+
+
+def _call(fn):
+    try:
+        return fn()
+    except AgentError:  # Text des Agents bleibt intern: er kann Antwortdetails enthalten
+        raise HTTPException(502, _UNREACHABLE) from None
+
+
+@router.get("/servers/{server_id}/agent-tokens")
+def list_agent_tokens(request: Request, server_id: ServerId, p: Principal = admin):
+    _, client = _agent(request, server_id)
+    return [_agent_token(t) for t in _call(lambda: client.get("/api/v1/tokens", expect=list))]
+
+
+@router.post("/servers/{server_id}/agent-tokens", status_code=201)
+def create_agent_token(request: Request, server_id: ServerId, body: NewAgentToken, p: Principal = admin):
+    s, client = _agent(request, server_id)
+    out = _agent_token(_call(lambda: client.post("/api/v1/tokens", body.model_dump(exclude_none=True))), ("token",))
+    if not isinstance(out["token"], str):
+        raise HTTPException(502, _UNREACHABLE)
+    with _store(request) as (conn, _):
+        audit.record(conn, p.actor, "agent_token.created", target=s.name, ip=client_ip(request),
+                     details={"token_id": out["id"]})
+    return out  # Klartext nur in dieser Antwort
+
+
+@router.delete("/servers/{server_id}/agent-tokens/{token_id}", status_code=204)
+def revoke_agent_token(request: Request, server_id: ServerId, token_id: AgentTokenId, p: Principal = admin):
+    s, client = _agent(request, server_id)
+    _call(lambda: client.delete(f"/api/v1/tokens/{token_id}"))
+    with _store(request) as (conn, _):
+        audit.record(conn, p.actor, "agent_token.revoked", target=s.name, ip=client_ip(request),
+                     details={"token_id": token_id})
+    return Response(status_code=204)

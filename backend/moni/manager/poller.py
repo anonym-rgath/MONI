@@ -32,6 +32,8 @@ _MAX_FUTURE = 300
 _MAX_PAST = 3 * 3600
 _MAX_WORKERS = 32  # je Server ein Worker, damit hängende Agents keine anderen verdrängen
 _GRACE = 5  # Sekunden über 3 Anfragen x Timeout hinaus, bevor ein Abruf als hängend gilt
+_RENEW_BEFORE = 30 * 86400  # Agent-Zertifikat ab 30 Tagen Restlaufzeit erneuern (D1)
+_RENEW_RETRY = 3600  # nach einem Fehlschlag frühestens nach einer Stunde erneut, ebenso pki.ensure
 
 
 class AgentError(Exception):
@@ -53,6 +55,13 @@ _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedire
 _TLS_FAILED = "TLS-Prüfung des Agents fehlgeschlagen"
 
 
+def _ssl_error(e: ssl.SSLError) -> AgentError:
+    """Abgebrochene Verbindung ist kein Prüffehler: nur Prüfung und TLS-Alerts sind fatal (P4-R4)."""
+    if isinstance(e, (ssl.SSLEOFError, ssl.SSLZeroReturnError)):
+        return AgentError("Agent nicht erreichbar")
+    return AgentError(_TLS_FAILED, fatal=True)
+
+
 @functools.cache
 def _system_context() -> ssl.SSLContext:
     return pki.client_context(None)  # Token-Server mit https: System-Vertrauensspeicher, nie die Moni-CA (D5)
@@ -72,14 +81,27 @@ class AgentClient:
     def __repr__(self) -> str:
         return "AgentClient(…)"
 
-    def get(self, path: str, params: dict | None = None) -> dict:
+    def get(self, path: str, params: dict | None = None, expect: type = dict) -> dict | list:
+        """`expect=list` nur für Antworten, die laut Vertrag eine Liste sind (z. B. /tokens)."""
         url = self._base + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        return self._request("GET", url, None, expect)
+
+    def post(self, path: str, body: dict) -> dict | None:
+        """None bei leerer Antwort (204)."""
+        return self._request("POST", self._base + path, json.dumps(body).encode(), dict)
+
+    def delete(self, path: str) -> None:
+        self._request("DELETE", self._base + path, None, dict)
+
+    def _request(self, method: str, url: str, data: bytes | None, expect: type):
         if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
             raise AgentError("Agent-URL muss mit http:// oder https:// beginnen", fatal=True)
+        headers = self._headers if data is None else {**self._headers, "Content-Type": "application/json"}
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         err = body = None
         deadline = time.monotonic() + self._timeout  # Gesamtfrist: urllib-Timeout gilt nur je Socket-Operation
         try:
-            with self._opener.open(urllib.request.Request(url, headers=self._headers), timeout=self._timeout) as resp:
+            with self._opener.open(req, timeout=self._timeout) as resp:
                 body = bytearray()
                 while len(body) <= _MAX_BYTES and (chunk := resp.read1(65536)):
                     body += chunk
@@ -89,19 +111,20 @@ class AgentClient:
             e.close()
             err = AgentError("Agent lehnt Token ab", fatal=True) if e.code in (401, 403) else \
                 AgentError(f"Agent antwortet mit HTTP {e.code}")
-        except ssl.SSLError:  # auch beim Lesen, z. B. wenn der Agent das Client-Zertifikat ablehnt (TLS 1.3)
-            err = AgentError(_TLS_FAILED, fatal=True)
+        except ssl.SSLError as e:  # auch beim Lesen, z. B. wenn der Agent das Client-Zertifikat ablehnt (TLS 1.3)
+            err = _ssl_error(e)
         except urllib.error.URLError as e:
-            err = AgentError(_TLS_FAILED, fatal=True) if isinstance(e.reason, ssl.SSLError) else \
-                AgentError("Agent nicht erreichbar")
+            err = _ssl_error(e.reason) if isinstance(e.reason, ssl.SSLError) else AgentError("Agent nicht erreichbar")
         except (OSError, http.client.HTTPException, ValueError):  # URLError, Timeout, Abbruch, kaputte Antwort
             err = AgentError("Agent nicht erreichbar")
         if err is None:
+            if not body and method != "GET":
+                return None
             try:
                 data = json.loads(body) if len(body) <= _MAX_BYTES else None
             except ValueError:
                 data = None
-            if not isinstance(data, dict):
+            if not isinstance(data, expect):
                 err = AgentError("Ungültige Antwort vom Agent")
         if err is not None:  # außerhalb von except: kein __context__ mit Anfrage- oder Antwortdetails
             raise err
@@ -160,6 +183,7 @@ class Poller:
         self._client_factory = client_factory
         self._conn: sqlite3.Connection | None = None
         self._last_maintenance: int | None = None
+        self._ensured_at: int | None = None
         self._info_at: dict[int, int] = {}  # Zeitpunkt des letzten Info-Versuchs, ob erfolgreich oder nicht
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -300,6 +324,54 @@ class Poller:
             raise
         if maintenance:
             self._last_maintenance = now
+        self._renew_certs(now)
+
+    def _renew_certs(self, now: int) -> None:
+        """Nach dem Commit des Zyklus: das Netzwerk läuft nie, während die DB-Schreibsperre gehalten wird."""
+        if self._pki is None or self._stop.is_set():
+            return
+        from .pairing import PairingError, renew  # pairing importiert dieses Modul
+        at = datetime.fromtimestamp(now, timezone.utc)
+        if self._ensured_at is None or now - self._ensured_at >= _RENEW_RETRY:
+            self._ensured_at = now
+            try:  # erneuert das Client-Zertifikat; client_context() baut den Kontext danach selbst neu
+                self._pki.ensure(at)
+            except Exception as e:
+                log.error("Client-Zertifikat des Managers nicht erneuerbar (%s)", type(e).__name__)
+        due = self._conn.execute(
+            "SELECT id, name, url FROM servers WHERE security='mtls' AND cert_not_after < ? "
+            "AND (cert_renew_tried IS NULL OR cert_renew_tried <= ?) ORDER BY id",
+            (now + _RENEW_BEFORE, now - _RENEW_RETRY)).fetchall()
+        done = []
+        for sid, name, url in due:  # nacheinander: es sind wenige Server
+            try:
+                client = self._client_factory(url, "", {}, self._settings.poll_timeout_seconds,
+                                              ssl_context=self._pki.client_context())
+                done.append((sid, renew(client, url, self._pki, at)))
+                log.info("Zertifikat für %s erneuert", name)
+                continue
+            except (AgentError, PairingError) as e:
+                msg = e.message
+            except (SecretError, OSError, ValueError):
+                msg = "Manager-Zertifikate nicht lesbar"
+            except Exception as e:  # unerwartete Antwortform darf andere Server nicht mitreißen
+                msg = f"unerwarteter Fehler ({type(e).__name__})"
+            log.warning("Zertifikat für %s konnte nicht erneuert werden: %s", name, msg)
+            done.append((sid, None))
+        if not done:
+            return
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for sid, not_after in done:
+                if not_after is None:  # altes Zertifikat bleibt in Kraft
+                    conn.execute("UPDATE servers SET cert_renew_tried=? WHERE id=?", (now, sid))
+                else:
+                    conn.execute("UPDATE servers SET cert_not_after=?, cert_renew_tried=NULL WHERE id=?", (not_after, sid))
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
 
     def close(self) -> None:
         if self._conn is not None:

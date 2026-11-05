@@ -15,6 +15,7 @@ from moni.manager import db, pairing
 from moni.manager.api import router
 from moni.manager.pairing import PairingError
 from moni.manager.poller import AgentClient, AgentError
+from moni.manager.servers import ServerStore
 from moni.secretbox import SecretBox, generate_key
 from moni.timeutil import utcnow
 
@@ -174,6 +175,12 @@ def test_api_pairing_with_url_in_body(api, agent_tls_server):
     assert r.status_code == 201 and r.json()["security"] == "mtls"
 
 
+def test_api_pairing_url_compare_ignores_trailing_slash(api, agent_tls_server):  # P4-R4b
+    code = _code_with(agent_tls_server, url=agent_tls_server.url)
+    r = api.post("/api/v1/servers", json={"name": "pi", "pairing_code": code, "url": agent_tls_server.url + "/"})
+    assert r.status_code == 201, r.text
+
+
 _EITHER = "Entweder token oder pairing_code angeben"
 
 
@@ -184,6 +191,9 @@ _EITHER = "Entweder token oder pairing_code angeben"
     (lambda s: {"name": "x", "pairing_code": s.code + ":https://other.example:1", "url": s.url},
      "URL im Kopplungscode passt nicht"),
     (lambda s: {"name": "x", "pairing_code": s.code}, "URL fehlt"),
+    (lambda s: {"name": "x", "pairing_code": s.code, "url": s.url + "/moni"},
+     "URL darf für gekoppelte Server keinen Pfad haben"),
+    (lambda s: {"name": "x", "pairing_code": s.code + ":" + s.url + "/a/"}, "URL darf für gekoppelte Server keinen Pfad haben"),
     (lambda s: {"name": "x", "pairing_code": s.code, "url": "http://127.0.0.1:1"}, "mTLS braucht eine https://-URL"),
     (lambda s: {"name": "x", "pairing_code": s.code + ":http://127.0.0.1:1"}, "mTLS braucht eine https://-URL"),
     (lambda s: {"name": "x", "pairing_code": "kaputt", "url": s.url}, "Kopplungscode ist ungültig"),
@@ -222,3 +232,120 @@ def test_api_pairing_refuses_taken_name_before_contacting_agent(api, agent_tls_s
     assert api.post("/api/v1/servers", json={"name": "pi", "url": "https://a", "token": "t"}).status_code == 201
     r = api.post("/api/v1/servers", json={"name": "pi", "pairing_code": agent_tls_server.code, "url": agent_tls_server.url})
     assert (r.status_code, r.json()["detail"]) == (422, "Name ist bereits vergeben") and spy == []
+
+
+# --- lokale Fehler und Kontrollabruf (P4-R4c/d) --------------------------------
+
+def test_unreadable_manager_keys_fail_before_contacting_agent(api, agent_tls_server, manager_pki, spy):
+    (manager_pki.dir / "ca.key.enc").write_text("kaputt")
+    with pytest.raises(PairingError) as e:
+        pairing.pair(agent_tls_server.url, agent_tls_server.code, manager_pki, NOW, 5)
+    assert (e.value.status, e.value.message) == (500, "Manager-Zertifikate nicht lesbar") and e.value.__context__ is None
+    r = api.post("/api/v1/servers", json={"name": "pi", "pairing_code": agent_tls_server.code, "url": agent_tls_server.url})
+    assert (r.status_code, r.json()["detail"]) == (500, "Manager-Zertifikate nicht lesbar")
+    assert spy == [] and not agent_tls_server.state.paired
+
+
+_PAIRED_BUT = ("Agent wurde gekoppelt, antwortet aber nicht wie erwartet – am Agent 'python -m moni.cli pair reset' "
+               "ausführen und neu koppeln")
+
+
+@pytest.mark.parametrize("answer,reason", [
+    (AgentError("TLS-Prüfung des Agents fehlgeschlagen", fatal=True), "TLS-Prüfung des Agents fehlgeschlagen"),
+    (AgentError("Agent lehnt Token ab", fatal=True), "TLS-Prüfung des Agents fehlgeschlagen"),
+    (AgentError("Agent antwortet mit HTTP 500"), "Agent nicht erreichbar"),
+    ({"paired": False}, "Agent bestätigt die Kopplung nicht"),
+])
+def test_failed_control_call_after_pairing_hints_reset(api, agent_tls_server, monkeypatch, caplog, answer, reason):
+    class Control:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get(self, path):
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+    monkeypatch.setattr(pairing, "AgentClient", Control)
+    r = api.post("/api/v1/servers", json={"name": "pi", "pairing_code": agent_tls_server.code, "url": agent_tls_server.url})
+    assert (r.status_code, r.json()["detail"]) == (502, _PAIRED_BUT)
+    assert agent_tls_server.state.paired and api.get("/api/v1/servers").json() == []
+    assert f"Kontrollabruf nach der Kopplung fehlgeschlagen: {reason}" in [
+        rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING"]
+
+
+# --- Agent-Tokens über den Manager (D9) ---------------------------------------
+
+def _pair_via_api(api, agent):
+    r = api.post("/api/v1/servers", json={"name": "pi", "pairing_code": agent.code, "url": agent.url})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _token_audit(api):
+    conn = db.connect(api.app.state.settings.db_path)
+    try:
+        return [(r[0], r[1], json.loads(r[2])) for r in
+                conn.execute("SELECT action, target, details FROM audit_log WHERE action LIKE 'agent_token.%' ORDER BY id")]
+    finally:
+        conn.close()
+
+
+def test_agent_tokens_via_manager(api, agent_tls_server, caplog):
+    caplog.set_level(logging.DEBUG)
+    sid = _pair_via_api(api, agent_tls_server)
+    before = {t.id for t in agent_tls_server.app.state.tokens.list()}
+    r = api.post(f"/api/v1/servers/{sid}/agent-tokens", json={"name": "grafana", "expires_days": 30})
+    assert r.status_code == 201, r.text
+    d = r.json()
+    plain = d["token"]
+    assert set(d) == {"id", "name", "scope", "created_at", "expires_at", "token"}
+    assert (d["name"], d["scope"]) == ("grafana", "read") and d["expires_at"] and plain.startswith(f"moni_{d['id']}_")
+    assert agent_tls_server.app.state.tokens.verify(plain).id == d["id"]  # gilt am Agent
+    listed = api.get(f"/api/v1/servers/{sid}/agent-tokens")
+    assert listed.status_code == 200
+    mine = [t for t in listed.json() if t["id"] not in before]
+    assert mine == [{k: d[k] for k in ("id", "name", "scope", "created_at", "expires_at")}]
+    assert api.delete(f"/api/v1/servers/{sid}/agent-tokens/{d['id']}").status_code == 204
+    assert d["id"] not in {t["id"] for t in api.get(f"/api/v1/servers/{sid}/agent-tokens").json()}
+    assert agent_tls_server.app.state.tokens.verify(plain) is None
+    assert _token_audit(api) == [("agent_token.created", "pi", {"token_id": d["id"]}),
+                                 ("agent_token.revoked", "pi", {"token_id": d["id"]})]
+    for text in (listed.text, caplog.text, json.dumps(_token_audit(api))):
+        assert plain not in text and plain.split("_", 2)[2] not in text
+
+
+def test_agent_token_routes_validate_and_map_agent_errors(api, agent_tls_server, manager_pki):
+    import socket
+    sid = _pair_via_api(api, agent_tls_server)
+    base = f"/api/v1/servers/{sid}/agent-tokens"
+    for bad in ({"name": "x", "scope": "admin"}, {"name": ""}, {"name": "x", "expires_days": 0}, {}):
+        assert api.post(base, json=bad).status_code == 422
+    for bad_id in ("ABCDEF12", "abc", "abcdef123", "abcdefg1"):
+        assert api.delete(f"{base}/{bad_id}").status_code == 422, bad_id
+    assert api.get("/api/v1/servers/999/agent-tokens").status_code == 404
+    r = api.delete(f"{base}/0000abcd")  # am Agent unbekannt
+    assert (r.status_code, r.json()["detail"]) == (502, "Agent nicht erreichbar")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        closed_port = s.getsockname()[1]  # nach dem Schließen: Verbindung wird sofort abgelehnt
+    conn = db.connect(api.app.state.settings.db_path)
+    try:
+        gone = ServerStore(conn, api.app.state.box).add_mtls("weg", f"https://127.0.0.1:{closed_port}", NOW_TS).id
+    finally:
+        conn.close()
+    for method, path, body in (("GET", "", None), ("POST", "", {"name": "x"}), ("DELETE", "/0000abcd", None)):
+        r = api.request(method, f"/api/v1/servers/{gone}/agent-tokens{path}", json=body)
+        assert (r.status_code, r.json()["detail"]) == (502, "Agent nicht erreichbar"), method
+    assert _token_audit(api) == []
+    read_tok = api.app.state.tokens.create("r", "read")[1]
+    r = api.get(base, headers={"Authorization": f"Bearer {read_tok}"})
+    assert r.status_code == 403
+
+
+def test_agent_tokens_rejected_for_token_servers(api, spy):
+    sid = api.post("/api/v1/servers", json={"name": "sau", "url": "https://sau.example", "token": "t"}).json()["id"]
+    base = f"/api/v1/servers/{sid}/agent-tokens"
+    for method, path, body in (("GET", "", None), ("POST", "", {"name": "x"}), ("DELETE", "/0000abcd", None)):
+        r = api.request(method, base + path, json=body)
+        assert (r.status_code, r.json()["detail"]) == (422, "Nur für gekoppelte Server"), method
+    assert spy == [] and _token_audit(api) == []
