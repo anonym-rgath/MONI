@@ -1,14 +1,15 @@
 # CI-Pipeline fuer MONI
 # ---------------------
 # Validiert jeden Push auf main und jeden Pull Request (inkl. Dependabot):
-#   1. Baut das vollstaendige Multi-stage-Image. Damit laufen automatisch
-#      `yarn build` (inkl. ESLint via CRACO) und `pip install` durch -
-#      Build-Fehler in Frontend- oder Backend-Dependencies fallen hier auf.
-#   2. Startet den Container und prueft, ob die API antwortet (Boot-Smoke).
-#
-# Die vollstaendige Runtime-Haertung (read_only, cap_drop, Docker-Socket-Proxy)
-# wird weiterhin auf dem Ziel-Host per scripts/smoke.sh verifiziert - sie braucht das
-# externe traefik-network und die Host-Mounts, die im CI-Runner fehlen.
+#   1. Backend-Unit-Tests.
+#   2. Baut beide Image-Targets (agent, manager). Damit laufen `yarn build`
+#      und `pip install` durch.
+#   3. Startet compose.agent.yaml (Agent + Socket-Proxy) auf dem Runner und
+#      (TLS an) und prueft per HTTPS Health, Auth, Snapshot, Metriken und die
+#      Container-Haertung.
+#   4. Startet compose.manager.yaml (HTTPS) und prueft Health, Admin-Token, lokalen
+#      Server mit Verlauf, Geheimnis-freie Logs und die Container-Haertung.
+#   5. Koppelt den Agent per mTLS mit dem Manager (beide Netze verbunden).
 
 name: CI
 
@@ -31,7 +32,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: pip install -r backend/requirements-dev.txt
@@ -41,7 +42,7 @@ jobs:
         working-directory: backend
 
   build:
-    name: Build image & boot smoke
+    name: Build images & smoke tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -50,29 +51,152 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Build agent image
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: agent
           load: true
-          tags: linux-monitor:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: moni-agent:ci
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
 
-      - name: Boot smoke test
+      - name: Build manager image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: manager
+          load: true
+          tags: moni-manager:ci
+          cache-from: type=gha,scope=manager
+          cache-to: type=gha,mode=max,scope=manager
+
+      - name: Agent smoke test
         run: |
-          docker run -d --name linux-monitor-ci -p 8080:80 linux-monitor:ci
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8080/api/ | grep -q '"status":"live"'; then
-              echo "OK: API antwortet mit status=live"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "FAIL: API hat nach 30s nicht mit status=live geantwortet"
-          docker logs linux-monitor-ci
-          exit 1
+          set -euo pipefail
+          docker compose -f compose.agent.yaml up -d --build
+          ok=0
+          for i in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health > agent-health.json 2>/dev/null && grep -q '"ok"' agent-health.json && { ok=1; break; }; sleep 1; done
+          [ "$ok" = 1 ] || { echo "FAIL: /api/v1/health nicht erreichbar"; exit 1; }
+          test "$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:9810/api/v1/snapshot)" = 401
+          TOKEN=$(docker compose -f compose.agent.yaml exec -T moni-agent python -m moni.cli token create --name ci | tail -n1)
+          sleep 20   # mindestens eine Messung abwarten (Takt 15 s)
+          curl -fsSk -H "Authorization: Bearer $TOKEN" https://127.0.0.1:9810/api/v1/snapshot > snap.json
+          python3 -c "import json; s=json.load(open('snap.json')); assert s['docker']['reachable'], s['warnings']; assert s['host']['filesystems'], 'keine Dateisysteme'; print('OK', len(s['containers']), 'Container')"
+          curl -fsSk -H "Authorization: Bearer $TOKEN" https://127.0.0.1:9810/api/v1/info > info.json
+          python3 -c "import json; assert json.load(open('info.json'))['paired'] is False, 'unerwartet gekoppelt'"
+          # Erst in Dateien schreiben: grep -q in einer Pipe kann unter pipefail per SIGPIPE falsch auswerten
+          curl -fsSk -H "Authorization: Bearer $TOKEN" https://127.0.0.1:9810/metrics > metrics.txt
+          grep -q '^moni_docker_up 1' metrics.txt
+          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.agent.yaml ps -q moni-agent))" = "app true [ALL]"
+          # Token darf nie im Log stehen (`!` allein würde set -e umgehen)
+          docker compose -f compose.agent.yaml logs > smoke.log
+          if grep -qF "$TOKEN" smoke.log; then echo "FAIL: Token im Log"; exit 1; fi
+          # Der Kopplungscode darf (und muss) im Log stehen, solange der Agent ungekoppelt ist (D2)
+          test -n "$(grep -oE 'moni-pair-v1:[A-Za-z0-9_:-]+' smoke.log | head -n1)"
+
+      - name: Manager smoke test
+        env:
+          COMPOSE_PROJECT_NAME: moni-manager
+        run: |
+          set -euo pipefail
+          MONI_SECRET_KEY=$(docker run --rm moni-manager:ci python -m moni.cli secret generate)
+          export MONI_SECRET_KEY
+          docker compose -f compose.manager.yaml up -d --build
+          ok=0
+          for i in $(seq 1 60); do curl -fsSk https://127.0.0.1:8443/api/v1/health > health.json 2>/dev/null && grep -q '"ok"' health.json && { ok=1; break; }; sleep 1; done
+          [ "$ok" = 1 ] || { echo "FAIL: Manager /api/v1/health nicht erreichbar"; exit 1; }
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 301
+          test "$(curl -s -o /dev/null -w '%{redirect_url}' http://127.0.0.1:8080/)" = "https://127.0.0.1:8443/"
+          test "$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/v1/servers)" = 401
+          TOKEN=$(docker compose -f compose.manager.yaml exec -T moni-manager python -m moni.cli token create --name ci --scope admin | tail -n1)
+          sleep 35   # mindestens zwei Messungen abwarten (Takt 15 s)
+          curl -fsSk -H "Authorization: Bearer $TOKEN" https://127.0.0.1:8443/api/v1/servers > servers.json
+          python3 -c "import json; s=[x for x in json.load(open('servers.json')) if x['is_local']]; assert len(s)==1 and s[0]['status']=='ok', s; open('local_id','w').write(str(s[0]['id'])); print('OK lokaler Server', s[0]['name'])"
+          curl -fsSk -H "Authorization: Bearer $TOKEN" "https://127.0.0.1:8443/api/v1/servers/$(cat local_id)/history?metric=moni_host_memory_usage_percent" > history.json
+          python3 -c "import json; n=sum(len(x['points']) for x in json.load(open('history.json'))['series']); assert n>=2, n; print('OK', n, 'Punkte')"
+          # Anmeldung: Setup-Token kommt aus dem Log (D9), Dateien statt Pipes in grep -q (R7)
+          docker compose -f compose.manager.yaml logs > manager.log
+          SETUP_TOKEN=$(grep -oE 'Setup-Token setup_[A-Za-z0-9_-]+' manager.log | head -n1 | cut -d' ' -f2)
+          test -n "$SETUP_TOKEN"
+          python3 scripts/ci/manager_auth_smoke.py https://127.0.0.1:8443 "$SETUP_TOKEN" "$RUNNER_TEMP/ci-recovery"
+          # P3-R6: der OIDC-code darf nicht in den Zugriffslogs landen (Status egal)
+          curl -sk -o /dev/null "https://127.0.0.1:8443/api/v1/auth/oidc/callback/x?code=GEHEIMCODE123&state=y" || true
+          sleep 2
+          # Erst in Dateien schreiben: grep -q in einer Pipe kann unter pipefail per SIGPIPE falsch auswerten
+          docker compose -f compose.manager.yaml logs > manager.log
+          if grep -qF "$TOKEN" manager.log; then echo "FAIL: Token im Log"; exit 1; fi
+          if grep -qF "$MONI_SECRET_KEY" manager.log; then echo "FAIL: MONI_SECRET_KEY im Log"; exit 1; fi
+          if grep -qF "ci-smoke-Passwort-2026" manager.log; then echo "FAIL: Admin-Passwort im Log"; exit 1; fi
+          if grep -qiF "recovery" manager.log; then echo "FAIL: Wiederherstellungscode im Log"; exit 1; fi
+          if grep -qF "GEHEIMCODE123" manager.log; then echo "FAIL: OIDC-code im Log"; exit 1; fi
+          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.manager.yaml ps -q moni-manager))" = "app true [ALL]"
+
+      - name: Kopplung (mTLS)
+        run: |
+          set -euo pipefail
+          agent() { docker compose -f compose.agent.yaml "$@"; }
+          manager() { MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml "$@"; }
+          # Agent-Stack (Standardprojekt) und Manager-Stack laufen noch; Manager ans Agent-Netz hängen
+          AGENT_CID=$(agent ps -q moni-agent)
+          MANAGER_CID=$(manager ps -q moni-manager)
+          AGENT_NET=$(docker inspect --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$AGENT_CID" | tr ' ' '\n' | grep -v socket-proxy | head -n1)
+          docker network connect "$AGENT_NET" "$MANAGER_CID"
+          # Erst in Dateien schreiben (R7); der Code steht nur, solange der Agent ungekoppelt ist
+          agent logs moni-agent > agent.log
+          CODE=$(grep -oE 'moni-pair-v1:[A-Za-z0-9_:-]+' agent.log | head -n1)
+          test -n "$CODE"
+          python3 scripts/ci/pair_smoke.py https://127.0.0.1:8443 "$CODE" https://moni-agent:9810 "$RUNNER_TEMP/ci-recovery"
+          sleep 5
+          agent logs moni-agent > agent.log
+          grep -qF "Agent gekoppelt" agent.log
+          # Das Kopplungs-Token wird nach der Kopplung nicht erneut geloggt (Zeilen nach "Agent gekoppelt")
+          awk '/Agent gekoppelt/{f=1} f' agent.log > after-pairing.log
+          if grep -qF "moni-pair-v1:" after-pairing.log; then echo "FAIL: Kopplungscode nach der Kopplung im Log"; exit 1; fi
+          # Das Kopplungs-Token (3. Feld des Codes) darf auch im Manager-Log nicht stehen
+          PAIR_TOKEN=$(echo "$CODE" | cut -d: -f3)
+          test -n "$PAIR_TOKEN"
+          manager logs > manager.log
+          if grep -qF "$PAIR_TOKEN" manager.log; then echo "FAIL: Kopplungs-Token im Manager-Log"; exit 1; fi
+          # Bearer-Token für Fremdsysteme funktioniert weiter, Prüfung gegen die Manager-CA
+          curl -fsSk https://127.0.0.1:8443/api/v1/ca.crt > ca.crt
+          TOKEN=$(agent exec -T moni-agent python -m moni.cli token create --name ci-ext | tail -n1)
+          curl -fsS --cacert ca.crt --resolve moni-agent:9810:127.0.0.1 -H "Authorization: Bearer $TOKEN" https://moni-agent:9810/api/v1/snapshot > snap2.json
+          curl -fsS --cacert ca.crt --resolve moni-agent:9810:127.0.0.1 -H "Authorization: Bearer $TOKEN" https://moni-agent:9810/api/v1/info > info2.json
+          python3 -c "import json; json.load(open('snap2.json'))['host']; assert json.load(open('info2.json'))['paired'] is True; print('OK Fremdsystem-Token nach Kopplung')"
+
+      - name: Alarmkanal
+        run: |
+          set -euo pipefail
+          manager() { MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml "$@"; }
+          # Runner-Adresse aus Sicht des Managers = Gateway seines Compose-Netzes; der Empfänger bindet nur dort, nie 0.0.0.0
+          HOOK_HOST=$(docker network inspect moni-manager_default -f '{{(index .IPAM.Config 0).Gateway}}')
+          test -n "$HOOK_HOST"
+          export HOOK_HOST
+          python3 scripts/ci/alert_smoke.py --selftest
+          python3 scripts/ci/alert_smoke.py https://127.0.0.1:8443 "$RUNNER_TEMP/ci-recovery" 9911
+          # Erst in eine Datei schreiben (R7); das HMAC-Secret darf nie im Log stehen
+          manager logs > manager.log
+          if grep -qF "ci-hmac-geheim-5f2c" manager.log; then echo "FAIL: HMAC-Secret im Manager-Log"; exit 1; fi
+
+      - name: Logs
+        if: always()
+        run: docker compose -f compose.agent.yaml logs
+
+      - name: Manager logs
+        if: always()
+        env:
+          COMPOSE_PROJECT_NAME: moni-manager
+          MONI_SECRET_KEY: ci-platzhalter  # nur damit compose die Datei auflöst
+        run: docker compose -f compose.manager.yaml logs
 
       - name: Cleanup
         if: always()
-        run: docker rm -f linux-monitor-ci || true
+        run: docker compose -f compose.agent.yaml down -v
+
+      - name: Manager cleanup
+        if: always()
+        env:
+          COMPOSE_PROJECT_NAME: moni-manager
+          MONI_SECRET_KEY: ci-platzhalter
+        run: docker compose -f compose.manager.yaml down -v

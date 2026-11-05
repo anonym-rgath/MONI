@@ -1,3 +1,5 @@
-# Linux Monitor - Minimal Requirements (No Database)
+# Linux Monitor - Minimal Requirements (ohne Datenbank-Treiber; SQLite aus der Standardbibliothek)
 fastapi==0.136.3
 uvicorn==0.48.0
+cryptography==50.0.2
+PyJWT==2.15.1

@@ -1,0 +1,277 @@
+"""Manager-API v1: Serverliste, Verwaltung (admin) und Verlaufsabfrage. Nie Token- oder Header-Werte ausgeben."""
+import json
+import logging
+from contextlib import contextmanager
+from typing import Annotated
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstraints
+
+from moni import __version__
+from moni.agent.pairing_api import NewToken as NewAgentToken  # gleiche Prüfung wie am Agent, extra=forbid
+from moni.auth import audit
+from moni.auth.deps import Principal, client_ip, require_scope
+from moni.collect.host import read_hostname
+from moni.manager import db, pairing, tsdb
+from moni.manager.pairing import PairingError
+from moni.manager.poller import AgentClient, AgentError
+from moni.manager.servers import Server, ServerStore
+from moni.secretbox import SecretError
+from moni.timeutil import iso, parse_iso, utcnow
+
+log = logging.getLogger("moni.manager.api")
+router = APIRouter(prefix="/api/v1")
+ServerId = Annotated[int, Path(ge=1, le=2**63 - 1)]
+AgentTokenId = Annotated[str, Path(pattern=r"^[0-9a-f]{8}$")]  # Format der Ids im TokenStore des Agents
+read = Depends(require_scope("read"))
+admin = Depends(require_scope("admin"))
+
+
+class NewServer(BaseModel):
+    """Entweder Token-Modus {name, url, token, headers?} oder mTLS {name, pairing_code, url?}."""
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    url: str | None = None
+    token: str | None = None
+    headers: dict[str, str] | None = None
+    pairing_code: Annotated[StrictStr, StringConstraints(max_length=512)] | None = None
+
+
+class Patch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: StrictBool
+
+
+@contextmanager
+def _store(request: Request):
+    with db.request_conn(request) as conn:
+        yield conn, ServerStore(conn, request.app.state.box)
+
+
+def _json(s: str | None):
+    try:
+        return json.loads(s) if s else None
+    except (ValueError, RecursionError):  # gespeicherter Agent-Inhalt darf die Liste nie lahmlegen
+        log.warning("Gespeicherter JSON-Text ist nicht lesbar")
+        return None
+
+
+_INFO_STR = ("version", "role", "api_version", "hostname", "tls")
+
+
+def _clean_info(info) -> dict | None:
+    """Nur bekannte Felder mit einfachen JSON-Typen (Agent-Daten sind nicht vertrauenswürdig, NaN/inf fallen raus)."""
+    if not isinstance(info, dict):
+        return None
+    out = {k: info[k] for k in _INFO_STR if isinstance(info.get(k), str)}
+    caps = info.get("capabilities")
+    if isinstance(caps, list) and all(isinstance(c, str) for c in caps):
+        out["capabilities"] = caps
+    if isinstance(info.get("paired"), bool):
+        out["paired"] = info["paired"]
+    return out
+
+
+def _out(conn, s: Server, detail: bool = False) -> dict:
+    r = conn.execute("SELECT last_snapshot, agent_info FROM servers WHERE id=?", (s.id,)).fetchone()
+    snap, info = _json(r["last_snapshot"]), _clean_info(_json(r["agent_info"]))
+    out = {"id": s.id, "name": s.name, "url": s.url, "is_local": s.is_local, "enabled": s.enabled, "status": s.status,
+           "failures": s.failures, "last_error": s.last_error,
+           "last_seen": iso(datetime.fromtimestamp(s.last_seen, timezone.utc)) if s.last_seen is not None else None,
+           "header_names": s.header_names, "warnings": len(w) if isinstance(w := (snap.get("warnings") if isinstance(snap, dict) else None), list) else 0,
+           "agent_version": (info or {}).get("version"), "security": s.security,
+           "cert_not_after": iso(datetime.fromtimestamp(s.cert_not_after, timezone.utc)) if s.cert_not_after is not None else None,
+           "muted_until": iso(datetime.fromtimestamp(s.muted_until, timezone.utc)) if s.muted_until is not None else None}
+    if detail:
+        out["agent_info"] = info
+    return out
+
+
+def _get(store: ServerStore, server_id: int) -> Server:
+    s = store.get(server_id)
+    if s is None:
+        raise HTTPException(404, "Server nicht gefunden")
+    return s
+
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@router.get("/info", dependencies=[read])
+def info(request: Request):
+    cfg = request.app.state.settings
+    with _store(request) as (conn, _):
+        n = conn.execute("SELECT COUNT(*) FROM servers").fetchone()[0]
+    return {"version": __version__, "role": "manager", "api_version": "v1", "hostname": read_hostname(cfg.host_etc),
+            "tls": cfg.tls, "server_count": n}
+
+
+@router.get("/ca.crt")
+def ca_crt(request: Request):
+    """Ohne Anmeldung (D11): Fremdsysteme prüfen damit Agent-Zertifikate. Kein Geheimnis."""
+    return Response(request.app.state.pki.ca_pem, media_type="application/x-pem-file")
+
+
+@router.get("/servers", dependencies=[read])
+def list_servers(request: Request):
+    with _store(request) as (conn, store):
+        return [_out(conn, s) for s in store.list()]
+
+
+@router.post("/servers", status_code=201)
+def create_server(request: Request, body: NewServer, p: Principal = admin):
+    if (body.token is None) == (body.pairing_code is None) or (body.pairing_code is not None and body.headers is not None):
+        raise HTTPException(422, "Entweder token oder pairing_code angeben")
+    with _store(request) as (conn, store):  # keine offene Transaktion während der Kopplung
+        try:
+            if body.token is None:
+                s = pairing.add_server(store, request.app.state.pki, body.name, body.pairing_code, body.url, utcnow(),
+                                       request.app.state.settings.poll_timeout_seconds)
+            elif not body.url:
+                raise ValueError("URL fehlt")
+            else:
+                s = store.add(body.name, body.url, body.token, body.headers)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        except PairingError as e:
+            raise HTTPException(e.status, e.message) from None
+        audit.record(conn, p.actor, "server.added", target=s.name, ip=client_ip(request),
+                     details={"url": s.url, "security": s.security, "header_names": s.header_names})
+        return _out(conn, s)
+
+
+@router.get("/servers/{server_id}", dependencies=[read])
+def get_server(request: Request, server_id: ServerId):
+    with _store(request) as (conn, store):
+        return _out(conn, _get(store, server_id), detail=True)
+
+
+@router.patch("/servers/{server_id}")
+def patch_server(request: Request, server_id: ServerId, body: Patch, p: Principal = admin):
+    with _store(request) as (conn, store):
+        if not store.set_enabled(server_id, body.enabled):
+            raise HTTPException(404, "Server nicht gefunden")
+        s = _get(store, server_id)
+        audit.record(conn, p.actor, "server.updated", target=s.name, ip=client_ip(request), details={"enabled": body.enabled})
+        return _out(conn, s)
+
+
+@router.delete("/servers/{server_id}", status_code=204)
+def delete_server(request: Request, server_id: ServerId, p: Principal = admin):
+    with _store(request) as (conn, store):
+        old = store.get(server_id)
+        try:
+            found = store.delete(server_id)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        if found:
+            audit.record(conn, p.actor, "server.removed", target=old.name, ip=client_ip(request))
+    if not found:
+        raise HTTPException(404, "Server nicht gefunden")
+    return Response(status_code=204)
+
+
+@router.get("/servers/{server_id}/snapshot", dependencies=[read])
+def snapshot(request: Request, server_id: ServerId):
+    with _store(request) as (conn, store):
+        _get(store, server_id)
+        snap = conn.execute("SELECT last_snapshot FROM servers WHERE id=?", (server_id,)).fetchone()[0]
+    if snap is None:
+        raise HTTPException(404, "Noch kein Snapshot")
+    return Response(snap, media_type="application/json")
+
+
+@router.get("/servers/{server_id}/series", dependencies=[read])
+def series(request: Request, server_id: ServerId):
+    with _store(request) as (conn, store):
+        _get(store, server_id)
+        return tsdb.list_series(conn, server_id)
+
+
+@router.get("/servers/{server_id}/history", dependencies=[read])
+def history(request: Request, server_id: ServerId, metric: str, from_: str | None = Query(None, alias="from"),
+            to: str | None = None, resolution: str = "auto", label: list[str] = Query(default=[])):
+    try:
+        end = parse_iso(to) if to else utcnow()
+        start = parse_iso(from_) if from_ else end - timedelta(hours=1)
+    except (ValueError, OverflowError):
+        raise HTTPException(422, "Parameter from/to müssen ISO-8601-Zeitstempel mit Zeitzone sein") from None
+    labels = {}
+    for item in label:
+        k, sep, v = item.partition(":")
+        if not sep:
+            raise HTTPException(422, "Parameter label muss die Form key:value haben")
+        labels[k] = v
+    with _store(request) as (conn, store):
+        _get(store, server_id)
+        try:
+            return tsdb.query(conn, server_id, metric, int(start.timestamp()), int(end.timestamp()), resolution, labels or None)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+
+
+# --- Agent-Tokens über den Manager (D9): nur für mTLS-Server, nie Token im Log oder Audit ----------------------------
+
+_AGENT_TOKEN_FIELDS = ("id", "name", "scope", "created_at", "expires_at")
+_UNREACHABLE = "Agent nicht erreichbar"
+
+
+def _agent(request: Request, server_id: int) -> tuple[Server, AgentClient]:
+    with _store(request) as (_, store):  # Verbindung vor dem Netzwerkaufruf wieder schließen
+        s = _get(store, server_id)
+    if s.security != "mtls":
+        raise HTTPException(422, "Nur für gekoppelte Server")
+    try:
+        ctx = request.app.state.pki.client_context()
+    except (SecretError, OSError, ValueError):
+        ctx = None
+    if ctx is None:
+        raise HTTPException(500, "Manager-Zertifikate nicht lesbar")
+    return s, AgentClient(s.url, "", {}, request.app.state.settings.poll_timeout_seconds, ssl_context=ctx)
+
+
+def _agent_token(t, extra: tuple[str, ...] = ()) -> dict:
+    """Antwort des Agents ist nicht vertrauenswürdig: nur bekannte Felder mit Text oder null."""
+    keys = _AGENT_TOKEN_FIELDS + extra
+    if not isinstance(t, dict) or not isinstance(t.get("id"), str) or \
+            not all(t.get(k) is None or isinstance(t.get(k), str) for k in keys):
+        raise HTTPException(502, _UNREACHABLE)
+    return {k: t.get(k) for k in keys}
+
+
+def _call(fn):
+    try:
+        return fn()
+    except AgentError:  # Text des Agents bleibt intern: er kann Antwortdetails enthalten
+        raise HTTPException(502, _UNREACHABLE) from None
+
+
+@router.get("/servers/{server_id}/agent-tokens")
+def list_agent_tokens(request: Request, server_id: ServerId, p: Principal = admin):
+    _, client = _agent(request, server_id)
+    return [_agent_token(t) for t in _call(lambda: client.get("/api/v1/tokens", expect=list))]
+
+
+@router.post("/servers/{server_id}/agent-tokens", status_code=201)
+def create_agent_token(request: Request, server_id: ServerId, body: NewAgentToken, p: Principal = admin):
+    s, client = _agent(request, server_id)
+    out = _agent_token(_call(lambda: client.post("/api/v1/tokens", body.model_dump(exclude_none=True))), ("token",))
+    if not isinstance(out["token"], str):
+        raise HTTPException(502, _UNREACHABLE)
+    with _store(request) as (conn, _):
+        audit.record(conn, p.actor, "agent_token.created", target=s.name, ip=client_ip(request),
+                     details={"token_id": out["id"]})
+    return out  # Klartext nur in dieser Antwort
+
+
+@router.delete("/servers/{server_id}/agent-tokens/{token_id}", status_code=204)
+def revoke_agent_token(request: Request, server_id: ServerId, token_id: AgentTokenId, p: Principal = admin):
+    s, client = _agent(request, server_id)
+    _call(lambda: client.delete(f"/api/v1/tokens/{token_id}"))
+    with _store(request) as (conn, _):
+        audit.record(conn, p.actor, "agent_token.revoked", target=s.name, ip=client_ip(request),
+                     details={"token_id": token_id})
+    return Response(status_code=204)
