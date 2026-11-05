@@ -66,10 +66,12 @@ RUN addgroup --system app \
     && chown app:app /data
 
 # Nginx config
-RUN echo 'server { \n\
+RUN echo '# P3-R6: $uri statt $request, damit der OIDC-code (Query-String) nie im Zugriffslog landet \n\
+log_format moni '\''$remote_addr [$time_iso8601] "$request_method $uri" $status $body_bytes_sent "$http_user_agent"'\''; \n\
+server { \n\
     listen 80; \n\
     server_name localhost; \n\
-    access_log /dev/stdout; \n\
+    access_log /dev/stdout moni; \n\
     error_log /dev/stderr warn; \n\
     client_max_body_size 1m; \n\
     client_body_temp_path /tmp/nginx-client-body; \n\

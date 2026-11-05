@@ -11,6 +11,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
+from ..auth import audit
+from ..auth.sessions import SessionStore
 from ..collector import Collector
 from ..config import Settings
 from ..secretbox import SecretBox, SecretError
@@ -218,6 +220,8 @@ class Poller:
         try:
             tsdb.rollup(conn, now)
             tsdb.prune(conn, now, self._settings)
+            SessionStore(conn, self._settings).purge_expired(now)  # beide joinen die offene Transaktion
+            audit.prune(conn, now - audit.RETENTION_DAYS * 86400)
         except Exception as e:
             conn.execute("ROLLBACK TO maintenance")
             conn.execute("RELEASE maintenance")

@@ -107,10 +107,21 @@ jobs:
           python3 -c "import json; s=[x for x in json.load(open('servers.json')) if x['is_local']]; assert len(s)==1 and s[0]['status']=='ok', s; open('local_id','w').write(str(s[0]['id'])); print('OK lokaler Server', s[0]['name'])"
           curl -fsS -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/v1/servers/$(cat local_id)/history?metric=moni_host_memory_usage_percent" > history.json
           python3 -c "import json; n=sum(len(x['points']) for x in json.load(open('history.json'))['series']); assert n>=2, n; print('OK', n, 'Punkte')"
+          # Anmeldung: Setup-Token kommt aus dem Log (D9), Dateien statt Pipes in grep -q (R7)
+          docker compose -f compose.manager.yaml logs > manager.log
+          SETUP_TOKEN=$(grep -oE 'Setup-Token setup_[A-Za-z0-9_-]+' manager.log | head -n1 | cut -d' ' -f2)
+          test -n "$SETUP_TOKEN"
+          python3 scripts/ci/manager_auth_smoke.py http://127.0.0.1:8080 "$SETUP_TOKEN"
+          # P3-R6: der OIDC-code darf nicht in den Zugriffslogs landen (Status egal)
+          curl -s -o /dev/null "http://127.0.0.1:8080/api/v1/auth/oidc/callback/x?code=GEHEIMCODE123&state=y" || true
+          sleep 2
           # Erst in Dateien schreiben: grep -q in einer Pipe kann unter pipefail per SIGPIPE falsch auswerten
           docker compose -f compose.manager.yaml logs > manager.log
           if grep -qF "$TOKEN" manager.log; then echo "FAIL: Token im Log"; exit 1; fi
           if grep -qF "$MONI_SECRET_KEY" manager.log; then echo "FAIL: MONI_SECRET_KEY im Log"; exit 1; fi
+          if grep -qF "ci-smoke-Passwort-2026" manager.log; then echo "FAIL: Admin-Passwort im Log"; exit 1; fi
+          if grep -qiF "recovery" manager.log; then echo "FAIL: Wiederherstellungscode im Log"; exit 1; fi
+          if grep -qF "GEHEIMCODE123" manager.log; then echo "FAIL: OIDC-code im Log"; exit 1; fi
           test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.manager.yaml ps -q moni-manager))" = "app true [ALL]"
 
       - name: Logs

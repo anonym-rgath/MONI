@@ -303,6 +303,21 @@ def test_rollup_and_prune_every_300s(poller, servers, monkeypatch):
     assert calls == [("rollup", T), ("prune", T), ("rollup", T + 300), ("prune", T + 300)]
 
 
+def test_maintenance_purges_sessions_and_old_audit(poller, conn, settings):  # D4/D10
+    from moni.auth import audit
+    from moni.auth.sessions import SessionStore
+    conn.execute("INSERT INTO users (id, email, role, kind, created_at) VALUES (1, 'a@b.de', 'admin', 'local', ?)", (T,))
+    conn.commit()
+    st = SessionStore(conn, settings)
+    st.create(1, "full", T - 13 * 3600, None)           # älter als 12 h: abgelaufen
+    fresh, plain = st.create(1, "full", T - 10, None)
+    audit.record(conn, "x", "alt", now=T - 366 * 86400)
+    audit.record(conn, "x", "frisch", now=T - 86400)
+    poller.poll_once(now=T)
+    assert [r[0] for r in conn.execute("SELECT id_hash FROM sessions")] == [fresh.id_hash]
+    assert [r[0] for r in conn.execute("SELECT action FROM audit_log")] == ["frisch"]
+
+
 def test_start_stop_thread(settings, box, servers):
     p = Poller(settings, box, StubCollector())
     p.start()
