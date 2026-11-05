@@ -9,6 +9,7 @@ import hmac
 import http.client
 import json
 import logging
+import re
 import secrets
 import sqlite3
 import threading
@@ -16,10 +17,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, StrictStr, StringConstraints, field_validator
 
@@ -48,6 +50,14 @@ _LEEWAY = 60
 _ASYMMETRIC = {"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA"}
 _ENDPOINTS = ("authorization_endpoint", "token_endpoint", "jwks_uri")
 _UNREACHABLE = "OIDC-Anbieter nicht erreichbar oder Konfiguration passt nicht"
+_ID = re.compile(r"[a-z0-9-]{1,32}")
+_MAX_PROVIDERS = 10
+# Microsofts eigener Mandant für private Konten: dort kann kein fremder Mandant Adressen setzen (P3-R9)
+MS_CONSUMER_ISSUER = "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0"
+_MS_CONSUMERS_ALIAS = "https://login.microsoftonline.com/consumers/v2.0"
+_TENANT_HINT = ("Für Microsoft die mandantenspezifische Issuer-URL verwenden: "
+                "https://login.microsoftonline.com/<Mandanten-ID>/v2.0")
+_CONSUMER_HINT = f"Für private Microsoft-Konten als Issuer {MS_CONSUMER_ISSUER} eintragen"
 
 
 class OidcError(Exception):
@@ -56,6 +66,10 @@ class OidcError(Exception):
 
 class _UnknownKid(OidcError):
     pass
+
+
+class _Hint(OidcError):
+    """Konfigurationshinweis für den Admin."""
 
 
 # --- HTTP (einzige Netzwerkstelle) -------------------------------------------
@@ -134,6 +148,9 @@ def _fetch(url: str, now: float, fresh: bool = False) -> dict:
 
 def _discover(issuer: str, now: float, fresh: bool = False) -> dict:
     d = _fetch(issuer.rstrip("/") + "/.well-known/openid-configuration", now, fresh)
+    # /common und /organizations: mehrmandantenfähig, Ursache der „nOAuth“-Kontoübernahmen
+    if isinstance(d.get("issuer"), str) and "{tenantid}" in d["issuer"].lower():
+        raise _Hint(_TENANT_HINT)
     if (d.get("issuer") != issuer or not all(_https(d.get(k)) for k in _ENDPOINTS)
             or not isinstance(d.get("id_token_signing_alg_values_supported", []), list)):
         raise OidcError(_UNREACHABLE)
@@ -141,6 +158,7 @@ def _discover(issuer: str, now: float, fresh: bool = False) -> dict:
 
 
 # --- Konfiguration in meta (D7) -----------------------------------------------
+# {"public_url": str | None, "providers": [{"id", "issuer", "client_id", "client_secret_enc", "label"}]}
 
 def _check_base(url: str) -> str:
     if not _https(url) or "?" in url or "#" in url or "@" in url or not url.isprintable() or " " in url:
@@ -148,53 +166,96 @@ def _check_base(url: str) -> str:
     return url
 
 
-def _stored(conn: sqlite3.Connection) -> dict | None:
+def _check_public_url(url: str) -> str:
+    """Nur https://host[:port]: ein Pfad würde den Cookie-Pfad von moni_oidc und die festen Rücksprungziele brechen."""
+    if urllib.parse.urlsplit(_check_base(url)).path not in ("", "/"):
+        raise ValueError("public_url darf keinen Pfad enthalten")
+    return url.rstrip("/")
+
+
+def _stored(conn: sqlite3.Connection) -> dict:
     r = conn.execute("SELECT value FROM meta WHERE key=?", (_KEY,)).fetchone()
-    return None if r is None else json.loads(r[0])
+    return {"public_url": None, "providers": []} if r is None else json.loads(r[0])
+
+
+@contextmanager
+def _tx(conn: sqlite3.Connection):
+    """Lesen und Schreiben atomar; in der CLI-Transaktion von `secret reencrypt` nicht selbst committen."""
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        yield
 
 
 def _put(conn: sqlite3.Connection, cfg: dict) -> None:
-    own = not conn.in_transaction  # in der CLI-Transaktion von `secret reencrypt` nicht selbst committen
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (_KEY, json.dumps(cfg)))
-    if own:
-        conn.commit()
 
 
-def load_config(conn: sqlite3.Connection, box: SecretBox) -> dict | None:
-    s = _stored(conn)
-    if s is None:
-        return None
-    enc = s.pop("client_secret_enc")
-    return {**s, "client_secret": box.decrypt(enc)}
+def _find(cfg: dict, pid: str | None) -> dict | None:
+    return next((p for p in cfg["providers"] if p["id"] == pid), None)
 
 
-def save_config(conn: sqlite3.Connection, box: SecretBox, *, issuer: str, client_id: str, client_secret: str | None,
-                public_url: str, label: str | None) -> None:
-    """client_secret=None behält das gespeicherte Secret, nur bei gleichem Issuer und gleicher Client-ID."""
+def set_public_url(conn: sqlite3.Connection, url: str) -> str:
+    """Ändert nur public_url; Secrets bleiben unberührt."""
+    url = _check_public_url(url)
+    with _tx(conn):
+        _put(conn, {**_stored(conn), "public_url": url})
+    return url
+
+
+def save_provider(conn: sqlite3.Connection, box: SecretBox, pid: str, *, issuer: str, client_id: str,
+                  client_secret: str | None, label: str | None) -> None:
+    """client_secret=None behält das gespeicherte Secret, nur beim selben Anbieter mit gleichem Issuer und Client-ID."""
+    if not _ID.fullmatch(pid):
+        raise ValueError("Ungültige Anbieter-ID")
     _check_base(issuer)
-    _check_base(public_url)
-    old = _stored(conn)
-    # Secret nur behalten, wenn es an denselben Anbieter geht; sonst könnte ein neuer Issuer es abgreifen
-    if client_secret is None and (old is None or (old["issuer"], old["client_id"]) != (issuer, client_id)):
-        raise ValueError("Client-Secret fehlt")
-    enc = old["client_secret_enc"] if client_secret is None else box.encrypt(client_secret)
-    _put(conn, {"issuer": issuer, "client_id": client_id, "public_url": public_url.rstrip("/"), "label": label,
-                "client_secret_enc": enc})
+    with _tx(conn):
+        cfg = _stored(conn)
+        if cfg["public_url"] is None:
+            raise ValueError("Zuerst public_url setzen")
+        old = _find(cfg, pid)
+        if old is None and len(cfg["providers"]) >= _MAX_PROVIDERS:
+            raise ValueError(f"Höchstens {_MAX_PROVIDERS} Anmeldeanbieter")
+        # Secret nur behalten, wenn es an denselben Anbieter geht; sonst könnte ein neuer Issuer es abgreifen
+        if client_secret is None and (old is None or (old["issuer"], old["client_id"]) != (issuer, client_id)):
+            raise ValueError("Client-Secret fehlt")
+        enc = old["client_secret_enc"] if client_secret is None else box.encrypt(client_secret)
+        new = {"id": pid, "issuer": issuer, "client_id": client_id, "client_secret_enc": enc, "label": label or pid}
+        cfg["providers"] = [new if p is old else p for p in cfg["providers"]] if old else [*cfg["providers"], new]
+        _put(conn, cfg)
 
 
-def delete_config(conn: sqlite3.Connection) -> None:
-    own = not conn.in_transaction
-    conn.execute("DELETE FROM meta WHERE key=?", (_KEY,))
-    if own:
-        conn.commit()
+def delete_provider(conn: sqlite3.Connection, pid: str) -> bool:
+    with _tx(conn):
+        cfg = _stored(conn)
+        rest = [p for p in cfg["providers"] if p["id"] != pid]
+        if len(rest) == len(cfg["providers"]):
+            return False
+        _put(conn, {**cfg, "providers": rest})
+    return True
+
+
+def load_provider(conn: sqlite3.Connection, box: SecretBox, pid: str) -> dict | None:
+    """Anbieter mit entschlüsseltem Secret und public_url, oder None."""
+    cfg = _stored(conn)
+    p = _find(cfg, pid)
+    if p is None:
+        return None
+    out = {k: v for k, v in p.items() if k != "client_secret_enc"}
+    return {**out, "client_secret": box.decrypt(p["client_secret_enc"]), "public_url": cfg["public_url"]}
 
 
 def reencrypt(conn: sqlite3.Connection, box: SecretBox) -> int:
-    s = _stored(conn)
-    if s is None:
-        return 0
-    _put(conn, {**s, "client_secret_enc": box.rotate(s["client_secret_enc"])})
-    return 1
+    with _tx(conn):
+        cfg = _stored(conn)
+        ps = [p for p in cfg["providers"] if p.get("client_secret_enc")]
+        for p in ps:
+            p["client_secret_enc"] = box.rotate(p["client_secret_enc"])
+        if ps:
+            _put(conn, cfg)
+    return len(ps)
 
 
 # --- laufende Anmeldungen -----------------------------------------------------
@@ -204,29 +265,29 @@ def _b64(data: bytes) -> str:
 
 
 class Flows:
-    """state -> (nonce, PKCE-Verifier, Beginn); nur im Speicher, jeder state ist einmal verwendbar."""
+    """state -> (nonce, PKCE-Verifier, Beginn, Anbieter-id); nur im Speicher, jeder state ist einmal verwendbar."""
     MAX = 1000
 
     def __init__(self):
-        self._d: dict[str, tuple[str, str, float]] = {}
+        self._d: dict[str, tuple[str, str, float, str]] = {}
         self._lock = threading.Lock()
 
-    def add(self, now: float) -> tuple[str, str, str]:
+    def add(self, now: float, provider: str) -> tuple[str, str, str]:
         state, nonce, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         with self._lock:
             for s in [s for s, e in self._d.items() if now - e[2] >= FLOW_SECONDS]:
                 del self._d[s]
             while len(self._d) >= self.MAX:  # älteste zuerst (Einfügereihenfolge)
                 del self._d[next(iter(self._d))]
-            self._d[state] = (nonce, verifier, now)
+            self._d[state] = (nonce, verifier, now, provider)
         return state, nonce, _b64(hashlib.sha256(verifier.encode()).digest())
 
-    def pop(self, state: str, now: float) -> tuple[str, str] | None:
+    def pop(self, state: str, now: float) -> tuple[str, str, str] | None:
         with self._lock:
             e = self._d.pop(state, None)
         if e is None or now - e[2] >= FLOW_SECONDS:
             return None
-        return e[0], e[1]
+        return e[0], e[1], e[3]
 
 
 # --- ID-Token -----------------------------------------------------------------
@@ -271,17 +332,28 @@ def _claims_ok(c: dict, client_id: str, nonce: str, now: float) -> bool:
 # --- Routen -------------------------------------------------------------------
 
 Url = Annotated[StrictStr, StringConstraints(max_length=1024)]
+ProviderId = Annotated[str, Path(pattern=r"^[a-z0-9-]{1,32}$")]
+_NOT_FOUND = "Anmeldeanbieter nicht gefunden"
 
 
-class ConfigBody(BaseModel):
+class PublicUrlBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    public_url: Url
+
+    @field_validator("public_url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        return _check_public_url(v)
+
+
+class ProviderBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     issuer: Url
     client_id: Annotated[StrictStr, StringConstraints(min_length=1, max_length=255)]
     client_secret: Annotated[StrictStr, StringConstraints(min_length=1, max_length=1024)] | None = None
-    public_url: Url
-    label: Annotated[StrictStr, StringConstraints(min_length=1, max_length=100)] | None = None
+    label: Annotated[StrictStr, StringConstraints(min_length=1, max_length=64)] | None = None
 
-    @field_validator("issuer", "public_url")
+    @field_validator("issuer")
     @classmethod
     def _base(cls, v: str) -> str:
         return _check_base(v)
@@ -289,14 +361,14 @@ class ConfigBody(BaseModel):
     @field_validator("client_id", "label")
     @classmethod
     def _printable(cls, v: str | None) -> str | None:
-        if v is not None and not v.isprintable():
-            raise ValueError("Steuerzeichen sind nicht erlaubt")
+        if v is not None and (not v.isprintable() or not v.strip()):
+            raise ValueError("Steuerzeichen sind nicht erlaubt, Text darf nicht leer sein")
         return v
 
 
-def _config_out(s: dict) -> dict:
-    return {"issuer": s["issuer"], "client_id": s["client_id"], "public_url": s["public_url"], "label": s["label"],
-            "client_secret_set": bool(s.get("client_secret_enc"))}
+def _provider_out(p: dict) -> dict:
+    return {"id": p["id"], "issuer": p["issuer"], "client_id": p["client_id"], "label": p["label"],
+            "client_secret_set": bool(p.get("client_secret_enc"))}
 
 
 def _redirect_uri(cfg: dict) -> str:
@@ -306,58 +378,70 @@ def _redirect_uri(cfg: dict) -> str:
 @router.get("")
 def status(request: Request):
     with db.request_conn(request) as conn:
-        s = _stored(conn)
-    return {"enabled": s is not None, "label": s["label"] if s else None}
+        cfg = _stored(conn)
+    return {"providers": [{"id": p["id"], "label": p["label"]} for p in cfg["providers"]]}
 
 
-@router.get("/config")
-def get_config(request: Request, principal: Principal = admin):
+@router.put("/public-url")
+def put_public_url(request: Request, body: PublicUrlBody, principal: Principal = admin):
     with db.request_conn(request) as conn:
-        s = _stored(conn)
-    if s is None:
-        raise HTTPException(404, "OIDC ist nicht eingerichtet")
-    return _config_out(s)
+        url = set_public_url(conn, body.public_url)
+        audit.record(conn, principal.actor, "oidc.config_changed", ip=client_ip(request), details={"public_url": True})
+    return {"public_url": url}
 
 
-@router.put("/config")
-def put_config(request: Request, body: ConfigBody, principal: Principal = admin):
+@router.get("/providers")
+def list_providers(request: Request, principal: Principal = admin):
+    with db.request_conn(request) as conn:
+        cfg = _stored(conn)
+    return {"public_url": cfg["public_url"], "providers": [_provider_out(p) for p in cfg["providers"]]}
+
+
+@router.put("/providers/{pid}")
+def put_provider(request: Request, pid: ProviderId, body: ProviderBody, principal: Principal = admin):
+    if body.issuer.rstrip("/").lower() == _MS_CONSUMERS_ALIAS:  # Alias: Tokens tragen den GUID-Issuer
+        raise HTTPException(422, _CONSUMER_HINT)
     try:
         _discover(body.issuer, time.time(), fresh=True)
+    except _Hint as e:
+        raise HTTPException(422, str(e)) from None
     except OidcError:
         raise HTTPException(422, _UNREACHABLE) from None
     with db.request_conn(request) as conn:
         try:
-            save_config(conn, request.app.state.box, **body.model_dump())
+            save_provider(conn, request.app.state.box, pid, **body.model_dump())
         except ValueError as e:  # Texte nennen nie das Secret
             raise HTTPException(422, str(e)) from None
-        audit.record(conn, principal.actor, "oidc.config_changed", target=body.issuer, ip=client_ip(request),
-                     details={"client_id": body.client_id, "public_url": body.public_url, "label": body.label,
-                              "client_secret_changed": body.client_secret is not None})
-        return _config_out(_stored(conn))
+        audit.record(conn, principal.actor, "oidc.config_changed", target=pid, ip=client_ip(request),
+                     details={"provider": pid})
+        return _provider_out(_find(_stored(conn), pid))
 
 
-@router.delete("/config", status_code=204)
-def remove_config(request: Request, principal: Principal = admin):
+@router.delete("/providers/{pid}", status_code=204)
+def remove_provider(request: Request, pid: ProviderId, principal: Principal = admin):
     with db.request_conn(request) as conn:
-        delete_config(conn)
-        audit.record(conn, principal.actor, "oidc.config_changed", ip=client_ip(request), details={"deleted": True})
+        if not delete_provider(conn, pid):
+            raise HTTPException(404, _NOT_FOUND)
+        audit.record(conn, principal.actor, "oidc.config_changed", target=pid, ip=client_ip(request),
+                     details={"provider": pid, "deleted": True})
     return Response(status_code=204)
 
 
 @router.get("/start")
-def start(request: Request):
+def start(request: Request, provider: str | None = None):
     now = int(time.time())
     with db.request_conn(request) as conn:
         cfg = _stored(conn)
-    if cfg is None:
-        raise HTTPException(404, "OIDC ist nicht eingerichtet")
+    p = _find(cfg, provider)
+    if p is None:
+        raise HTTPException(404, _NOT_FOUND)
     try:
-        ep = _discover(cfg["issuer"], now)["authorization_endpoint"]
+        ep = _discover(p["issuer"], now)["authorization_endpoint"]
     except OidcError:
         log.warning("OIDC-Anbieter nicht erreichbar")
         return RedirectResponse(_FAIL_URL, 303)
-    state, nonce, challenge = request.app.state.oidc_flows.add(now)
-    query = urllib.parse.urlencode({"response_type": "code", "client_id": cfg["client_id"], "redirect_uri": _redirect_uri(cfg),
+    state, nonce, challenge = request.app.state.oidc_flows.add(now, p["id"])
+    query = urllib.parse.urlencode({"response_type": "code", "client_id": p["client_id"], "redirect_uri": _redirect_uri(cfg),
                                     "scope": "openid email profile", "state": state, "nonce": nonce,
                                     "code_challenge": challenge, "code_challenge_method": "S256"})
     response = RedirectResponse(ep + ("&" if "?" in ep else "?") + query, 302)
@@ -379,13 +463,13 @@ def _verify(request: Request, now: int) -> tuple[dict | None, str | None]:
         return None, "state"
     if "error" in q:
         return None, "anbieter"
-    nonce, verifier = flow
+    nonce, verifier, pid = flow  # Anbieter aus dem Flow, nie aus der Anfrage
     with db.request_conn(request) as conn:
         try:
-            cfg = load_config(conn, app.state.box)
+            cfg = load_provider(conn, app.state.box, pid)
         except SecretError:
             cfg = None
-    if cfg is None:
+    if cfg is None:  # inzwischen gelöscht oder Secret nicht entschlüsselbar
         return None, "config"
     code = q.get("code")
     try:
@@ -412,12 +496,19 @@ def _verify(request: Request, now: int) -> tuple[dict | None, str | None]:
         return None, "id_token"
 
 
+def _email_trusted(c: dict) -> bool:
+    """D7 mit P3-R8/P3-R9: email_verified, Microsofts xms_edov oder Microsofts Mandant für private Konten."""
+    if c.get("email_verified") is True or c.get("xms_edov") is True:
+        return True
+    return c.get("iss") == MS_CONSUMER_ISSUER and isinstance(c.get("email"), str) and bool(c["email"])
+
+
 def _account(users: UserStore, claims: dict) -> tuple[User | None, str | None, bool]:
     """(Benutzer, None, neu verknüpft) oder (None, Fehlercode, False). Nie automatische Kontoanlage (D7)."""
     user = users.by_oidc(claims["iss"], claims["sub"])
     bind = user is None
     if bind:
-        if claims.get("email_verified") is not True:
+        if not _email_trusted(claims):
             return None, "email_unverified", False
         user = users.by_email(claims.get("email"))
         if user is None or user.oidc_bound:
