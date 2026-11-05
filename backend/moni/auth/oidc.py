@@ -544,6 +544,8 @@ def callback(request: Request, pid: str):  # ohne Pattern: unpassende pid zählt
     ip = client_ip(request)
     claims, grund = _verify(request, pid, now)
     plain = None
+    if grund == "drosselung":  # keine Audit-Zeile: sonst unbegrenzte DB-Schreibzugriffe ohne Anmeldung (D4)
+        return _fail_response()
     with db.request_conn(request) as conn:
         if claims is not None:
             users = UserStore(conn, request.app.state.box)
@@ -558,11 +560,17 @@ def callback(request: Request, pid: str):  # ohne Pattern: unpassende pid zählt
             except Conflict:  # dieselbe Identität gleichzeitig an ein anderes Konto gebunden
                 grund = "unknown_user"
         if plain is None:
-            if grund != "drosselung":
-                request.app.state.throttle.fail(throttle_key(request), now)
+            request.app.state.throttle.fail(throttle_key(request), now)
             audit.record(conn, "anonym", "oidc.failure", ip=ip, details={"grund": grund}, now=now)
-    response = RedirectResponse("/" if plain else _FAIL_URL, 303)
-    if plain:
-        _set_cookie(response, plain)
+    if not plain:
+        return _fail_response()
+    response = RedirectResponse("/", 303)
+    _set_cookie(response, plain)
+    response.delete_cookie(FLOW_COOKIE, **_FLOW_ATTRS)
+    return response
+
+
+def _fail_response() -> RedirectResponse:
+    response = RedirectResponse(_FAIL_URL, 303)
     response.delete_cookie(FLOW_COOKIE, **_FLOW_ATTRS)
     return response

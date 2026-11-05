@@ -1,3 +1,4 @@
+import sqlite3
 import time
 
 import pytest
@@ -158,6 +159,32 @@ def test_password_reset_2fa_unlock(mgr_app, admin_client, csrf, make_user, login
     assert "Passwort" not in str(_audit(mgr_app))
     assert admin_client.post("/api/v1/users/9999/unlock", headers=csrf).status_code == 404
     assert admin_client.post("/api/v1/users/9999/reset-2fa", headers=csrf).status_code == 404
+
+
+def _locked(*a, **kw):
+    raise sqlite3.OperationalError("database is locked")
+
+
+@pytest.mark.parametrize("case", ["password", "reset-2fa", "disable"])
+def test_credential_change_and_session_end_are_atomic(mgr_app, admin_client, csrf, make_user, login_cookie,
+                                                      monkeypatch, case):
+    u = make_user("viewer")
+    conn = db.connect(mgr_app.state.settings.db_path)
+    store = UserStore(conn, mgr_app.state.box)
+    conn.execute("UPDATE users SET totp_enc=? WHERE id=?", (mgr_app.state.box.encrypt("JBSWY3DPEHPK3PXP"), u.id))
+    conn.commit()
+    login_cookie(u)
+    n = len(_audit(mgr_app))
+    monkeypatch.setattr(SessionStore, "delete_for_user", _locked)
+    base = f"/api/v1/users/{u.id}"
+    r = {"password": lambda: admin_client.post(f"{base}/password", json={"password": "Ein-ganz-neues-Passwort"}, headers=csrf),
+         "reset-2fa": lambda: admin_client.post(f"{base}/reset-2fa", headers=csrf),
+         "disable": lambda: admin_client.patch(base, json={"disabled": True}, headers=csrf)}[case]()
+    assert r.status_code == 503
+    after = store.get(u.id)
+    assert store.check_password(u.id, TEST_PASSWORD) and after.totp_enabled and not after.disabled
+    conn.close()
+    assert _sessions(mgr_app, u.id) == 1 and len(_audit(mgr_app)) == n
 
 
 def test_password_and_2fa_only_for_local(admin_client, csrf):

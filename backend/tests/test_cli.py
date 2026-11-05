@@ -168,6 +168,32 @@ def test_cli_reset_password_from_stdin(env, capsys, monkeypatch):
     assert es[0]["action"] == "password.reset" and es[0]["actor"] == "cli" and "Passwort" not in str(es)
 
 
+@pytest.mark.parametrize("cmd", [["reset-2fa"], ["reset-password", "--password-file", "-"]])
+def test_cli_credential_change_and_session_end_are_atomic(env, monkeypatch, cmd):
+    import sqlite3
+    import time
+    from moni.auth.sessions import SessionStore
+    from moni.config import Settings
+
+    def locked(*a, **kw):
+        raise sqlite3.OperationalError("database is locked")
+    u = _mk_user(env)
+    conn = db.connect(env / "moni.db")
+    users = UserStore(conn, SecretBox(os.environ["MONI_SECRET_KEY"]))
+    conn.execute("UPDATE users SET totp_enc=? WHERE id=?",
+                 (SecretBox(os.environ["MONI_SECRET_KEY"]).encrypt("JBSWY3DPEHPK3PXP"), u.id))
+    conn.commit()
+    SessionStore(conn, Settings.from_env()).create(u.id, "full", int(time.time()), None)
+    monkeypatch.setattr(SessionStore, "delete_for_user", locked)
+    monkeypatch.setattr("sys.stdin", io.StringIO("Ein-ganz-neues-Passwort\n"))
+    with pytest.raises(sqlite3.OperationalError):
+        cli.main(["user", cmd[0], "a@b.de", *cmd[1:]])
+    assert users.check_password(u.id, "x" * 12) and users.get(u.id).totp_enabled
+    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+    conn.close()
+    assert _audit_rows(env) == []
+
+
 def test_cli_reset_password_rejects_argument(env):
     with pytest.raises(SystemExit):
         cli.main(["user", "reset-password", "a@b.de", "--password", "x"])

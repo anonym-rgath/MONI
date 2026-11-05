@@ -109,17 +109,19 @@ def update_user(request: Request, user_id: UserId, body: UserPatch, p: Principal
         raise HTTPException(422, "Mindestens ein Feld angeben")
     now = int(time.time())
     with db.request_conn(request) as conn:
-        try:
-            u = UserStore(conn, request.app.state.box).update(user_id, **changes)
-        except Conflict as e:
-            raise HTTPException(409, str(e)) from None
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from None
-        if u is None:
-            raise HTTPException(404, "Benutzer nicht gefunden")
-        if changes.get("disabled"):
-            SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
-        audit.record(conn, p.actor, "user.updated", target=u.email, ip=client_ip(request), details=changes, now=now)
+        users = UserStore(conn, request.app.state.box)
+        with users._tx(immediate=True):  # Änderung, Sessions und Audit gemeinsam oder gar nicht
+            try:
+                u = users.update(user_id, **changes)
+            except Conflict as e:
+                raise HTTPException(409, str(e)) from None
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from None
+            if u is None:
+                raise HTTPException(404, "Benutzer nicht gefunden")
+            if changes.get("disabled"):
+                SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
+            audit.record(conn, p.actor, "user.updated", target=u.email, ip=client_ip(request), details=changes, now=now)
         return _user_out(u, now)
 
 
@@ -142,12 +144,13 @@ def reset_password(request: Request, user_id: UserId, body: PasswordBody, p: Pri
         users = UserStore(conn, request.app.state.box)
         u = _need(users, user_id)
         _local(u)
-        try:
-            users.set_password(user_id, body.password)
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from None
-        SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
-        audit.record(conn, p.actor, "password.reset", target=u.email, ip=client_ip(request))
+        with users._tx(immediate=True):  # Passwort, Sessions und Audit gemeinsam oder gar nicht
+            try:
+                users.set_password(user_id, body.password)
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from None
+            SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
+            audit.record(conn, p.actor, "password.reset", target=u.email, ip=client_ip(request))
     return Response(status_code=204)
 
 
@@ -157,9 +160,10 @@ def reset_2fa(request: Request, user_id: UserId, p: Principal = Depends(require_
         users = UserStore(conn, request.app.state.box)
         u = _need(users, user_id)
         _local(u)
-        users.reset_totp(user_id)
-        SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
-        audit.record(conn, p.actor, "totp.reset", target=u.email, ip=client_ip(request))
+        with users._tx(immediate=True):  # sonst könnte eine übrige Session ohne Code einen neuen Faktor einrichten
+            users.reset_totp(user_id)
+            SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
+            audit.record(conn, p.actor, "totp.reset", target=u.email, ip=client_ip(request))
     return Response(status_code=204)
 
 

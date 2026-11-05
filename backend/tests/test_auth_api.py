@@ -1,5 +1,6 @@
 import logging
 import re
+import sqlite3
 import threading
 import time
 from types import SimpleNamespace
@@ -310,6 +311,24 @@ def test_password_change_ends_other_sessions(mgr_client, mgr_app, make_user, log
     assert login(mgr_client, u.email).status_code == 401
     assert login(mgr_client, u.email, NEW_PW).json() == {"stage": "mfa"}
     assert "password.changed" in _actions(mgr_app)
+
+
+def test_password_change_and_session_end_are_atomic(mgr_client, mgr_app, make_user, login_cookie, monkeypatch):
+    from moni.auth.sessions import SessionStore
+
+    def locked(*a, **kw):
+        raise sqlite3.OperationalError("database is locked")
+    u = make_user("viewer")
+    (a, csrf_a), _ = login_cookie(u), login_cookie(u)
+    use(mgr_client, a)
+    n = len(_actions(mgr_app))
+    monkeypatch.setattr(SessionStore, "delete_for_user", locked)
+    r = mgr_client.post("/api/v1/account/password", json={"current_password": TEST_PASSWORD, "new_password": NEW_PW},
+                        headers={"X-CSRF-Token": csrf_a})
+    assert r.status_code == 503
+    assert _store(mgr_app, lambda s, c: s.check_password(u.id, TEST_PASSWORD))
+    assert _store(mgr_app, lambda s, c: c.execute("SELECT COUNT(*) FROM sessions WHERE user_id=?", (u.id,)).fetchone()[0]) == 2
+    assert len(_actions(mgr_app)) == n
 
 
 def test_account_endpoints_need_browser_session(mgr_client, mgr_app):

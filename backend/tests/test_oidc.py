@@ -504,9 +504,10 @@ def test_callback_failures_count_for_throttle(oidc_client, idp):
     app = oidc_client.app
     for _ in range(20):
         oidc_client.get(_cb("google", "code=c&state=falsch"), follow_redirects=False)
+    before = last_audit(oidc_client)
     r = complete_flow(oidc_client, idp, {"email": "o@example.org", "email_verified": True})
-    assert r.headers["location"] == FAIL
-    assert last_audit(oidc_client)["details"] == {"grund": "drosselung"}
+    assert r.status_code == 303 and r.headers["location"] == FAIL and "moni_oidc=" in r.headers["set-cookie"]
+    assert last_audit(oidc_client) == before  # gedrosselt: keine Audit-Zeile, kein DB-Schreibzugriff
     assert app.state.throttle.retry_after("testclient", int(time.time())) is not None
 
 

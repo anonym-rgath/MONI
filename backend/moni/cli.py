@@ -66,24 +66,26 @@ def _user(args, settings: Settings, conn, box) -> int:
     if user is None:
         print(f"Kein Benutzer mit der E-Mail {args.email}.", file=sys.stderr)
         return 1
-    if args.cmd == "unlock":
-        users.unlock(user.id)
-        action = "user.unlocked"
-    else:
-        if user.kind != "local":
-            raise ValueError("Nur für lokale Konten möglich")
-        if args.cmd == "reset-password":
-            try:
-                pw = _read_token(args.password_file)
-            except (OSError, UnicodeDecodeError):
-                raise ValueError("Passwort-Datei nicht lesbar") from None
-            users.set_password(user.id, pw)  # Regeltexte nennen nie das Passwort
-            action = "password.reset"
+    if args.cmd != "unlock" and user.kind != "local":
+        raise ValueError("Nur für lokale Konten möglich")
+    if args.cmd == "reset-password":  # vor der Transaktion lesen: stdin darf die Schreibsperre nicht halten
+        try:
+            pw = _read_token(args.password_file)
+        except (OSError, UnicodeDecodeError):
+            raise ValueError("Passwort-Datei nicht lesbar") from None
+    with users._tx(immediate=True):  # Änderung, Sessions und Audit gemeinsam oder gar nicht
+        if args.cmd == "unlock":
+            users.unlock(user.id)
+            action = "user.unlocked"
         else:
-            users.reset_totp(user.id)
-            action = "totp.reset"
-        SessionStore(conn, settings).delete_for_user(user.id)
-    audit.record(conn, _ACTOR, action, target=user.email)
+            if args.cmd == "reset-password":
+                users.set_password(user.id, pw)  # Regeltexte nennen nie das Passwort
+                action = "password.reset"
+            else:
+                users.reset_totp(user.id)
+                action = "totp.reset"
+            SessionStore(conn, settings).delete_for_user(user.id)
+        audit.record(conn, _ACTOR, action, target=user.email)
     print(f"{action}: {user.email}")
     return 0
 
