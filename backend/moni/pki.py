@@ -15,6 +15,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
+from moni.fsutil import write_private  # noqa: F401  (Re-Export)
+
 _HOST_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?")
 _EKU = {"server": ExtendedKeyUsageOID.SERVER_AUTH, "client": ExtendedKeyUsageOID.CLIENT_AUTH}
 
@@ -48,13 +50,16 @@ def fingerprint(cert) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 
-def _builder(subject, issuer, pub, now, days):
+def _builder(subject, issuer, pub, now, days, issuer_pub=None):
+    # SKI/AKI: Python >= 3.13 prüft strikt (VERIFY_X509_STRICT) und verlangt den AKI.
     return (
         x509.CertificateBuilder()
         .subject_name(subject).issuer_name(issuer).public_key(pub)
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=5))
         .not_valid_after(now + timedelta(days=days))
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(pub), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(issuer_pub or pub), critical=False)
     )
 
 
@@ -113,7 +118,7 @@ def issue(ca_key, ca_cert, csr_pem: bytes, *, cn: str, sans: list[str],
         raise ValueError("CSR ist ungültig")
     # Nur den öffentlichen Schlüssel aus der CSR übernehmen; Namen und Extensions sind fest.
     return (
-        _builder(_name(cn), ca_cert.subject, csr.public_key(), now, days)
+        _builder(_name(cn), ca_cert.subject, csr.public_key(), now, days, ca_key.public_key())
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(x509.KeyUsage(True, False, False, False, False, False, False, False, False), critical=True)
         .add_extension(x509.ExtendedKeyUsage([_EKU[usage]]), critical=False)
@@ -181,28 +186,8 @@ def server_context(cert_pem: bytes, key_pem: bytes, ca_pem: bytes | None) -> ssl
 
 
 def client_context(ca_pem: bytes | None, cert_pem: bytes | None = None, key_pem: bytes | None = None) -> ssl.SSLContext:
-    if ca_pem is None:
-        ctx = ssl.create_default_context()
-    else:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.load_verify_locations(cadata=ca_pem.decode())
-        ctx.check_hostname = True
-        ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx = ssl.create_default_context(cadata=ca_pem.decode() if ca_pem else None)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     if cert_pem is not None and key_pem is not None:
         load_chain_into(ctx, cert_pem, key_pem)
     return ctx
-
-
-def write_private(path: Path, data: bytes) -> None:
-    tmp = path.with_name(f"{path.name}.{secrets.token_hex(4)}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise

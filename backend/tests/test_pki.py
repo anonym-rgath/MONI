@@ -187,3 +187,15 @@ def test_days_left_and_create_ca_constraints():
     assert ca.not_valid_after_utc - ca.not_valid_before_utc >= timedelta(days=3650)
     assert pki.days_left(ca, NOW) == pytest.approx(3650, abs=1)
     assert pki.days_left(ca, NOW + timedelta(days=3650 + 1)) < 0
+
+
+def test_issued_cert_passes_strict_default_context(world):
+    # D11: Fremdsysteme prüfen mit ssl.create_default_context (VERIFY_X509_STRICT) gegen die Moni-CA
+    w = world
+    ca_pem = pki.cert_pem(w["ca"])
+    srv = pki.server_context(pki.cert_pem(w["agent"]), pki.key_pem(w["akey"]), None)
+    cli = ssl.create_default_context(cadata=ca_pem.decode())
+    assert cli.verify_flags & ssl.VERIFY_X509_STRICT
+    c, _ = _handshake(srv, cli, "127.0.0.1")
+    assert c.getpeercert()
+    assert pki.client_context(ca_pem).verify_flags & ssl.VERIFY_X509_STRICT

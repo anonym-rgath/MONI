@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..fsutil import write_private
 from ..timeutil import iso, parse_iso, utcnow
 
 log = logging.getLogger(__name__)
@@ -68,17 +69,8 @@ class TokenStore:
             raise RuntimeError(f"Token-Datei {self.path} ist beschädigt") from None
 
     def _save(self, tokens: list[Token]) -> None:
-        tmp = self.path.with_name(f"{self.path.name}.{secrets.token_hex(4)}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump({"version": 1, "tokens": [asdict(t) for t in tokens]}, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.path)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+        data = json.dumps({"version": 1, "tokens": [asdict(t) for t in tokens]}, indent=2)
+        write_private(self.path, data.encode())
 
     @contextmanager
     def _lock(self):
