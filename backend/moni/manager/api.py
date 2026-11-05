@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from pydantic import BaseModel, ConfigDict, StrictBool
 
 from moni import __version__
-from moni.auth.deps import require_scope
+from moni.auth import audit
+from moni.auth.deps import Principal, client_ip, require_scope
 from moni.collect.host import read_hostname
 from moni.manager import db, tsdb
 from moni.manager.servers import Server, ServerStore
@@ -104,13 +105,16 @@ def list_servers(request: Request):
         return [_out(conn, s) for s in store.list()]
 
 
-@router.post("/servers", dependencies=[admin], status_code=201)
-def create_server(request: Request, body: NewServer):
+@router.post("/servers", status_code=201)
+def create_server(request: Request, body: NewServer, p: Principal = admin):
     with _store(request) as (conn, store):
         try:
-            return _out(conn, store.add(body.name, body.url, body.token, body.headers))
+            s = store.add(body.name, body.url, body.token, body.headers)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+        audit.record(conn, p.actor, "server.added", target=s.name, ip=client_ip(request),
+                     details={"url": s.url, "header_names": s.header_names})
+        return _out(conn, s)
 
 
 @router.get("/servers/{server_id}", dependencies=[read])
@@ -119,21 +123,26 @@ def get_server(request: Request, server_id: ServerId):
         return _out(conn, _get(store, server_id), detail=True)
 
 
-@router.patch("/servers/{server_id}", dependencies=[admin])
-def patch_server(request: Request, server_id: ServerId, body: Patch):
+@router.patch("/servers/{server_id}")
+def patch_server(request: Request, server_id: ServerId, body: Patch, p: Principal = admin):
     with _store(request) as (conn, store):
         if not store.set_enabled(server_id, body.enabled):
             raise HTTPException(404, "Server nicht gefunden")
-        return _out(conn, _get(store, server_id))
+        s = _get(store, server_id)
+        audit.record(conn, p.actor, "server.updated", target=s.name, ip=client_ip(request), details={"enabled": body.enabled})
+        return _out(conn, s)
 
 
-@router.delete("/servers/{server_id}", dependencies=[admin], status_code=204)
-def delete_server(request: Request, server_id: ServerId):
-    with _store(request) as (_, store):
+@router.delete("/servers/{server_id}", status_code=204)
+def delete_server(request: Request, server_id: ServerId, p: Principal = admin):
+    with _store(request) as (conn, store):
+        old = store.get(server_id)
         try:
             found = store.delete(server_id)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+        if found:
+            audit.record(conn, p.actor, "server.removed", target=old.name, ip=client_ip(request))
     if not found:
         raise HTTPException(404, "Server nicht gefunden")
     return Response(status_code=204)

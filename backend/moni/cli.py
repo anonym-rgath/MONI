@@ -3,6 +3,8 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+from .auth import audit
+from .auth.sessions import SessionStore
 from .auth.tokens import TokenStore
 from .auth.users import UserStore
 from .config import Settings
@@ -33,6 +35,13 @@ def _parser() -> argparse.ArgumentParser:
     c.add_argument("--expires-days", type=int)
     t.add_parser("list")
     t.add_parser("revoke").add_argument("id")
+    u = g.add_parser("user").add_subparsers(dest="cmd", required=True)
+    u.add_parser("list")
+    rp = u.add_parser("reset-password", allow_abbrev=False)  # Passwort nie als Argument (Shell-History)
+    rp.add_argument("email")
+    rp.add_argument("--password-file", required=True, help="Datei mit dem neuen Passwort, '-' für stdin")
+    u.add_parser("reset-2fa").add_argument("email")
+    u.add_parser("unlock").add_argument("email")
     return p
 
 
@@ -40,6 +49,54 @@ def _read_token(path: str) -> str:
     text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
     # genau ein abschließender Zeilenumbruch; alles weitere prüft ServerStore.add
     return text.removesuffix("\n").removesuffix("\r") if text.endswith("\n") else text
+
+
+_ACTOR = "cli"
+
+
+def _user(args, settings: Settings, conn, box) -> int:
+    if settings.role != "manager":
+        raise ValueError("Benutzer gibt es nur in der Manager-Rolle")
+    users = UserStore(conn, box)
+    if args.cmd == "list":
+        for u in users.list():
+            print(f"{u.id}  {u.email}  {u.role}  {u.kind}  {'deaktiviert' if u.disabled else 'aktiv'}")
+        return 0
+    user = users.by_email(args.email)
+    if user is None:
+        print(f"Kein Benutzer mit der E-Mail {args.email}.", file=sys.stderr)
+        return 1
+    if args.cmd == "unlock":
+        users.unlock(user.id)
+        action = "user.unlocked"
+    else:
+        if user.kind != "local":
+            raise ValueError("Nur für lokale Konten möglich")
+        if args.cmd == "reset-password":
+            try:
+                pw = _read_token(args.password_file)
+            except (OSError, UnicodeDecodeError):
+                raise ValueError("Passwort-Datei nicht lesbar") from None
+            users.set_password(user.id, pw)  # Regeltexte nennen nie das Passwort
+            action = "password.reset"
+        else:
+            users.reset_totp(user.id)
+            action = "totp.reset"
+        SessionStore(conn, settings).delete_for_user(user.id)
+    audit.record(conn, _ACTOR, action, target=user.email)
+    print(f"{action}: {user.email}")
+    return 0
+
+
+def _cli_audit(settings: Settings, action: str, target: str, details: dict | None = None) -> None:
+    """Audit für Token-Befehle; nur in der Manager-Rolle, der Agent hat keine DB."""
+    if settings.role == "manager":
+        db.migrate(settings.db_path)
+        conn = db.connect(settings.db_path)
+        try:
+            audit.record(conn, _ACTOR, action, target=target, details=details)
+        finally:
+            conn.close()
 
 
 def _manager(args) -> int:
@@ -52,6 +109,8 @@ def _manager(args) -> int:
         try:
             box = SecretBox(s.secret_key)
             store = ServerStore(conn, box)
+            if args.group == "user":
+                return _user(args, s, conn, box)
             if args.group == "secret":
                 conn.execute("BEGIN IMMEDIATE")  # eine Transaktion für beide Stores: scheitert eine Rotation, bleibt alles unverändert
                 try:
@@ -60,6 +119,7 @@ def _manager(args) -> int:
                 except BaseException:
                     conn.rollback()
                     raise
+                audit.record(conn, _ACTOR, "secret.reencrypted")
                 print(f"Neu verschlüsselt: {n}")
             elif args.cmd == "add":
                 headers = {}
@@ -73,14 +133,17 @@ def _manager(args) -> int:
                 except (OSError, UnicodeDecodeError):
                     raise ValueError("Token-Datei nicht lesbar") from None
                 srv = store.add(args.name, args.url, token, headers)
+                audit.record(conn, _ACTOR, "server.added", target=srv.name,
+                             details={"url": srv.url, "header_names": srv.header_names})
                 print(f"Server {srv.id} ({srv.name}) angelegt.")
             elif args.cmd == "list":
                 for v in store.list():
                     print(f"{v.id}  {v.name}  {v.url or 'lokal'}  {v.status}  {','.join(v.header_names) or '-'}")
-            elif not store.delete(args.id):
+            elif (old := store.get(args.id)) is None or not store.delete(args.id):
                 print(f"Kein Server mit der ID {args.id}.", file=sys.stderr)
                 return 1
             else:
+                audit.record(conn, _ACTOR, "server.removed", target=old.name)
                 print(f"Server {args.id} entfernt.")
         finally:
             conn.close()
@@ -95,16 +158,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.group == "secret" and args.cmd == "generate":  # braucht weder Konfiguration noch Datenverzeichnis
         print(generate_key())
         return 0
-    if args.group in ("server", "secret"):
+    if args.group in ("server", "secret", "user"):
         return _manager(args)
     try:
-        store = TokenStore(Path(Settings.from_env().data_dir) / "tokens.json")
+        settings = Settings.from_env()
+        store = TokenStore(Path(settings.data_dir) / "tokens.json")
         if args.cmd == "create":
             if args.expires_days is not None and args.expires_days < 1:
                 print("Fehler: --expires-days muss mindestens 1 sein.", file=sys.stderr)
                 return 2
             exp = utcnow() + timedelta(days=args.expires_days) if args.expires_days is not None else None
-            _, plain = store.create(args.name, args.scope, expires_at=exp)
+            tok, plain = store.create(args.name, args.scope, expires_at=exp)
+            _cli_audit(settings, "token.created", tok.id, {"scope": tok.scope})
             print("Token wird nur jetzt angezeigt.")
             print(plain)
         elif args.cmd == "list":
@@ -114,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             if not store.revoke(args.id):
                 print(f"Kein Token mit der ID {args.id}.", file=sys.stderr)
                 return 1
+            _cli_audit(settings, "token.revoked", args.id)
             print(f"Token {args.id} widerrufen.")
     except (OSError, RuntimeError, ValueError) as e:
         print(f"Fehler: Token-Datei oder Konfiguration nicht nutzbar ({e}). Ist das Datenverzeichnis vorhanden und beschreibbar?", file=sys.stderr)

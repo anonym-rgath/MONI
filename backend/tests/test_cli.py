@@ -1,6 +1,10 @@
 import io
+import os
 import pytest
 from moni import cli
+from moni.auth.tokens import TokenStore
+from moni.auth.users import UserStore
+from moni.secretbox import SecretBox
 from moni.manager import db
 from moni.secretbox import generate_key
 
@@ -9,6 +13,7 @@ from moni.secretbox import generate_key
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("MONI_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("MONI_SECRET_KEY", generate_key())
+    monkeypatch.setenv("MONI_ROLE", "manager")
     return tmp_path
 
 
@@ -79,3 +84,90 @@ def test_cli_token_scope(env, capsys):
     assert cli.main(["token", "create", "--name", "a", "--scope", "admin"]) == 0
     assert cli.main(["token", "create", "--name", "r"]) == 0
     assert [t.scope for t in TokenStore(env / "tokens.json").list()] == ["admin", "read"]
+
+
+def _audit_rows(env):
+    from moni.auth import audit
+    conn = db.connect(env / "moni.db")
+    try:
+        return audit.entries(conn)
+    finally:
+        conn.close()
+
+
+def _mk_user(env, kind="local"):
+    db.migrate(env / "moni.db")
+    conn = db.connect(env / "moni.db")
+    try:
+        return UserStore(conn, SecretBox(os.environ["MONI_SECRET_KEY"])).create(
+            "A@b.de", "", "viewer", kind, "x" * 12 if kind == "local" else None)
+    finally:
+        conn.close()
+
+
+def test_cli_manager_actions_are_audited(env):
+    assert add(env) == 0
+    assert cli.main(["server", "remove", "1"]) == 0
+    assert cli.main(["token", "create", "--name", "g", "--scope", "admin"]) == 0
+    tid = TokenStore(env / "tokens.json").list()[0].id
+    assert cli.main(["token", "revoke", tid]) == 0
+    assert cli.main(["secret", "reencrypt"]) == 0
+    es = _audit_rows(env)
+    assert [e["action"] for e in es] == ["secret.reencrypted", "token.revoked", "token.created", "server.removed", "server.added"]
+    assert {e["actor"] for e in es} == {"cli"} and "tok-abc" not in str(es)
+    assert es[2]["details"] == {"scope": "admin"} and es[4]["details"]["url"] == "https://m.example"
+
+
+def test_cli_token_in_agent_role_has_no_audit(env, monkeypatch):
+    monkeypatch.setenv("MONI_ROLE", "agent")
+    assert cli.main(["token", "create", "--name", "g"]) == 0
+    assert not (env / "moni.db").exists()
+
+
+def test_cli_user_list_and_unknown_email(env, capsys):
+    _mk_user(env)
+    assert cli.main(["user", "list"]) == 0
+    assert "a@b.de" in capsys.readouterr().out
+    for cmd in (["reset-2fa"], ["unlock"], ["reset-password", "--password-file", "-"]):
+        assert cli.main(["user", cmd[0], "no@x.de", *cmd[1:]]) == 1
+        assert capsys.readouterr().err.strip() == "Kein Benutzer mit der E-Mail no@x.de."
+
+
+def test_cli_reset_2fa_and_unlock_audited(env, capsys):
+    import time
+    from moni.auth.sessions import SessionStore
+    from moni.config import Settings
+    u = _mk_user(env)
+    conn = db.connect(env / "moni.db")
+    users = UserStore(conn, SecretBox(os.environ["MONI_SECRET_KEY"]))
+    users.begin_totp(u.id)
+    SessionStore(conn, Settings.from_env()).create(u.id, "full", int(time.time()), None)
+    conn.execute("UPDATE users SET locked_until=?, failed_logins=5 WHERE id=?", (int(time.time()) + 600, u.id))
+    conn.commit()
+    assert cli.main(["user", "unlock", "A@B.de"]) == 0
+    assert cli.main(["user", "reset-2fa", "a@b.de"]) == 0
+    assert users.get(u.id).locked_until is None and not users.get(u.id).totp_enabled
+    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    conn.close()
+    es = _audit_rows(env)
+    assert [(e["actor"], e["action"], e["target"]) for e in es] == [("cli", "totp.reset", "a@b.de"), ("cli", "user.unlocked", "a@b.de")]
+
+
+def test_cli_reset_password_from_stdin(env, capsys, monkeypatch):
+    u = _mk_user(env)
+    monkeypatch.setattr("sys.stdin", io.StringIO("kurz\n"))
+    assert cli.main(["user", "reset-password", "a@b.de", "--password-file", "-"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("Fehler: ") and "kurz" not in err
+    monkeypatch.setattr("sys.stdin", io.StringIO("Ein-ganz-neues-Passwort\n"))
+    assert cli.main(["user", "reset-password", "a@b.de", "--password-file", "-"]) == 0
+    conn = db.connect(env / "moni.db")
+    assert UserStore(conn, SecretBox(os.environ["MONI_SECRET_KEY"])).check_password(u.id, "Ein-ganz-neues-Passwort")
+    conn.close()
+    es = _audit_rows(env)
+    assert es[0]["action"] == "password.reset" and es[0]["actor"] == "cli" and "Passwort" not in str(es)
+
+
+def test_cli_reset_password_rejects_argument(env):
+    with pytest.raises(SystemExit):
+        cli.main(["user", "reset-password", "a@b.de", "--password", "x"])
