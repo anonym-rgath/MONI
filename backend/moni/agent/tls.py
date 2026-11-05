@@ -75,14 +75,17 @@ class TlsState:
     def check_token(self, token: str) -> bool:
         if self.paired or self._token is None:
             return False
-        return hmac.compare_digest(token.encode(), self._token.encode())
+        # isascii zuerst: einsame Surrogate oder Umlaute dürfen nicht werfen
+        return isinstance(token, str) and token.isascii() and hmac.compare_digest(token.encode(), self._token.encode())
 
     def new_csr(self) -> bytes:
+        """Nur im Event-Loop-Thread aufrufen, wie install(): Kopplungszustand und SSLContext nie parallel ändern."""
         key = pki.new_key()
         pki.write_private(self._p("pending_key.pem"), pki.key_pem(key))
         return pki.make_csr(key, _CN)
 
     def install(self, cert_pem: bytes, ca_pem: bytes, now: datetime) -> None:
+        """Nur im Event-Loop-Thread aufrufen (lädt den laufenden SSLContext neu, der nicht threadsicher ist)."""
         ok = False
         try:
             key_pem = self._p("pending_key.pem").read_bytes()

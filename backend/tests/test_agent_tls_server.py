@@ -104,3 +104,22 @@ def test_context_reload_after_install_affects_new_connections(agent_tls_server, 
     assert agent_tls_server.state.context is ctx
     assert get(agent_tls_server, "/api/v1/health", pki.client_context(ca_pem)) == {"status": "ok"}
     assert get(agent_tls_server, "/_test/peer", manager_ctx)["client_cert_chain"]
+
+
+def _status(server, path, ctx):
+    c = _conn(server, ctx)
+    try:
+        c.request("GET", path)
+        return c.getresponse().status
+    finally:
+        c.close()
+
+
+def test_manager_cert_reaches_snapshot_on_real_server(agent_tls_server, ca, manager_ctx, plain_ctx, monkeypatch):
+    from conftest import raw
+    from moni import collector as cmod
+    monkeypatch.setattr(cmod, "read_raw", lambda s, c: raw(utcnow()))
+    agent_tls_server.app.state.collector.collect_once()
+    _pair(agent_tls_server, ca)
+    assert _status(agent_tls_server, "/api/v1/snapshot", manager_ctx) == 200
+    assert _status(agent_tls_server, "/api/v1/snapshot", plain_ctx) == 401  # ohne Zertifikat und ohne Bearer

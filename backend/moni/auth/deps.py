@@ -1,13 +1,17 @@
-"""Eine Anmeldung für alle Routen: Bearer-Token (Agent und Manager) oder Session-Cookie (nur Manager)."""
+"""Eine Anmeldung für alle Routen: Bearer-Token (Agent und Manager), Session-Cookie (nur Manager)
+oder Client-Zertifikat des Managers (nur gekoppelter Agent mit TLS, D3)."""
 import hmac
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException, Request
 
+from .. import pki
 from ..manager import db
+from ..timeutil import utcnow
 from .sessions import COOKIE, Session, SessionStore
 from .tokens import SCOPES
 from .users import User, UserStore
@@ -15,6 +19,7 @@ from .users import User, UserStore
 log = logging.getLogger("moni.auth")
 _UNAUTH = {"WWW-Authenticate": "Bearer"}
 _SAFE = ("GET", "HEAD", "OPTIONS")
+MANAGER_CN = "moni-manager"
 RANK = {"read": 1, "admin": 2}  # admin schließt read ein
 if set(RANK) != SCOPES:
     raise RuntimeError("RANK und tokens.SCOPES passen nicht zusammen")
@@ -30,6 +35,30 @@ class Principal:
 
 def client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+def manager_cert(request: Request) -> bool:
+    """D3: Peer-Zertifikat mit EKU clientAuth, CN moni-manager, zeitlich gültig und von der gespeicherten CA signiert.
+
+    OpenSSL hat die Kette schon geprüft; das hier ist zusätzliche Absicherung. Jeder Fehler ergibt False.
+    """
+    if request.app.state.settings.role != "agent":
+        return False
+    tls = getattr(request.app.state, "tls", None)  # nur in der Rolle agent mit MONI_TLS=on gesetzt
+    if tls is None or not tls.paired:
+        return False
+    try:
+        cert = pki.load_cert(request.scope["extensions"]["tls"]["client_cert_chain"][0].encode())
+        ca = pki.load_cert((tls.dir / "ca.pem").read_bytes())
+        ca.public_key().verify(cert.signature, cert.tbs_certificate_bytes, ec.ECDSA(cert.signature_hash_algorithm))
+        now = utcnow()
+        return (pki.has_eku(cert, "client") and pki.common_name(cert) == MANAGER_CN
+                and cert.not_valid_before_utc <= now <= cert.not_valid_after_utc)
+    except Exception:
+        return False
+
+
+_MANAGER = Principal("read", "manager", None)
 
 
 def _bearer(request: Request):
@@ -67,6 +96,8 @@ def require_scope(scope: str) -> Callable[[Request], Principal]:
         raise ValueError(f"Unbekannter Scope: {scope!r}")
 
     def dep(request: Request) -> Principal:
+        if scope == "read" and manager_cert(request):  # Zertifikat gewinnt vor einem Bearer-Token
+            return _MANAGER
         # Ein Authorization-Header schließt das Cookie aus, auch wenn er kaputt ist; der Agent kennt nur Tokens.
         if "authorization" in request.headers or request.app.state.settings.role != "manager":
             tok = _bearer(request)
@@ -78,6 +109,16 @@ def require_scope(scope: str) -> Callable[[Request], Principal]:
         if RANK[have] < RANK[scope]:
             raise HTTPException(403, "Keine Berechtigung")
         return Principal(have, f"user:{user.email}", user.id, s)
+    return dep
+
+
+def require_manager() -> Callable[[Request], Principal]:
+    """Nur der per Zertifikat angemeldete Manager (D9); ein gültiges Token jeder Art ergibt 403."""
+    def dep(request: Request) -> Principal:
+        if manager_cert(request):
+            return _MANAGER
+        _bearer(request)  # ohne oder mit ungültigem Token: 401
+        raise HTTPException(403, "Nur für den Manager")
     return dep
 
 

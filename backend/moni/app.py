@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from moni import __version__, errors
+from moni.agent import pairing_api
 from moni.agent.api import metrics_router, router
 from moni.agent.tls import TlsState
 from moni.auth import admin_api, api as auth_api, oidc
@@ -104,6 +105,9 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     else:
         app.include_router(router)
         app.include_router(metrics_router)
+        if settings.tls == "on":
+            app.state.pairing_throttle = LoginThrottle(max_failures=10, window=60)
+            app.include_router(pairing_api.router)
     app.add_middleware(RateLimitMiddleware, per_minute=settings.rate_limit_per_minute)
     if settings.cors_origins:  # zuletzt = aussen, damit auch 429 CORS-Header bekommt
         app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["GET"],

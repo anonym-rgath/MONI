@@ -137,3 +137,16 @@ def test_client_ip(mgr_client, mgr_app):
         return {"ip": client_ip(request)}
 
     assert mgr_client.get("/_ip").json() == {"ip": "testclient"}
+
+
+def test_manager_cert_only_on_paired_agent(mgr_app, client):
+    from moni import pki
+    from moni.auth.deps import manager_cert
+    from moni.timeutil import utcnow
+    ca = pki.create_ca(utcnow())
+    key = pki.new_key()
+    cert = pki.issue(*ca, pki.make_csr(key, "moni-manager"), cn="moni-manager", sans=["moni-manager"], usage="client",
+                     now=utcnow(), days=365)
+    scope = {"type": "http", "headers": [], "extensions": {"tls": {"client_cert_chain": [pki.cert_pem(cert).decode()]}}}
+    for app in (mgr_app, client.app):  # Manager-Rolle und Agent mit MONI_TLS=off
+        assert manager_cert(Request({**scope, "app": app})) is False
