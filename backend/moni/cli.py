@@ -11,6 +11,7 @@ from .auth.users import UserStore
 from .config import Settings
 from .fsutil import write_private
 from .manager import db, nginx, pairing
+from .manager.alert_channels import ChannelStore
 from .manager.ca import ManagerPki
 from .manager.pairing import PairingError
 from .manager.servers import ServerStore
@@ -144,7 +145,7 @@ def _manager(args) -> int:
                 n_tls, commit_files, abort_files = mpki.prepare_reencrypt()
                 try:
                     conn.execute("BEGIN IMMEDIATE")  # eine Transaktion für alle Secrets: scheitert eine Rotation, bleibt alles unverändert
-                    n = store.reencrypt_all() + UserStore(conn, box).reencrypt_all() + oidc.reencrypt(conn, box) + n_tls
+                    n = store.reencrypt_all() + UserStore(conn, box).reencrypt_all() + oidc.reencrypt(conn, box) + ChannelStore(conn, box).reencrypt_all() + n_tls
                     conn.commit()
                 except BaseException:
                     conn.rollback()
