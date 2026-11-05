@@ -508,3 +508,71 @@ Nicht durch Subagents.
 1. Einen Webhook-Kanal anlegen, z. B. ntfy (`https://ntfy.sh/<eigenes-thema>`) oder einen n8n-Webhook, und `POST /alert-channels/{id}/test` aufrufen. Die Nachricht muss ankommen.
 2. Optional einen E-Mail-Kanal über einen SMTP-Anbieter anlegen (Port 587 mit STARTTLS) und testen.
 3. Den Pi für 10 Minuten stummschalten (`PUT /servers/{id}/mute`), eine Regel künstlich auslösen, z. B. die Schwelle von „CPU-Auslastung“ auf 1 setzen. Während der Stummschaltung kommt keine Nachricht, danach genau eine. Anschließend die Schwelle zurücksetzen. Die Behebung kommt nicht, weil eine Regeländerung still auflöst (D11).
+
+## Nachlauf aus dem Abschlussreview (2026-11-05)
+
+Paket 5 ist umgesetzt (Commits `ef86fc3..b61eb5f`, 1011 Tests grün). Der CI-Schritt „Alarmkanal“ lief lokal mit `host.docker.internal`. Die Variante mit der Gateway-IP des Manager-Netzes läuft mit diesem Push zum ersten Mal auf GitHub Actions.
+
+### Rulings während der Umsetzung
+
+Sie ergänzen oder ändern D1–D12:
+
+- **P5-R1:** Eine Erinnerung kommt nur, wenn die Instanz schon einmal benachrichtigt wurde (`last_notified` gesetzt). Ein im Mute ausgelöster Alarm geht nach Mute-Ende als `firing` raus (D5).
+- **P5-R2:** `last_notified` wird bei jedem versandten Ereignis gesetzt, auch wenn kein Kanal passt.
+  - Im Mute werden Erinnerungen verworfen.
+  - `resolved` und `changed` gehen nur raus, wenn der Alarm vorher gemeldet wurde.
+- **P5-R3:** `resolved` trägt die Schwere, mit der zuletzt ausgelöst wurde.
+- **P5-R4:** Der Auswerter liefert je Schlüssel genau eine Transition. Gespeichert werden nur geänderte Instanzen.
+- **P5-R5:** Labels im Payload kommen aus dem Instanz-Schlüssel (nur die `key_labels`).
+- **P5-R6:** Die Server-JSON bekommt `muted_until`.
+- **P5-R7:** `increase` rechnet wie Prometheus. Fällt der Zähler (z. B. 5 → 3), zählt der neue Wert als Zuwachs ab 0.
+- **P5-R8:** Ein Server im Status `unknown` friert alle Regeln ein.
+- **P5-R9:** Wird eine Regel gelöscht, landet `resolved` („regel gelöscht“) im Verlauf, ohne Versand.
+- **P5-R10:** Ein `changed` an einem nie gemeldeten Alarm (direkt nach Mute-Ende) geht als `firing` raus.
+- **P5-R11:** Bei einer Regeländerung bleiben ok-Instanzen mit `seen_ok` erhalten.
+- **P5-R12:**
+  - Das Ereignis-Dict für den Versand hat die Spaltennamen von `alert_events`.
+  - Fehlt STARTTLS, lautet der Fehler „TLS-Prüfung fehlgeschlagen“. Es gibt nie einen Klartext-Fallback.
+  - Die Kanal-Art ist unveränderlich.
+  - Webhook-URLs dürfen Pfad und Query haben.
+- **P5-R13:**
+  - Als Managername im Payload dient der Name des lokalen Servers.
+  - Neue feste Texte: „Kanal-Geheimnis nicht entschlüsselbar“ und „Versand fehlgeschlagen“.
+- **P5-R14:** Der Notifier speichert jedes Ergebnis direkt nach dem Versand und stoppt zwischen zwei Versänden. Ein kaputter Kanal blockiert die anderen nicht.
+- **P5-R15:** Festlegungen der API:
+  - Der Verlaufs-Cursor ist die Ereignis-ID.
+  - Ein Regel-PATCH prüft die zusammengeführte Regel.
+  - Im Audit stehen nur Feldnamen.
+  - Den Test-Versand gibt es auch für deaktivierte Kanäle, höchstens 6 pro 60 s je Kanal.
+- **P5-R16:** Der CI-Empfänger bindet nicht an `0.0.0.0`, sondern an die Gateway-IP des Manager-Netzes.
+- **P5-R17:** Eine Regeländerung löst offene Alarme direkt im PATCH auf (`regel geändert`, ohne Versand), und zwar nur, wenn sich ein Feld ändert, das die Auswertung betrifft. Den Vergleich von `updated_at` in `alerting.run` gibt es nicht mehr, denn er verursachte Doppelmeldungen durch einen Wettlauf und bei Uhrsprüngen.
+- **P5-R18:** `changed` und `resolved` gehen zusätzlich an alle Kanäle, die zu diesem Vorfall schon eine Meldung bekommen haben. So erfährt ein Kanal, der nur kritische Meldungen bekommt, auch von der Behebung.
+- **P5-R19:** Härtungen nach dem Abschlussreview:
+  - Eine Sperre in der Alarmauswertung bricht den Poller-Zyklus nicht mehr ab.
+  - Zugestellte, aber nicht gespeicherte Einträge speichert der Notifier im nächsten Lauf ohne erneuten Versand.
+
+### Geparkte Punkte
+
+- **Paket 6 (Oberfläche):**
+  - Ein Regel-PATCH ohne Änderung schreibt kein Audit. Die Oberfläche sollte trotzdem „gespeichert“ melden.
+  - Nach einer Herabstufung kommen Erinnerungen nur nach D9: Ein Kanal, der nur kritische Meldungen bekommt, erhält keine Warnungs-Erinnerungen.
+  - Test-Versand: Ist ein Kanal-Geheimnis kaputt, kommt 500 statt eines festen Texts.
+- **Paket 7 (Härtung):**
+  - Der Webhook-Timeout gilt je Socket-Operation, nicht insgesamt. Ein Endpunkt, der nur tröpfelnd antwortet, hält den Notifier auf.
+  - Springt die Uhr zurück, kann die Kanal-Ermittlung für `changed`/`resolved` frühere Vorfälle einbeziehen. Besser wäre ein Anker auf die Ereignis-ID.
+  - Für die Abfrage der vorherigen Kanäle fehlt ein Index (`alert_outbox(event_id)`).
+  - `last_snapshot` wird je Regel neu geparst, einmal je Server würde reichen.
+  - Ein kaputtes `meta.alerting` stoppt die ganze Auswertung. Das ist nur per Handarbeit in der DB erreichbar.
+  - Kleinere Punkte:
+    - Der Label-Regex braucht `fullmatch`.
+    - Eine unbekannte `func` liefert den Text „Fenster…“.
+    - Die Größe von `label_filter` ist nicht begrenzt.
+    - Der Store speichert Geheimnisse der jeweils anderen Kanal-Art.
+    - SMTPUTF8 und fehlende Auth-Methoden ergeben einen irreführenden, aber erlaubten Fehlertext.
+    - `next_try` zählt ab dem Beginn des Batches.
+    - `delete_rule` und `update_rule` nutzen das private `store._tx()`.
+  - Testlücken:
+    - Der Seed-Test prüft nur 4 von 9 Regeln vollständig.
+    - Es fehlt ein Test für einen nicht-UNIQUE-IntegrityError.
+    - Der Test für eine naive Mute-Zeit beweist die Zeitzonenprüfung nicht.
+    - Der CLI-Test prüft mit `endswith("1")` zu schwach.
