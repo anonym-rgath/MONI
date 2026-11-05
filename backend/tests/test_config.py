@@ -97,3 +97,13 @@ def test_bind_host_valid(v):
 def test_bind_host_invalid(v):
     with pytest.raises(ValueError, match="MONI_BIND_HOST"):
         Settings.from_env({"MONI_BIND_HOST": v})
+
+
+def test_session_settings():
+    s = Settings.from_env({})
+    assert (s.session_idle_minutes, s.session_max_hours) == (60, 12)
+    s = Settings.from_env({"MONI_SESSION_IDLE_MINUTES": "5", "MONI_SESSION_MAX_HOURS": "2"})
+    assert (s.session_idle_minutes, s.session_max_hours) == (5, 2)
+    for name in ("MONI_SESSION_IDLE_MINUTES", "MONI_SESSION_MAX_HOURS"):
+        with pytest.raises(ValueError, match=name):
+            Settings.from_env({name: "0"})

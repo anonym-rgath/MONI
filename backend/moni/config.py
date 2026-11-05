@@ -62,6 +62,8 @@ class Settings:
     retention_hour_days: int = 365
     bind_host: str = "0.0.0.0"
     trust_local_proxy: bool = False
+    session_idle_minutes: int = 60
+    session_max_hours: int = 12
 
     @property
     def db_path(self) -> Path:
@@ -94,6 +96,8 @@ class Settings:
             retention_hour_days=_int(env, "MONI_RETENTION_HOUR_DAYS", "365"),
             bind_host=g("MONI_BIND_HOST", "0.0.0.0"),
             trust_local_proxy=_flag(g("MONI_TRUST_LOCAL_PROXY", "")),
+            session_idle_minutes=_int(env, "MONI_SESSION_IDLE_MINUTES", "60"),
+            session_max_hours=_int(env, "MONI_SESSION_MAX_HOURS", "12"),
         )
         if s.role not in ("agent", "manager"):
             raise ValueError(f"MONI_ROLE muss agent oder manager sein, nicht {s.role!r}")
@@ -109,7 +113,8 @@ class Settings:
         for name, v in [("MONI_RATE_LIMIT_PER_MINUTE", s.rate_limit_per_minute), ("MAX_DOCKER_WORKERS", s.max_docker_workers),
                         ("MONI_RETENTION_RAW_HOURS", s.retention_raw_hours),
                         ("MONI_RETENTION_MINUTE_DAYS", s.retention_minute_days),
-                        ("MONI_RETENTION_HOUR_DAYS", s.retention_hour_days)]:
+                        ("MONI_RETENTION_HOUR_DAYS", s.retention_hour_days),
+                        ("MONI_SESSION_IDLE_MINUTES", s.session_idle_minutes), ("MONI_SESSION_MAX_HOURS", s.session_max_hours)]:
             if v < 1:
                 raise ValueError(f"{name} muss >= 1 sein")
         for name, v in [("DOCKER_STATS_TIMEOUT", s.docker_stats_timeout), ("DOCKER_INSPECT_TIMEOUT", s.docker_inspect_timeout),
