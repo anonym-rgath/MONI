@@ -426,3 +426,46 @@ def test_setup_token_not_logged_when_users_exist(mgr_settings, make_user, caplog
     assert c.get("/api/v1/setup").json() == {"required": False}
     r = c.post("/api/v1/setup", json=SETUP | {"setup_token": "setup_x"})
     assert r.status_code == 409 and r.json()["detail"] == "Ersteinrichtung ist bereits abgeschlossen"
+
+
+def _totp_state(app, uid):
+    return _store(app, lambda s, c: (
+        tuple(c.execute("SELECT totp_enc, totp_pending_enc, totp_last_step FROM users WHERE id=?", (uid,)).fetchone()),
+        sorted(r[0] for r in c.execute("SELECT code_hash FROM recovery_codes WHERE user_id=?", (uid,)))))
+
+
+def test_enroll_session_cannot_replace_active_totp(mgr_client, mgr_app, make_user, login_cookie):
+    u, secret, _ = totp_user(mgr_app, make_user)
+    before = _totp_state(mgr_app, u.id)
+    cookie, token = login_cookie(u, "enroll")  # z. B. ein zweiter Passwort-Login, bevor die 2FA aktiv wurde
+    use(mgr_client, cookie)
+    h = {"X-CSRF-Token": token}
+    r = mgr_client.post("/api/v1/auth/totp/setup", json={}, headers=h)
+    assert (r.status_code, r.json()) == (401, FAIL)
+    r = mgr_client.post("/api/v1/auth/totp/confirm", json={"code": code_at(secret, time.time())}, headers=h)
+    assert (r.status_code, r.json()) == (401, FAIL)
+    assert _totp_state(mgr_app, u.id) == before
+    assert mgr_client.get("/api/v1/auth/session").json()["stage"] == "enroll"
+
+
+def test_confirm_from_enroll_ends_other_pre_auth_sessions(mgr_app, make_user, login_cookie):
+    u = make_user("admin")
+    a, b = (TestClient(mgr_app, base_url="https://testserver") for _ in range(2))
+    assert login(a, u.email).json() == login(b, u.email).json() == {"stage": "enroll"}
+    full_cookie, _ = login_cookie(u, "full")  # kann es eigentlich noch nicht geben, bleibt aber erhalten
+    h = {"X-CSRF-Token": csrf(a)}
+    secret = a.post("/api/v1/auth/totp/setup", json={}, headers=h).json()["secret"]
+    assert a.post("/api/v1/auth/totp/confirm", json={"code": code_at(secret, time.time())}, headers=h).status_code == 200
+    assert a.get("/api/v1/auth/session").json()["stage"] == "full"
+    assert b.get("/api/v1/auth/session").status_code == 401
+    assert b.post("/api/v1/auth/totp/setup", json={}).status_code == 401
+    use(b, full_cookie)
+    assert b.get("/api/v1/auth/session").json()["stage"] == "full"
+
+
+def test_invalid_login_email_not_in_audit(mgr_client, mgr_app):
+    assert login(mgr_client, "kein-at-zeichen geheim").status_code == 401
+    assert login(mgr_client, " Niemand@Example.org ").status_code == 401
+    bad, ok = [e for e in _audit(mgr_app) if e["action"] == "login.failure"][::-1]
+    assert bad["target"] is None and bad["actor"] == "anonym" and "geheim" not in str(bad)
+    assert ok["target"] == "niemand@example.org"

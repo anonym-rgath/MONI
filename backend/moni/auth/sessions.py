@@ -86,9 +86,10 @@ class SessionStore:
         with self._tx():
             self._conn.execute("DELETE FROM sessions WHERE id_hash=?", (id_hash,))
 
-    def delete_for_user(self, user_id: int, keep: str | None = None) -> int:
+    def delete_for_user(self, user_id: int, keep: str | None = None, pre_auth_only: bool = False) -> int:
         with self._tx():
-            return self._conn.execute("DELETE FROM sessions WHERE user_id=? AND id_hash IS NOT ?", (user_id, keep)).rowcount
+            return self._conn.execute("DELETE FROM sessions WHERE user_id=? AND id_hash IS NOT ? AND (? = 0 OR stage != 'full')",
+                                      (user_id, keep, int(pre_auth_only))).rowcount
 
     def purge_expired(self, now: int) -> int:
         with self._tx():

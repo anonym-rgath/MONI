@@ -17,7 +17,7 @@ from ..manager import db
 from . import audit, passwords
 from .deps import Principal, client_ip, require_scope, require_stage
 from .sessions import COOKIE, Session, SessionStore
-from .users import Conflict, User, UserStore
+from .users import Conflict, User, UserStore, normalize_email
 
 router = APIRouter(prefix="/api/v1")
 Str = Annotated[StrictStr, StringConstraints(max_length=1024)]  # Grenze schützt Argon2 vor Riesen-Bodies
@@ -110,6 +110,20 @@ def _check_factor(request, conn, user, session, now, action, ok) -> None:
         _factor_failed(request, conn, user, session, now, action)
 
 
+def _email_or_none(raw: str) -> str | None:
+    """Nur eine gültige E-Mail ins Audit; sonst könnte dort ein ins falsche Feld getipptes Passwort landen."""
+    try:
+        return normalize_email(raw)
+    except ValueError:
+        return None
+
+
+def _no_reenrol(session: Session, user: User) -> None:
+    """P3-R3: eine alte Enroll-Session darf ein aktives TOTP nicht ohne zweiten Faktor ersetzen."""
+    if session.stage == "enroll" and user.totp_enabled:
+        raise HTTPException(401, _FAILED)
+
+
 def _browser(principal: Principal) -> None:
     if principal.session is None:
         raise HTTPException(400, "Nur mit Anmeldung im Browser möglich")
@@ -172,7 +186,7 @@ def login(request: Request, response: Response, body: LoginBody):
         if not ok:
             request.app.state.throttle.fail(throttle_key(request), now)
             actor = _actor(user) if user else "anonym"
-            target = user.email if user else body.email.strip().lower()
+            target = user.email if user else _email_or_none(body.email)
             audit.record(conn, actor, "login.failure", target=target, ip=ip, now=now)
             if locked:
                 audit.record(conn, actor, "login.locked", target=target, ip=ip, now=now)
@@ -211,6 +225,7 @@ def login_mfa(request: Request, response: Response, body: CodeBody, auth=Depends
 def totp_setup(request: Request, body: TotpSetupBody, auth=Depends(require_stage("enroll", "full"))):
     session, user = auth
     _local(user)
+    _no_reenrol(session, user)
     with db.request_conn(request) as conn:
         users = UserStore(conn, request.app.state.box)
         if session.stage == "full" and user.totp_enabled:
@@ -226,6 +241,7 @@ def totp_setup(request: Request, body: TotpSetupBody, auth=Depends(require_stage
 @router.post("/auth/totp/confirm")
 def totp_confirm(request: Request, response: Response, body: CodeBody, auth=Depends(require_stage("enroll", "full"))):
     session, user = auth
+    _no_reenrol(session, user)  # user kommt frisch aus der DB (deps), gilt also auch nach Aktivierung durch eine andere Session
     now = int(time.time())
     _throttle(request, now)
     ip = client_ip(request)
@@ -237,7 +253,9 @@ def totp_confirm(request: Request, response: Response, body: CodeBody, auth=Depe
             raise HTTPException(401, _FAILED)
         audit.record(conn, _actor(user), "totp.enabled", target=user.email, ip=ip, now=now)
         if session.stage == "enroll":
-            _, plain = SessionStore(conn, request.app.state.settings).rotate(session, "full", now, ip)
+            sessions = SessionStore(conn, request.app.state.settings)
+            new, plain = sessions.rotate(session, "full", now, ip)
+            sessions.delete_for_user(user.id, keep=new.id_hash, pre_auth_only=True)  # andere mfa/enroll-Sessions (P3-R3)
             users.register_success(user.id, now)
             audit.record(conn, _actor(user), "login.success", target=user.email, ip=ip, details={"method": "enroll"}, now=now)
             _set_cookie(response, plain)
