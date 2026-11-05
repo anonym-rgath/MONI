@@ -70,3 +70,13 @@ def client(settings, collector, token):  # token: stellt sicher, dass `auth` und
     from fastapi.testclient import TestClient
     from moni.app import create_app
     return TestClient(create_app(settings, collector))
+
+
+def code_at(secret, t):
+    """TOTP-Code (6 Stellen, 30 s, SHA-1) für ein Base32-Secret zum Zeitpunkt t; für alle Auth-Tests."""
+    import base64
+
+    from cryptography.hazmat.primitives.hashes import SHA1
+    from cryptography.hazmat.primitives.twofactor.totp import TOTP
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8))
+    return TOTP(key, 6, SHA1(), 30, enforce_key_length=False).generate(t).decode()
