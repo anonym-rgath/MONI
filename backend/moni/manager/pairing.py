@@ -133,6 +133,7 @@ def pair(url: str, code: str, mp: ManagerPki, now: datetime, timeout: float) -> 
     conn = http.client.HTTPSConnection(host, port, context=_pinned_context(), timeout=timeout)
     try:
         conn.connect()
+        conn.auto_open = 0  # nie still neu verbinden: die neue Verbindung wäre nicht gepinnt (NotConnected)
         if not hmac.compare_digest(_fingerprint(conn.sock.getpeercert(binary_form=True) or b"").encode(), fp.encode()):
             result = PairingError(_FP_MISMATCH)
         else:  # dieselbe gepinnte Verbindung für CSR und Zertifikat

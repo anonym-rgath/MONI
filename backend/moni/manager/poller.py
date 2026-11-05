@@ -340,7 +340,9 @@ class Poller:
             try:  # erneuert das Client-Zertifikat; client_context() baut den Kontext danach selbst neu
                 self._pki.ensure(at)
             except Exception as e:
-                log.error("Client-Zertifikat des Managers nicht erneuerbar (%s)", type(e).__name__)
+                # RuntimeError trägt feste Texte ohne Geheimnisse (P4-R5), alles andere nur den Typ
+                log.error("Client-Zertifikat des Managers nicht erneuerbar (%s)",
+                          str(e) if type(e) is RuntimeError else type(e).__name__)
         if self._settings.role == "manager" and self._settings.tls == "on" and (
                 self._https_at is None or now - self._https_at >= _HTTPS_EVERY):
             self._https_at = now

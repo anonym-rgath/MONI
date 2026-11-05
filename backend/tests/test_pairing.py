@@ -93,6 +93,24 @@ def test_pair_wrong_token_401_and_second_pair_409(agent_tls_server, manager_pki,
     assert (e.value.status, e.value.message) == (409, "Agent ist bereits gekoppelt")
 
 
+def test_pair_no_reconnect_after_connection_close(agent_tls_server, manager_pki, spy, monkeypatch):
+    """Schließt der Agent nach /tls/csr die Verbindung, gibt es keine neue, ungeprüfte Verbindung für /tls/cert."""
+    import http.client
+    real_begin, real_connect, connects = http.client.HTTPResponse.begin, http.client.HTTPSConnection.connect, []
+
+    def begin(self):
+        real_begin(self)
+        self.will_close = True  # wie "Connection: close" vom Agent
+
+    monkeypatch.setattr(http.client.HTTPResponse, "begin", begin)
+    monkeypatch.setattr(http.client.HTTPSConnection, "connect", lambda self: connects.append(1) or real_connect(self))
+    with pytest.raises(PairingError) as e:
+        pairing.pair(agent_tls_server.url, agent_tls_server.code, manager_pki, NOW, 5)
+    assert (e.value.status, e.value.message) == (502, "Agent nicht erreichbar") and e.value.__context__ is None
+    assert spy == ["request", "csr"] and connects == [1]  # /tls/cert hat keinen Peer erreicht, kein zweiter Handshake
+    assert not agent_tls_server.state.paired
+
+
 def test_pair_unreachable_agent(manager_pki):
     import socket
     with socket.socket() as s:

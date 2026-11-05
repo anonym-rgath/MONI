@@ -535,12 +535,13 @@ def _validate(idp, token, nonce="n1", algs=("RS256",), jwks=None):
     ({"aud": ["moni"]}, True),
     ({"azp": "moni"}, True),
     ({"azp": "x"}, False),                              # ein aud, aber azp passt nicht
-    ({"iat": int(time.time()) + 3600}, False),          # aus der Zukunft
+    ({"iat": 3600}, False),                             # aus der Zukunft (Sekunden ab jetzt)
     ({"sub": None}, False),
     ({"nonce": None}, False),
-    ({"exp": int(time.time()) - 30}, True),             # innerhalb der 60 s Toleranz
+    ({"exp": -30}, True),                               # innerhalb der 60 s Toleranz (Sekunden ab jetzt)
 ])
 def test_validate_id_token_claims(idp, over, ok):
+    over = {k: int(time.time()) + v if k in ("iat", "exp") else v for k, v in over.items()}  # erst zur Laufzeit
     c = {k: v for k, v in {**_claims(idp, "n1"), **over}.items() if v is not None}
     if ok:
         assert _validate(idp, idp.sign(c))["sub"] == "s1"

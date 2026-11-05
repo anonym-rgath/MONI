@@ -996,6 +996,20 @@ def test_https_error_logged_and_cycle_continues(https_env, monkeypatch, caplog):
     assert "HTTPS-Zertifikat des Managers nicht erneuerbar (OSError)" in caplog.text
 
 
+def test_ca_half_state_logs_fixed_text(https_env, caplog):  # P4-R5 auch im laufenden Betrieb
+    (https_env.pki.dir / "ca.crt").unlink()
+    https_env.poller.poll_once(T)
+    assert ("Client-Zertifikat des Managers nicht erneuerbar (CA-Dateien unvollständig (ca.crt oder ca.key.enc fehlt) "
+            "– Sicherung zurückspielen oder beide löschen, um eine neue CA zu erzeugen (alle Kopplungen gehen verloren))"
+            ) in [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+
+
+def test_client_cert_error_other_than_runtime_logs_type_only(https_env, monkeypatch, caplog):
+    monkeypatch.setattr(https_env.pki, "ensure", lambda now: (_ for _ in ()).throw(OSError("/geheimer/pfad")))
+    https_env.poller.poll_once(T)
+    assert "Client-Zertifikat des Managers nicht erneuerbar (OSError)" in caplog.text and "geheimer" not in caplog.text
+
+
 def test_no_https_check_in_proxy_mode(settings, box, monkeypatch, tmp_path):
     calls = []
     p = Poller(settings, box, StubCollector(), pki=type("P", (), {"ensure": lambda self, now: None,
