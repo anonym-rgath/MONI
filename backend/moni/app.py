@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from moni import __version__, errors
 from moni.agent.api import metrics_router, router
-from moni.auth import admin_api, api as auth_api
+from moni.auth import admin_api, api as auth_api, oidc
 from moni.auth.throttle import LoginThrottle
 from moni.auth.tokens import TokenStore
 from moni.auth.users import UserStore
@@ -86,9 +86,11 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     if manager:
         app.state.box, app.state.poller = box, poller
         app.state.setup_hash, app.state.throttle = setup_hash, LoginThrottle()
+        app.state.oidc_flows = oidc.Flows()
         app.include_router(manager_router)
         app.include_router(auth_api.router)
         app.include_router(admin_api.router)
+        app.include_router(oidc.router)
     else:
         app.include_router(router)
         app.include_router(metrics_router)

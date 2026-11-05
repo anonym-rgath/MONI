@@ -3,7 +3,7 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-from .auth import audit
+from .auth import audit, oidc
 from .auth.sessions import SessionStore
 from .auth.tokens import TokenStore
 from .auth.users import UserStore
@@ -112,9 +112,9 @@ def _manager(args) -> int:
             if args.group == "user":
                 return _user(args, s, conn, box)
             if args.group == "secret":
-                conn.execute("BEGIN IMMEDIATE")  # eine Transaktion für beide Stores: scheitert eine Rotation, bleibt alles unverändert
+                conn.execute("BEGIN IMMEDIATE")  # eine Transaktion für alle Secrets: scheitert eine Rotation, bleibt alles unverändert
                 try:
-                    n = store.reencrypt_all() + UserStore(conn, box).reencrypt_all()
+                    n = store.reencrypt_all() + UserStore(conn, box).reencrypt_all() + oidc.reencrypt(conn, box)
                     conn.commit()
                 except BaseException:
                     conn.rollback()
