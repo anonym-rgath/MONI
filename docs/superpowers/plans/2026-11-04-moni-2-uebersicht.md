@@ -38,7 +38,7 @@ Die Pakete 4 und 5 sind voneinander unabhängig und können parallel laufen.
 
 - [x] Paket 1 – Plan: [`2026-11-04-moni-2-paket-1-fundament-agent.md`](2026-11-04-moni-2-paket-1-fundament-agent.md) (umgesetzt, CI grün; Task 9 auf dem Pi offen)
 - [x] Paket 2 – Plan: [`2026-11-04-moni-2-paket-2-manager-kern.md`](2026-11-04-moni-2-paket-2-manager-kern.md) (umgesetzt; Task 10 durch Betreiber offen)
-- [ ] Paket 3 – Plan: [`2026-11-05-moni-2-paket-3-benutzer-anmeldung.md`](2026-11-05-moni-2-paket-3-benutzer-anmeldung.md) (geschrieben, Umsetzung offen)
+- [x] Paket 3 – Plan: [`2026-11-05-moni-2-paket-3-benutzer-anmeldung.md`](2026-11-05-moni-2-paket-3-benutzer-anmeldung.md) (umgesetzt, inkl. mehrerer OIDC-Anbieter mit Microsoft; Task 9 durch Betreiber offen)
 - [ ] Paket 4
 - [ ] Paket 5
 - [ ] Paket 6

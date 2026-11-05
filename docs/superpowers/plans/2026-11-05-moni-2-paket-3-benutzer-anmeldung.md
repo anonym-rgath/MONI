@@ -786,3 +786,31 @@ Nicht durch Subagents. Voraussetzung ist ein Manager, der per HTTPS unter einer 
    - App-Registrierung mit der Kontoart „nur persönliche Microsoft-Konten“ und der Redirect-URI `https://<domain>/api/v1/auth/oidc/callback/microsoft-privat` anlegen.
    - Dann `PUT /api/v1/auth/oidc/providers/microsoft-privat` mit `issuer=https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0` aufrufen.
    - Den Benutzer mit seiner Outlook-Adresse und `kind="oidc"` anlegen.
+
+---
+
+## Nachlauf aus dem Abschlussreview (2026-11-05)
+
+Paket 3 ist umgesetzt (Commits `88aabc1..a58a141`, 615 Tests grün). Die folgenden Punkte hat der Abschlussreview bewusst auf spätere Pakete verschoben:
+
+- **Paket 4 (mTLS/HTTPS/Proxys):**
+  - Hinter einem externen Proxy (Traefik) teilen sich alle Clients dessen IP für die Login-Drosselung (P3-R2). Lösung: vertrauenswürdige Proxys.
+  - Ein `Authorization`-Header, der kein Bearer ist (z. B. Basic-Auth des Proxys), blockiert den Cookie-Login. Solche Header sollten ignoriert werden.
+  - nginx-`error_log` zeigt bei Backend-Ausfall die Anfragezeile samt OIDC-`code`.
+- **Paket 5 (Alarme):** Neue Alarm-Routen erscheinen automatisch im Routen-Inventartest (`test_route_inventory.py`). Die Allow-Liste dort nur bewusst erweitern.
+- **Paket 6 (Oberfläche):**
+  - Ändert jemand den Anmeldeanbieter oder löscht ihn, laufen die Sessions der darüber angemeldeten Benutzer noch bis zu 12 h weiter. Eine OIDC-Verknüpfung lässt sich nicht zurücksetzen.
+  - Neue 2FA oder neue Wiederherstellungscodes beenden andere Sessions nicht. Dafür sollte es eine Option „Andere Sitzungen abmelden“ geben.
+  - `PUT /providers/{id}` ohne `label` setzt das Label zurück. Die UI soll vollständige Objekte senden.
+  - Optional ein Feld „erstellt von“ in der Token-Liste.
+- **Paket 7 (Release/Doku/Härtung):**
+  - Doku-Hinweise:
+    - API-Tokens sind nicht an Benutzer gebunden. Deaktiviert man einen Admin, bleiben seine Tokens gültig.
+    - Erstpasswörter sicher übergeben.
+    - `/:/host/root:ro,rslave` funktioniert nicht mit Docker Desktop auf macOS.
+  - CLI: `token create` gibt den Token erst nach dem Audit aus. Ein `sqlite3.Error` beim Audit endet mit Traceback und einem verwaisten Token. Die Gruppe `user` legt in der Agent-Rolle eine `moni.db` an.
+  - Fällt der Anmeldeanbieter aus, könnte Moni die fehlgeschlagene Discovery kurz zwischenspeichern, statt sie bei jedem Versuch erneut abzufragen.
+  - Die CI-Prüfung auf `recovery` gezielter machen: auf die echten Codes prüfen.
+  - Argon2 vor dem Schreib-Lock berechnen.
+  - Kleinere Testlücken und Aufräumpunkte (doppelte Imports, toter `except`-Zweig, Grenzwert-Tests).
+  - Die `StarletteDeprecationWarning` aus der Testausgabe entfernen.
