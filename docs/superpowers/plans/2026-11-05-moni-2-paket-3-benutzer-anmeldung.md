@@ -34,7 +34,7 @@ Diese Entscheidungen trifft der Plan. Im Ledger werden sie als Rulings P3-D1 bis
 - **D4 Sessions in SQLite** (Tabelle `sessions`, nur der SHA-256-Hash der Session-ID wird gespeichert). Das Cookie `moni_session` hat immer `HttpOnly; Secure; SameSite=Strict; Path=/`, auch bei `MONI_TLS=off`. Bis Paket 4 HTTPS bringt, funktioniert die Anmeldung im Browser deshalb nur über HTTPS (Proxy) oder über `localhost`. API-Clients sind nicht betroffen. Leerlauf **60 min** (`MONI_SESSION_IDLE_MINUTES`), absolute Laufzeit **12 h** (`MONI_SESSION_MAX_HOURS`). Die Zwischenstufen `mfa` und `enroll` gelten höchstens **600 s**. `last_seen` wird höchstens alle 60 s geschrieben, um die SD-Karte zu schonen.
 - **D5 CSRF per Synchronizer-Token.** Cookie-authentisierte Anfragen mit `POST/PUT/PATCH/DELETE` brauchen den Header `X-CSRF-Token`, der zum CSRF-Wert der Session passt. Bearer-Anfragen sind ausgenommen, weil der Browser keinen Bearer-Header automatisch mitsendet. Login und Setup haben noch keine Session und werden über `SameSite=Strict`, das Setup-Token bzw. das Passwort und die IP-Drosselung geschützt.
 - **D6 API-Tokens bleiben in `tokens.json`** (`TokenStore`, keine DB-Migration). Neu ist nur die Verwaltung über die API. Das erfüllt §6.7 „wie beim Agent“ ohne zweiten Speicherort.
-- **D7 OIDC-Konfiguration in `meta`** unter dem Schlüssel `oidc` als JSON. Das Client-Secret liegt mit `SecretBox` verschlüsselt (§6.10). Konten werden nie automatisch angelegt. Bei der ersten OIDC-Anmeldung wird ein vorher angelegtes Konto mit `kind="oidc"` über die E-Mail verknüpft. Das gelingt nur, wenn das ID-Token `email_verified: true` enthält. Danach zählt nur noch `(iss, sub)`. Kosten, falls falsch: Anbieter ohne `email_verified` (z. B. Microsoft Entra) funktionieren erst mit einer späteren Option.
+- **D7 OIDC-Konfiguration in `meta`** unter dem Schlüssel `oidc` als JSON. Das Client-Secret liegt mit `SecretBox` verschlüsselt (§6.10). Konten werden nie automatisch angelegt. Bei der ersten OIDC-Anmeldung wird ein vorher angelegtes Konto mit `kind="oidc"` über die E-Mail verknüpft. Das gelingt nur, wenn das ID-Token `email_verified: true` enthält. Danach zählt nur noch `(iss, sub)`. Kosten, falls falsch: Anbieter ohne `email_verified` (z. B. Microsoft Entra) funktionieren erst mit einer späteren Option. **Nachtrag (Wunsch des Auftraggebers, 2026-11-05):** Microsoft muss genauso gehen wie Google. Task 7b erweitert das auf mehrere gleichzeitige Anbieter und akzeptiert zusätzlich Microsofts Claim `xms_edov: true`.
 - **D8 Sperren.** Ein Konto wird nach **5** Fehlversuchen in Folge (Passwort oder zweiter Faktor) für **15 min** gesperrt (`locked_until`, in der DB). Pro IP gibt es nach **20** Fehlversuchen in **15 min** ein 429 mit `Retry-After` (im Speicher). Alle Anmeldefehler bekommen dieselbe Antwort `401 "Anmeldung fehlgeschlagen"`, auch bei unbekannter E-Mail oder gesperrtem Konto. Bei unbekannter E-Mail läuft eine Argon2-Prüfung gegen einen Dummy-Hash, damit die Antwortzeit nichts verrät.
 - **D9 Setup-Token im Log** (so verlangt es §6.7). Es wird bei jedem Start neu erzeugt, solange kein Benutzer existiert. Es gilt nur, bis der erste Admin angelegt ist. Gespeichert ist nur sein Hash in `app.state`. Das ist die einzige erlaubte Ausnahme von „keine Geheimnisse im Log“.
 - **D10 Audit-Aufbewahrung 365 Tage**, aufgeräumt in der Poller-Wartung. Abgelaufene Sessions werden dort ebenfalls gelöscht.
@@ -671,6 +671,58 @@ def test_reencrypt_includes_oidc_secret(...): ...
 
 ---
 
+### Task 7b: Mehrere OIDC-Anbieter gleichzeitig, Microsoft wie Google
+
+Wunsch des Auftraggebers: Wenn die Anmeldung über Google möglich ist, muss sie auch über Microsoft möglich sein, und zwar gleichzeitig.
+
+**Files:**
+- Modify: `backend/moni/auth/oidc.py`, `backend/moni/cli.py` (`secret reencrypt` über alle Anbieter), `backend/tests/test_oidc.py`
+
+**Interfaces:**
+- Speicherung: `meta`-Schlüssel `oidc` = `{"public_url": str, "providers": [{"id", "issuer", "client_id", "client_secret_enc", "label"}]}`. Das ersetzt die Einzel-Konfiguration aus Task 7. Eine Datenmigration ist nicht nötig, weil Task 7 noch nirgends ausgerollt ist.
+- Für `id` gilt `^[a-z0-9-]{1,32}$` (z. B. `google`, `microsoft`). Erlaubt sind höchstens 10 Anbieter.
+- Routen (Prefix `/api/v1/auth/oidc`):
+  - `GET ""` ist offen und liefert `{"providers": [{"id", "label"}]}`. Die Liste ist leer, solange nichts konfiguriert ist.
+  - `PUT /public-url` (admin) mit `{public_url}` (https, ohne Query/Fragment).
+  - `GET /providers` (admin): ohne Secrets, mit `client_secret_set`.
+  - `PUT /providers/{id}` (admin): anlegen oder ändern mit `{issuer, client_id, client_secret?, label}`. Die Prüfungen sind dieselben wie in Task 7 (Discovery, exakter `issuer`). Beim Anlegen ist das Secret Pflicht. Vor dem ersten Anbieter muss `public_url` gesetzt sein, sonst `422 "Zuerst public_url setzen"`.
+  - `DELETE /providers/{id}` (admin): 204/404.
+  - `GET /start?provider=<id>`: Unbekannter oder fehlender Anbieter ergibt 404.
+  - `GET /callback` bleibt für alle Anbieter gleich. `Flows` merkt sich zum `state` die Anbieter-`id`. Wird der Anbieter zwischen Start und Callback gelöscht, gilt das als Fehler `config`.
+  - Audit `oidc.config_changed` mit `details={"provider": id}` bzw. `{"public_url": true}`.
+- Konto-Verknüpfung (D7, erweitert): Die E-Mail gilt als bestätigt, wenn `email_verified is True` **oder** `xms_edov is True` (Microsoft-Claim „email domain owner verified“). Sonst bleibt der Grund `email_unverified`. Weiterhin werden nur Konten mit `kind="oidc"` verknüpft, die noch nicht verknüpft sind. `(iss, sub)` ist anbieterübergreifend eindeutig.
+- Microsoft-Hinweis: Liefert die Discovery einen `issuer` mit dem Platzhalter `{tenantid}` (Endpunkte `/common` oder `/organizations`, mehrmandantenfähig), lehnt `PUT /providers/{id}` mit `422 "Für Microsoft die mandantenspezifische Issuer-URL verwenden: https://login.microsoftonline.com/<Mandanten-ID>/v2.0"` ab. Mehrmandanten-Anmeldung bleibt bewusst aus, sie ist die Ursache der bekannten „nOAuth“-Kontoübernahmen.
+
+- [ ] **Step 1: Failing tests**
+
+```python
+def test_two_providers_listed_and_started(oidc_client, idp_google, idp_microsoft):
+    assert {p["id"] for p in oidc_client.get("/api/v1/auth/oidc").json()["providers"]} == {"google", "microsoft"}
+    loc = oidc_client.get("/api/v1/auth/oidc/start?provider=microsoft", follow_redirects=False).headers["location"]
+    assert loc.startswith(idp_microsoft.authorization_endpoint)
+
+def test_microsoft_xms_edov_binds(oidc_client, idp_microsoft, make_user):
+    make_user("viewer", kind="oidc", email="m@firma.de")
+    r = complete_flow(oidc_client, idp_microsoft, provider="microsoft",
+                      claims={"email": "m@firma.de", "xms_edov": True, "sub": "ms1"})       # kein email_verified
+    assert r.headers["location"] == "/"
+
+def test_microsoft_without_verification_rejected(...): ...   # weder email_verified noch xms_edov → email_unverified
+def test_common_issuer_rejected_with_hint(...): ...          # Discovery-issuer mit {tenantid} → 422 mit Hinweistext
+def test_unknown_provider_404(...): ...                      # /start ohne oder mit unbekanntem provider → 404
+def test_provider_deleted_between_start_and_callback(...): ...   # → /login?fehler=oidc, grund config
+def test_same_email_two_providers_binds_once(...): ...       # nach Bindung über Google matcht Microsoft (anderes iss) nicht → unknown_user
+def test_reencrypt_covers_all_providers(...): ...            # zwei Anbieter → Zähler +2
+def test_max_ten_providers(...): ...                         # 11. → 422
+```
+
+Alle Tamper-Tests aus Task 7 laufen weiter, jetzt mit `provider=…`.
+
+- [ ] **Step 2–4:** Tests rot → Implementieren → volle Suite grün.
+- [ ] **Step 5: Commit** `feat(auth): mehrere OIDC-Anbieter gleichzeitig, Microsoft Entra mit xms_edov`
+
+---
+
 ### Task 8: Wartung, Betrieb und CI
 
 **Files:**
@@ -708,6 +760,12 @@ def test_reencrypt_includes_oidc_secret(...): ...
 Nicht durch Subagents. Voraussetzung ist ein Manager, der per HTTPS unter einer Domain erreichbar ist (beim Autor: Pi hinter Traefik).
 
 1. Beim Anbieter (z. B. Google Cloud Console) einen OAuth-Client vom Typ „Webanwendung“ anlegen, mit der Redirect-URI `https://<domain>/api/v1/auth/oidc/callback`.
-2. Mit einem Admin-Token die Konfiguration setzen: `PUT /api/v1/auth/oidc/config` mit `issuer=https://accounts.google.com`, `client_id`, `client_secret` und `public_url=https://<domain>`.
+2. Mit einem Admin-Token `PUT /api/v1/auth/oidc/public-url` mit `public_url=https://<domain>` aufrufen, danach `PUT /api/v1/auth/oidc/providers/google` mit `issuer=https://accounts.google.com`, `client_id`, `client_secret` und `label=Google`.
 3. `POST /api/v1/users` mit `kind="oidc"`, der eigenen Google-Adresse und `role="viewer"`.
-4. Im Browser `https://<domain>/api/v1/auth/oidc/start` aufrufen. Erwartet wird ein Rücksprung auf `/` und danach `GET /api/v1/auth/session` → `stage: full`.
+4. Im Browser `https://<domain>/api/v1/auth/oidc/start?provider=google` aufrufen. Erwartet wird ein Rücksprung auf `/` und danach `GET /api/v1/auth/session` → `stage: full`.
+5. Microsoft (Entra ID):
+   - Im Entra Admin Center eine App-Registrierung anlegen: nur Konten dieses Verzeichnisses, Redirect-URI wie oben.
+   - Unter „Tokenkonfiguration“ die optionalen Claims `email` und `xms_edov` für das ID-Token hinzufügen.
+   - Einen geheimen Clientschlüssel erzeugen.
+   - Dann `PUT /api/v1/auth/oidc/providers/microsoft` mit `issuer=https://login.microsoftonline.com/<Mandanten-ID>/v2.0` aufrufen.
+   - Den Test wie in Schritt 4 wiederholen, mit `provider=microsoft`.
