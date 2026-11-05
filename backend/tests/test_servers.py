@@ -197,7 +197,7 @@ def test_migration_v3_keeps_servers(tmp_path, monkeypatch):
     c.commit()
     c.close()
     monkeypatch.undo()
-    assert db.migrate(p) == 3
+    assert db.migrate(p) == 4
     c = db.connect(p)
     r = c.execute("SELECT name, token_enc, security, cert_not_after, cert_renew_tried FROM servers").fetchone()
     assert tuple(r) == ("alt", "x", "token", None, None)

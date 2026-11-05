@@ -183,11 +183,11 @@ def test_migration_v2_on_v1_db_keeps_servers(tmp_path, monkeypatch):
     c = db.connect(p)
     c.execute("INSERT INTO servers (id, name, created_at) VALUES (1, 'alt', 0)"); c.commit(); c.close()
     monkeypatch.undo()
-    assert db.migrate(p) == 3
+    assert db.migrate(p) == 4
     c = db.connect(p)
     assert c.execute("SELECT name FROM servers").fetchone()[0] == "alt"
     assert c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
-    assert c.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert c.execute("PRAGMA user_version").fetchone()[0] == 4
     c.close()
 
 
