@@ -31,6 +31,12 @@ BODIES = {
     ("POST", "/api/v1/tokens"): {"name": "t"},
     ("PUT", "/api/v1/auth/oidc/public-url"): {"public_url": "https://moni.example.org"},
     ("PUT", "/api/v1/auth/oidc/providers/{pid}"): {"issuer": "https://idp.example.org", "client_id": "moni"},
+    ("POST", "/api/v1/alert-rules"): {"name": "r", "metric": "moni_host_cpu_usage_percent", "op": ">", "critical": 90},
+    ("PATCH", "/api/v1/alert-rules/{rule_id}"): {"enabled": False},
+    ("POST", "/api/v1/alert-channels"): {"name": "c", "kind": "webhook", "url": "https://example.org/h"},
+    ("PATCH", "/api/v1/alert-channels/{channel_id}"): {"enabled": False},
+    ("PUT", "/api/v1/servers/{server_id}/mute"): {"until": "2999-01-01T00:00:00Z"},
+    ("PUT", "/api/v1/alert-settings"): {"remind_minutes": 60},
 }
 NO_ROLE = "Keine Berechtigung"
 NO_CSRF = "CSRF-Token fehlt oder ist ungültig"
@@ -75,7 +81,8 @@ def test_every_write_route_checks_role_csrf_and_login(mgr_app, make_user, login_
     assert len(checked) >= 16  # das Inventar greift wirklich
 
 
-@pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/tokens", "/api/v1/audit", "/api/v1/auth/oidc/providers"])
+@pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/tokens", "/api/v1/audit", "/api/v1/auth/oidc/providers",
+                                  "/api/v1/alert-channels", "/api/v1/alert-settings"])
 def test_viewer_cannot_read_admin_lists(mgr_client, make_user, login_cookie, path):
     mgr_client.cookies.set(COOKIE, login_cookie(make_user("viewer"))[0])
     r = mgr_client.get(path)

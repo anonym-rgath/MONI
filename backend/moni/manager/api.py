@@ -81,7 +81,8 @@ def _out(conn, s: Server, detail: bool = False) -> dict:
            "last_seen": iso(datetime.fromtimestamp(s.last_seen, timezone.utc)) if s.last_seen is not None else None,
            "header_names": s.header_names, "warnings": len(w) if isinstance(w := (snap.get("warnings") if isinstance(snap, dict) else None), list) else 0,
            "agent_version": (info or {}).get("version"), "security": s.security,
-           "cert_not_after": iso(datetime.fromtimestamp(s.cert_not_after, timezone.utc)) if s.cert_not_after is not None else None}
+           "cert_not_after": iso(datetime.fromtimestamp(s.cert_not_after, timezone.utc)) if s.cert_not_after is not None else None,
+           "muted_until": iso(datetime.fromtimestamp(s.muted_until, timezone.utc)) if s.muted_until is not None else None}
     if detail:
         out["agent_info"] = info
     return out

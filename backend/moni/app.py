@@ -20,7 +20,7 @@ from moni.bodylimit import BodyLimitMiddleware
 from moni.collector import Collector
 from moni.collect.host import read_hostname
 from moni.config import Settings
-from moni.manager import db
+from moni.manager import alert_api, db
 from moni.manager.api import router as manager_router
 from moni.manager.ca import ManagerPki
 from moni.manager.notifier import Notifier
@@ -113,6 +113,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         app.state.setup_hash, app.state.throttle = setup_hash, LoginThrottle()
         app.state.oidc_flows = oidc.Flows()
         app.include_router(manager_router)
+        app.include_router(alert_api.router)
         app.include_router(auth_api.router)
         app.include_router(admin_api.router)
         app.include_router(oidc.router)
