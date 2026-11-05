@@ -615,7 +615,7 @@ Die Fixtures `admin_client`, `viewer_client`, `csrf` und `admin_user` baut die T
 - Produces (`oidc.py`):
   - `_http(method: str, url: str, data: dict | None = None, headers: dict | None = None) -> dict` (D3). Zulässig ist nur `https://`. Nicht-2xx-Antworten, kaputtes JSON, mehr als 1 MB, eine Weiterleitung oder ein Timeout führen zu `OidcError("…")`. **Die einzige Netzwerkstelle, Tests ersetzen sie per `monkeypatch`.**
   - `class OidcError(Exception)`
-  - `load_config(conn, box) -> dict | None`, `save_config(conn, box, *, issuer, client_id, client_secret | None, public_url, label) -> None`, `delete_config(conn) -> None`, `reencrypt(conn, box) -> int`. Es gibt einen Discovery-Cache (1 h) und einen JWKS-Cache (1 h; bei unbekannter `kid` wird einmal neu geladen) im Speicher.
+  - `load_config(conn, box) -> dict | None`, `save_config(conn, box, *, issuer, client_id, client_secret | None, public_url, label) -> None`, `delete_config(conn) -> None`, `reencrypt(conn, box) -> int`. (Ab Task 7b durch die Anbieter-Liste ersetzt, siehe dort.) Es gibt einen Discovery-Cache (1 h) und einen JWKS-Cache (1 h; bei unbekannter `kid` wird einmal neu geladen) im Speicher.
   - `class Flows`: im Speicher, `state → (nonce, verifier, created)`, TTL 600 s, höchstens 1000 Einträge, threadsicher. Methoden: `add(now) -> tuple[state, nonce, challenge]`, `pop(state, now) -> tuple[nonce, verifier] | None`.
   - `validate_id_token(id_token: str, *, issuer, client_id, nonce, jwks: dict, algs: list[str], now: float) -> dict`. Zulässige Algorithmen sind die Schnittmenge aus `algs` und `{"RS256","RS384","RS512","PS256","PS384","PS512","ES256","ES384","EdDSA"}`. Geprüft werden `iss`, `aud` (enthält `client_id`; bei mehreren `aud` muss `azp == client_id` sein), `exp`, `iat` (60 s Toleranz) und `nonce`. Fehler ergeben `OidcError`. Der Schlüssel kommt aus `jwt.PyJWKSet.from_dict(jwks)` über `kid`.
 - Routen (Prefix `/api/v1/auth/oidc`):
@@ -688,7 +688,12 @@ Wunsch des Auftraggebers: Wenn die Anmeldung über Google möglich ist, muss sie
   - `PUT /providers/{id}` (admin): anlegen oder ändern mit `{issuer, client_id, client_secret?, label}`. Die Prüfungen sind dieselben wie in Task 7 (Discovery, exakter `issuer`). Beim Anlegen ist das Secret Pflicht. Vor dem ersten Anbieter muss `public_url` gesetzt sein, sonst `422 "Zuerst public_url setzen"`.
   - `DELETE /providers/{id}` (admin): 204/404.
   - `GET /start?provider=<id>`: Unbekannter oder fehlender Anbieter ergibt 404.
-  - `GET /callback` bleibt für alle Anbieter gleich. `Flows` merkt sich zum `state` die Anbieter-`id`. Wird der Anbieter zwischen Start und Callback gelöscht, gilt das als Fehler `config`.
+  - **Mix-up-Schutz (Ruling P3-R10, RFC 9700 §4.4):**
+    - Jeder Anbieter hat eine eigene Rücksprung-URI `GET /callback/{id}`; `/start` verwendet sie.
+    - `Flows` merkt sich zum `state` die Werte `(id, issuer, client_id)`.
+    - Weicht die `id` im Pfad ab, bricht Moni vor jedem Token-Aufruf mit dem Fehler `state` ab.
+    - Ist der Anbieter gelöscht oder sind Issuer bzw. Client-ID geändert, lautet der Fehler `config`.
+    - Kündigt die Discovery `authorization_response_iss_parameter_supported` an, muss der Rücksprung den Parameter `iss` mit dem Issuer des Anbieters enthalten (RFC 9207).
   - Audit `oidc.config_changed` mit `details={"provider": id}` bzw. `{"public_url": true}`.
 - Konto-Verknüpfung (D7, erweitert): Die E-Mail gilt als bestätigt, wenn `email_verified is True` **oder** `xms_edov is True` (Microsoft-Claim „email domain owner verified“). Sonst bleibt der Grund `email_unverified`. Weiterhin werden nur Konten mit `kind="oidc"` verknüpft, die noch nicht verknüpft sind. `(iss, sub)` ist anbieterübergreifend eindeutig.
 - Microsoft-Hinweis: Liefert die Discovery einen `issuer` mit dem Platzhalter `{tenantid}` (Endpunkte `/common` oder `/organizations`, mehrmandantenfähig), lehnt `PUT /providers/{id}` mit `422 "Für Microsoft die mandantenspezifische Issuer-URL verwenden: https://login.microsoftonline.com/<Mandanten-ID>/v2.0"` ab. Mehrmandanten-Anmeldung bleibt bewusst aus, sie ist die Ursache der bekannten „nOAuth“-Kontoübernahmen.
@@ -767,17 +772,17 @@ Alle Tamper-Tests aus Task 7 laufen weiter, jetzt mit `provider=…`.
 
 Nicht durch Subagents. Voraussetzung ist ein Manager, der per HTTPS unter einer Domain erreichbar ist (beim Autor: Pi hinter Traefik).
 
-1. Beim Anbieter (z. B. Google Cloud Console) einen OAuth-Client vom Typ „Webanwendung“ anlegen, mit der Redirect-URI `https://<domain>/api/v1/auth/oidc/callback`.
+1. Beim Anbieter (z. B. Google Cloud Console) einen OAuth-Client vom Typ „Webanwendung“ anlegen, mit der Redirect-URI `https://<domain>/api/v1/auth/oidc/callback/<anbieter-id>` (hier `…/callback/google`). Jeder Anbieter bekommt seine eigene URI, das ist der Schutz gegen Mix-up-Angriffe.
 2. Mit einem Admin-Token `PUT /api/v1/auth/oidc/public-url` mit `public_url=https://<domain>` aufrufen, danach `PUT /api/v1/auth/oidc/providers/google` mit `issuer=https://accounts.google.com`, `client_id`, `client_secret` und `label=Google`.
 3. `POST /api/v1/users` mit `kind="oidc"`, der eigenen Google-Adresse und `role="viewer"`.
 4. Im Browser `https://<domain>/api/v1/auth/oidc/start?provider=google` aufrufen. Erwartet wird ein Rücksprung auf `/` und danach `GET /api/v1/auth/session` → `stage: full`.
 5. Microsoft (Entra ID):
-   - Im Entra Admin Center eine App-Registrierung anlegen: nur Konten dieses Verzeichnisses, Redirect-URI wie oben.
+   - Im Entra Admin Center eine App-Registrierung anlegen: nur Konten dieses Verzeichnisses, Redirect-URI `https://<domain>/api/v1/auth/oidc/callback/microsoft`.
    - Unter „Tokenkonfiguration“ die optionalen Claims `email` und `xms_edov` für das ID-Token hinzufügen.
    - Einen geheimen Clientschlüssel erzeugen.
    - Dann `PUT /api/v1/auth/oidc/providers/microsoft` mit `issuer=https://login.microsoftonline.com/<Mandanten-ID>/v2.0` aufrufen.
    - Den Test wie in Schritt 4 wiederholen, mit `provider=microsoft`.
 6. Private Microsoft-Konten (z. B. outlook.com):
-   - App-Registrierung mit der Kontoart „nur persönliche Microsoft-Konten“ anlegen.
+   - App-Registrierung mit der Kontoart „nur persönliche Microsoft-Konten“ und der Redirect-URI `https://<domain>/api/v1/auth/oidc/callback/microsoft-privat` anlegen.
    - Dann `PUT /api/v1/auth/oidc/providers/microsoft-privat` mit `issuer=https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0` aufrufen.
    - Den Benutzer mit seiner Outlook-Adresse und `kind="oidc"` anlegen.
