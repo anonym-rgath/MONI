@@ -12,7 +12,7 @@ def test_defaults():
     s = Settings.from_env({})
     assert s.role == "agent" and s.port == 9810
     assert s.collect_interval_seconds == 15 and s.buffer_seconds == 7200
-    assert s.tls == "off" and s.rate_limit_per_minute == 120
+    assert s.tls == "on" and s.public_url == "" and s.rate_limit_per_minute == 120
     assert s.docker_api_base == "unix:///var/run/docker.sock"
     assert s.cors_origins == ()
 
@@ -25,7 +25,7 @@ def test_env_overrides():
 
 
 @pytest.mark.parametrize("env", [
-    {"MONI_ROLE": "x"}, {"MONI_TLS": "on"}, {"MONI_COLLECT_INTERVAL": "0"},
+    {"MONI_ROLE": "x"}, {"MONI_TLS": "yes"}, {"MONI_COLLECT_INTERVAL": "0"},
     {"MONI_COLLECT_INTERVAL": "30", "MONI_BUFFER_SECONDS": "10"},
 ])
 def test_invalid_env_raises(env):

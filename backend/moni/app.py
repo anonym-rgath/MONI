@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from moni import __version__, errors
 from moni.agent.api import metrics_router, router
+from moni.agent.tls import TlsState
 from moni.auth import admin_api, api as auth_api, oidc
 from moni.auth.throttle import LoginThrottle
 from moni.auth.tokens import TokenStore
@@ -24,11 +25,13 @@ from moni.manager.servers import ServerStore
 from moni.logs import setup_logging
 from moni.ratelimit import RateLimitMiddleware
 from moni.secretbox import SecretBox
+from moni.timeutil import utcnow
 
 log = logging.getLogger("moni.app")
 
 
-def create_app(settings: Settings | None = None, collector: Collector | None = None, poller: Poller | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, collector: Collector | None = None, poller: Poller | None = None,
+               tls_state: TlsState | None = None) -> FastAPI:
     setup_logging()
     settings = settings or Settings.from_env()
     manager = settings.role == "manager"
@@ -61,6 +64,12 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         finally:
             conn.close()
         poller = poller or Poller(settings, box, collector)
+    elif settings.tls == "on":
+        if tls_state is None:
+            tls_state = TlsState(Path(settings.data_dir))
+            tls_state.ensure(utcnow())
+        if not tls_state.paired:  # wie beim Setup-Token die einzige erlaubte Ausnahme vom Geheimnis-Verbot im Log (D2)
+            log.warning("Kopplungscode (einmalig verwenden): %s", tls_state.pairing_code(settings.public_url))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -82,6 +91,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
                   openapi_url="/api/v1/openapi.json", redoc_url=None, lifespan=lifespan)
     app.state.settings, app.state.collector = settings, collector
     app.state.tokens = TokenStore(Path(settings.data_dir) / "tokens.json")
+    app.state.tls = tls_state if not manager and settings.tls == "on" else None
     errors.install(app)
     if manager:
         app.state.box, app.state.poller = box, poller

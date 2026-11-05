@@ -18,9 +18,11 @@ def health():
 
 @router.get("/info", dependencies=[read])
 def info(request: Request):
+    tls = request.app.state.tls
     return {"version": __version__, "role": "agent", "api_version": "v1",
             "hostname": read_hostname(request.app.state.settings.host_etc),
-            "capabilities": ["snapshot", "history", "metrics"], "paired": False, "tls": request.app.state.settings.tls}
+            "capabilities": ["snapshot", "history", "metrics"], "paired": tls is not None and tls.paired,
+            "tls": request.app.state.settings.tls}
 
 
 @router.get("/snapshot", dependencies=[read])

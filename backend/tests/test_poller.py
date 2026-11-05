@@ -415,7 +415,7 @@ def test_real_agent_roundtrip(tmp_path, monkeypatch):  # Integration über HTTP,
     from moni.auth.tokens import TokenStore
     from moni.collector import Collector
 
-    s = Settings.from_env({"MONI_DATA_DIR": str(tmp_path)})
+    s = Settings.from_env({"MONI_DATA_DIR": str(tmp_path), "MONI_TLS": "off"})
     col = Collector(s, client=object())
     monkeypatch.setattr(cmod, "read_raw", lambda st, cl: raw(datetime.now(timezone.utc)))
     col.collect_once()

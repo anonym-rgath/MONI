@@ -3,6 +3,7 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+from .agent.tls import TlsState
 from .auth import audit, oidc
 from .auth.sessions import SessionStore
 from .auth.tokens import TokenStore
@@ -42,6 +43,9 @@ def _parser() -> argparse.ArgumentParser:
     rp.add_argument("--password-file", required=True, help="Datei mit dem neuen Passwort, '-' für stdin")
     u.add_parser("reset-2fa").add_argument("email")
     u.add_parser("unlock").add_argument("email")
+    pr = g.add_parser("pair").add_subparsers(dest="cmd", required=True)
+    pr.add_parser("code")
+    pr.add_parser("reset")
     return p
 
 
@@ -155,6 +159,28 @@ def _manager(args) -> int:
     return 0
 
 
+def _pair(args) -> int:
+    try:
+        s = Settings.from_env()
+        if s.role != "agent" or s.tls != "on":
+            raise ValueError("Kopplung gibt es nur beim Agent mit MONI_TLS=on.")
+        st = TlsState(Path(s.data_dir))
+        if args.cmd == "reset":
+            print(st.reset(utcnow(), s.public_url))
+            print("Bitte den Agent neu starten: docker compose restart moni-agent")
+            return 0
+        st.ensure(utcnow())
+        code = st.pairing_code(s.public_url)
+    except (OSError, ValueError) as e:  # ssl.SSLError ist ein OSError
+        print(f"Fehler: {e}", file=sys.stderr)
+        return 2
+    if code is None:
+        print("Agent ist bereits gekoppelt.", file=sys.stderr)
+        return 1
+    print(code)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.group == "secret" and args.cmd == "generate":  # braucht weder Konfiguration noch Datenverzeichnis
@@ -162,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.group in ("server", "secret", "user"):
         return _manager(args)
+    if args.group == "pair":
+        return _pair(args)
     try:
         settings = Settings.from_env()
         store = TokenStore(Path(settings.data_dir) / "tokens.json")

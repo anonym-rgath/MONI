@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def _num(conv, what, env, name, default):
@@ -37,6 +38,23 @@ def _check_host(host: str) -> None:
             raise ValueError("MONI_BIND_HOST muss eine IP-Adresse oder ein Hostname sein") from None
 
 
+def _public_url(raw: str) -> str:
+    url = raw.removesuffix("/")
+    if not url:
+        return ""
+    err = "MONI_PUBLIC_URL muss https://host[:port] sein"
+    try:
+        p = urlsplit(url)
+        port = p.port  # ValueError bei kaputtem oder zu großem Port
+        _check_host(p.hostname or "")
+    except ValueError:
+        raise ValueError(err) from None
+    # nur Schema und host[:port]: kein Pfad, keine Query, kein Fragment, keine Zugangsdaten
+    if url != f"https://{p.netloc}" or "@" in p.netloc or p.netloc.endswith(":") or port == 0:
+        raise ValueError(err)
+    return url
+
+
 @dataclass(frozen=True)
 class Settings:
     role: str
@@ -64,6 +82,7 @@ class Settings:
     trust_local_proxy: bool = False
     session_idle_minutes: int = 60
     session_max_hours: int = 12
+    public_url: str = ""
 
     @property
     def db_path(self) -> Path:
@@ -85,7 +104,7 @@ class Settings:
             collect_interval_seconds=_int(env, "MONI_COLLECT_INTERVAL", "15"),
             buffer_seconds=_int(env, "MONI_BUFFER_SECONDS", "7200"),
             data_dir=g("MONI_DATA_DIR", "/data"),
-            tls=g("MONI_TLS", "off"),
+            tls=g("MONI_TLS", "on"),
             port=_int(env, "MONI_PORT", "9810"),
             rate_limit_per_minute=_int(env, "MONI_RATE_LIMIT_PER_MINUTE", "120"),
             cors_origins=tuple(o.strip() for o in g("API_CORS_ORIGINS", "").split(",") if o.strip()),
@@ -98,12 +117,13 @@ class Settings:
             trust_local_proxy=_flag(g("MONI_TRUST_LOCAL_PROXY", "")),
             session_idle_minutes=_int(env, "MONI_SESSION_IDLE_MINUTES", "60"),
             session_max_hours=_int(env, "MONI_SESSION_MAX_HOURS", "12"),
+            public_url=_public_url(g("MONI_PUBLIC_URL", "")),
         )
         if s.role not in ("agent", "manager"):
             raise ValueError(f"MONI_ROLE muss agent oder manager sein, nicht {s.role!r}")
         _check_host(s.bind_host)
-        if s.tls != "off":
-            raise ValueError("MONI_TLS kennt in diesem Paket nur 'off'")
+        if s.tls not in ("on", "off"):
+            raise ValueError("MONI_TLS muss on oder off sein")
         if s.collect_interval_seconds < 1:
             raise ValueError("MONI_COLLECT_INTERVAL muss >= 1 sein")
         if s.buffer_seconds < s.collect_interval_seconds:

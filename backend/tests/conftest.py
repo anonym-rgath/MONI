@@ -27,7 +27,7 @@ def raw(t, idle_total=(700, 900), net={"eth0": (1000, 500)}, containers=None, **
 @pytest.fixture
 def settings(tmp_path):
     from moni.config import Settings
-    return Settings.from_env({"MONI_DATA_DIR": str(tmp_path), "MONI_RATE_LIMIT_PER_MINUTE": "5"})
+    return Settings.from_env({"MONI_DATA_DIR": str(tmp_path), "MONI_RATE_LIMIT_PER_MINUTE": "5", "MONI_TLS": "off"})
 
 
 @pytest.fixture
@@ -70,6 +70,52 @@ def client(settings, collector, token):  # token: stellt sicher, dass `auth` und
     from fastapi.testclient import TestClient
     from moni.app import create_app
     return TestClient(create_app(settings, collector))
+
+
+@pytest.fixture
+def agent_tls_server(tmp_path):
+    """Echter Agent mit TLS (ungekoppelt) in einem Thread, gebaut wie in __main__; mit Hilfsroute /_test/peer."""
+    import socket
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from fastapi import Request
+
+    from moni.__main__ import build_agent_server
+    from moni.agent.tls import TlsState
+    from moni.collector import Collector
+    from moni.config import Settings
+    from moni.timeutil import utcnow
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    s = Settings.from_env({"MONI_DATA_DIR": str(tmp_path), "MONI_TLS": "on", "MONI_BIND_HOST": "127.0.0.1",
+                           "MONI_PORT": str(port), "MONI_RATE_LIMIT_PER_MINUTE": "10000"})
+    state = TlsState(tmp_path)
+    state.ensure(utcnow())
+    server = build_agent_server(s, state, collector=Collector(s, client=object()))  # Collector nicht gestartet
+    app = server.config.app
+
+    @app.get("/_test/peer")
+    def peer(request: Request):
+        return request.scope.get("extensions", {}).get("tls")
+
+    t = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    t.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert server.started
+        code = state.pairing_code("")
+        yield SimpleNamespace(url=f"https://127.0.0.1:{port}", code=code, fp=code.split(":")[1], state=state, app=app,
+                              settings=s)
+    finally:
+        server.should_exit = True
+        t.join(5)
+        sock.close()
+    assert not t.is_alive()
 
 
 def code_at(secret, t):
