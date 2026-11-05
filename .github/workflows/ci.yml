@@ -165,6 +165,21 @@ jobs:
           curl -fsS --cacert ca.crt --resolve moni-agent:9810:127.0.0.1 -H "Authorization: Bearer $TOKEN" https://moni-agent:9810/api/v1/info > info2.json
           python3 -c "import json; json.load(open('snap2.json'))['host']; assert json.load(open('info2.json'))['paired'] is True; print('OK Fremdsystem-Token nach Kopplung')"
 
+      - name: Alarmkanal
+        run: |
+          set -euo pipefail
+          manager() { MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml "$@"; }
+          MANAGER_CID=$(manager ps -q moni-manager)
+          # Runner-Adresse aus Sicht des Managers = Gateway seines eigenen Netzes; der Empfänger bindet nur dort, nie 0.0.0.0
+          NET=$(docker inspect --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$MANAGER_CID" | tr ' ' '\n' | head -n1)
+          HOOK_HOST=$(docker network inspect "$NET" -f '{{(index .IPAM.Config 0).Gateway}}')
+          test -n "$HOOK_HOST"
+          export HOOK_HOST
+          python3 scripts/ci/alert_smoke.py https://127.0.0.1:8443 "$RUNNER_TEMP/ci-recovery" 9911
+          # Erst in eine Datei schreiben (R7); das HMAC-Secret darf nie im Log stehen
+          manager logs > manager.log
+          if grep -qF "ci-hmac-geheim-5f2c" manager.log; then echo "FAIL: HMAC-Secret im Manager-Log"; exit 1; fi
+
       - name: Logs
         if: always()
         run: docker compose -f compose.agent.yaml logs
