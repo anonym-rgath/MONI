@@ -52,6 +52,28 @@ def test_cli_secret_reencrypt(env, capsys):
     assert capsys.readouterr().out.strip().endswith("1")
 
 
+def test_cli_secret_reencrypt_counts_users_and_is_atomic(env, capsys, monkeypatch):
+    import os
+    from moni.auth.users import UserStore
+    from moni.manager.servers import ServerStore
+    from moni.secretbox import SecretBox
+    assert add(env) == 0
+    conn = db.connect(env / "moni.db")
+    box = SecretBox(os.environ["MONI_SECRET_KEY"])
+    u = UserStore(conn, box)
+    uid = u.create("a@b.de", "", "admin", "local", password="x" * 12).id
+    u.begin_totp(uid)
+    assert cli.main(["secret", "reencrypt"]) == 0
+    assert capsys.readouterr().out.strip().endswith("2")
+    # Nutzer-Secret mit fremdem Schlüssel: Rotation scheitert, auch der Server bleibt unverändert
+    UserStore(conn, SecretBox(generate_key())).begin_totp(uid)
+    before = [tuple(r) for r in conn.execute("SELECT token_enc, headers_enc FROM servers")]
+    assert cli.main(["secret", "reencrypt"]) == 2
+    assert before == [tuple(r) for r in conn.execute("SELECT token_enc, headers_enc FROM servers")]
+    assert not conn.in_transaction
+    conn.close()
+
+
 def test_cli_token_scope(env, capsys):
     from moni.auth.tokens import TokenStore
     assert cli.main(["token", "create", "--name", "a", "--scope", "admin"]) == 0

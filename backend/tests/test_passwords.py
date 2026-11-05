@@ -26,3 +26,9 @@ def test_policy(pw, msg):
 
 def test_dummy_verify_runs():
     dummy_verify("egal")  # darf nichts werfen
+
+
+@pytest.mark.parametrize("pw", ["\ud800" + "x" * 12, "x" * 12 + "\udfff", "\ud800"])
+def test_policy_rejects_lone_surrogates_without_echo(pw):
+    with pytest.raises(ValueError, match="^Passwort enthält ungültige Zeichen$"):
+        check_policy(pw, "a@b.de")

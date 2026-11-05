@@ -38,6 +38,10 @@ def dummy_verify(password: str) -> None:
 
 
 def check_policy(password: str, email: str) -> None:
+    try:
+        password.encode()
+    except UnicodeEncodeError:  # lone surrogate aus JSON; die Original-Exception würde das Zeichen nennen
+        raise ValueError("Passwort enthält ungültige Zeichen") from None
     if len(password) < MIN_LEN:
         raise ValueError(f"Passwort muss mindestens {MIN_LEN} Zeichen lang sein")
     if len(password) > MAX_LEN:

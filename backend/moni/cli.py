@@ -4,6 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from .auth.tokens import TokenStore
+from .auth.users import UserStore
 from .config import Settings
 from .manager import db
 from .manager.servers import ServerStore
@@ -49,9 +50,17 @@ def _manager(args) -> int:
         db.migrate(s.db_path)
         conn = db.connect(s.db_path)
         try:
-            store = ServerStore(conn, SecretBox(s.secret_key))
+            box = SecretBox(s.secret_key)
+            store = ServerStore(conn, box)
             if args.group == "secret":
-                print(f"Neu verschlüsselt: {store.reencrypt_all()}")
+                conn.execute("BEGIN IMMEDIATE")  # eine Transaktion für beide Stores: scheitert eine Rotation, bleibt alles unverändert
+                try:
+                    n = store.reencrypt_all() + UserStore(conn, box).reencrypt_all()
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                print(f"Neu verschlüsselt: {n}")
             elif args.cmd == "add":
                 headers = {}
                 for h in args.header:
