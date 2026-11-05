@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
           docker compose -f compose.agent.yaml up -d --build
           ok=0
-          for i in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health | grep -q '"ok"' && { ok=1; break; }; sleep 1; done
+          for i in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health > agent-health.json 2>/dev/null && grep -q '"ok"' agent-health.json && { ok=1; break; }; sleep 1; done
           [ "$ok" = 1 ] || { echo "FAIL: /api/v1/health nicht erreichbar"; exit 1; }
           test "$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:9810/api/v1/snapshot)" = 401
           TOKEN=$(docker compose -f compose.agent.yaml exec -T moni-agent python -m moni.cli token create --name ci | tail -n1)
@@ -107,6 +107,7 @@ jobs:
           for i in $(seq 1 60); do curl -fsSk https://127.0.0.1:8443/api/v1/health > health.json 2>/dev/null && grep -q '"ok"' health.json && { ok=1; break; }; sleep 1; done
           [ "$ok" = 1 ] || { echo "FAIL: Manager /api/v1/health nicht erreichbar"; exit 1; }
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 301
+          test "$(curl -s -o /dev/null -w '%{redirect_url}' http://127.0.0.1:8080/)" = "https://127.0.0.1:8443/"
           test "$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/v1/servers)" = 401
           TOKEN=$(docker compose -f compose.manager.yaml exec -T moni-manager python -m moni.cli token create --name ci --scope admin | tail -n1)
           sleep 35   # mindestens zwei Messungen abwarten (Takt 15 s)
@@ -152,6 +153,11 @@ jobs:
           # Das Kopplungs-Token wird nach der Kopplung nicht erneut geloggt (Zeilen nach "Agent gekoppelt")
           awk '/Agent gekoppelt/{f=1} f' agent.log > after-pairing.log
           if grep -qF "moni-pair-v1:" after-pairing.log; then echo "FAIL: Kopplungscode nach der Kopplung im Log"; exit 1; fi
+          # Das Kopplungs-Token (3. Feld des Codes) darf auch im Manager-Log nicht stehen
+          PAIR_TOKEN=$(echo "$CODE" | cut -d: -f3)
+          test -n "$PAIR_TOKEN"
+          manager logs > manager.log
+          if grep -qF "$PAIR_TOKEN" manager.log; then echo "FAIL: Kopplungs-Token im Manager-Log"; exit 1; fi
           # Bearer-Token für Fremdsysteme funktioniert weiter, Prüfung gegen die Manager-CA
           curl -fsSk https://127.0.0.1:8443/api/v1/ca.crt > ca.crt
           TOKEN=$(agent exec -T moni-agent python -m moni.cli token create --name ci-ext | tail -n1)
