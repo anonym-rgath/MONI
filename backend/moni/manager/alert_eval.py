@@ -3,7 +3,8 @@
 evaluate liefert genau eine Transition je Schlüssel aus values und current, auch unveränderte.
 Transition.instance None heißt: Instanz löschen. Ein Schlüssel im Zustand ok ohne Gedächtnis wird als None
 zurückgegeben (nichts zu speichern); nur bei require_prior_ok bleibt die ok-Instanz mit seen_ok erhalten.
-last_notified setzt evaluate nie selbst, es wird unverändert durchgereicht.
+last_notified setzt evaluate nie selbst, es wird unverändert durchgereicht (neuer Vorfall: None).
+resolved-Transitions mit instance None tragen keinen Benachrichtigungsstand: Aufrufer lesen current[key].
 """
 import json
 import operator
@@ -52,8 +53,8 @@ def breach(rule: Rule, value: float) -> tuple[str | None, float | None]:
 
 
 def increase(points: list[tuple[int, float]]) -> float:
-    """Summe der positiven Differenzen; ein Rücksprung (Zähler-Reset) zählt nicht als Abnahme (D2)."""
-    return sum(max(b[1] - a[1], 0) for a, b in zip(points, points[1:]))
+    """Wie Prometheus: bei Zähler-Reset (Punkt kleiner als der vorige) zählt der neue Wert als Zuwachs ab 0."""
+    return sum(b[1] - a[1] if b[1] >= a[1] else b[1] for a, b in zip(points, points[1:]))
 
 
 def values_for(rule: Rule, samples: list[Sample]) -> dict[str, float]:
@@ -83,7 +84,8 @@ def _one(rule: Rule, key: str, v: float, cur: Instance | None, now: int, remind_
     base = cur or Instance(key, "ok", None, None, None, None, None, False)
     if sev is None:
         if base.state == "firing":
-            ok = replace(base, state="ok", severity=None, value=v, pending_since=None, fired_at=None, seen_ok=True)
+            ok = replace(base, state="ok", severity=None, value=v, pending_since=None, fired_at=None, last_notified=None,
+                         seen_ok=True)
             ok = ok if rule.require_prior_ok else None
             return Transition(key, "resolved", ok, base.severity, v, None)
         if rule.require_prior_ok:
@@ -98,7 +100,7 @@ def _one(rule: Rule, key: str, v: float, cur: Instance | None, now: int, remind_
     if base.state == "ok":
         if rule.require_prior_ok and not base.seen_ok:
             return Transition(key, None, replace(base, value=v), None, v, None)
-        base = replace(base, state="pending", pending_since=now)
+        base = replace(base, state="pending", pending_since=now, last_notified=None)
     new = replace(base, severity=sev, value=v)
     if now - new.pending_since >= rule.for_seconds:
         new = replace(new, state="firing", fired_at=now)

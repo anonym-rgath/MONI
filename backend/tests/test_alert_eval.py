@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from moni.manager.alert_eval import Instance, evaluate, increase, instance_key, breach, values_for
@@ -129,7 +131,7 @@ def test_instance_key_is_canonical_and_missing_label_is_empty():
     assert instance_key({}, ("a",)) == '{"a":""}'
 
 
-@pytest.mark.parametrize("pts,expected", [([(0, 1), (60, 2), (120, 4)], 3), ([(0, 5), (60, 0), (120, 2)], 2), ([], 0)])
+@pytest.mark.parametrize("pts,expected", [([(0, 1), (60, 2), (120, 4)], 3), ([(0, 5), (60, 0), (120, 2)], 2), ([(0, 5), (60, 3)], 3), ([], 0)])
 def test_increase_handles_resets(pts, expected):
     assert increase(pts) == expected
 
@@ -140,3 +142,15 @@ def test_lower_than_ops_mirror():
     assert breach(r, 5) == ("critical", 10)
     assert breach(r, 20) == (None, None)
     assert breach(rule(op="<=", warning=20), 20) == ("warning", 20)
+
+
+def test_new_incident_does_not_inherit_last_notified():
+    r = rule(op="<", critical=1, require_prior_ok=True, for_seconds=0)
+    seen = evaluate(r, {K: 1}, {}, 0, 600)[0].instance
+    f = evaluate(r, {K: 0}, {K: seen}, 10, 600)[0].instance
+    f = replace(f, last_notified=10)  # wie Task 3 nach dem Versand
+    ok = evaluate(r, {K: 1}, {K: f}, 20, 600)[0]
+    assert ok.event == "resolved" and ok.instance.last_notified is None
+    again = evaluate(r, {K: 0}, {K: ok.instance}, 5000, 600)[0]
+    assert again.event == "firing" and again.instance.last_notified is None
+    assert evaluate(r, {K: 0}, {K: again.instance}, 6000, 600)[0].event is None
