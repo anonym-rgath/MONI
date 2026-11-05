@@ -170,11 +170,12 @@ def load_config(conn: sqlite3.Connection, box: SecretBox) -> dict | None:
 
 def save_config(conn: sqlite3.Connection, box: SecretBox, *, issuer: str, client_id: str, client_secret: str | None,
                 public_url: str, label: str | None) -> None:
-    """client_secret=None behält das gespeicherte Secret; beim ersten Speichern ist es Pflicht."""
+    """client_secret=None behält das gespeicherte Secret, nur bei gleichem Issuer und gleicher Client-ID."""
     _check_base(issuer)
     _check_base(public_url)
     old = _stored(conn)
-    if client_secret is None and old is None:
+    # Secret nur behalten, wenn es an denselben Anbieter geht; sonst könnte ein neuer Issuer es abgreifen
+    if client_secret is None and (old is None or (old["issuer"], old["client_id"]) != (issuer, client_id)):
         raise ValueError("Client-Secret fehlt")
     enc = old["client_secret_enc"] if client_secret is None else box.encrypt(client_secret)
     _put(conn, {"issuer": issuer, "client_id": client_id, "public_url": public_url.rstrip("/"), "label": label,

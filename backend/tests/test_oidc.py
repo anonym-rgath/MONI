@@ -361,6 +361,33 @@ def test_config_never_returns_secret(mgr_app, admin, idp):
     assert last_audit(admin)["details"] == {"deleted": True}
 
 
+@pytest.mark.parametrize("over,status", [
+    ({"issuer": "https://evil.example.org/realms/moni"}, 422),  # Secret darf nicht an einen neuen Anbieter gehen
+    ({"client_id": "andere"}, 422),
+    ({"label": "Neu"}, 200),
+    ({"public_url": "https://moni2.example.org"}, 200),
+])
+def test_config_keeps_secret_only_for_same_issuer_and_client(mgr_app, admin, idp, monkeypatch, over, status):
+    assert admin.put("/api/v1/auth/oidc/config", json=_body()).status_code == 200
+    if "issuer" in over:  # fremder Anbieter mit gültiger Discovery: nur das fehlende Secret darf ablehnen
+        evil = {**idp.discovery, "issuer": over["issuer"], "token_endpoint": "https://evil.example.org/token"}
+        monkeypatch.setattr(oidc, "_http", lambda m, u, data=None, headers=None:
+                            evil if u == over["issuer"] + "/.well-known/openid-configuration" else idp.http(m, u, data, headers))
+    before = admin.get("/api/v1/auth/oidc/config").json()
+    r = admin.put("/api/v1/auth/oidc/config", json=_body(client_secret=None, **over))
+    assert r.status_code == status
+    after = admin.get("/api/v1/auth/oidc/config").json()
+    conn = _conn(mgr_app)
+    try:
+        assert oidc.load_config(conn, mgr_app.state.box)["client_secret"] == SECRET
+    finally:
+        conn.close()
+    if status == 422:
+        assert r.json()["detail"] == "Client-Secret fehlt" and after == before
+    else:
+        assert after == {**before, **over}
+
+
 @pytest.mark.parametrize("over", [
     {"issuer": "http://idp.example.org/realms/moni"},
     {"issuer": ISSUER + "?x=1"},
