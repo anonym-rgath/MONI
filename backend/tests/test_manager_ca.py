@@ -89,12 +89,70 @@ def test_wrong_secret_key_never_replaces_ca(mp, tmp_path):
     assert _files(tmp_path / "tls") == before
 
 
-def test_missing_ca_key_is_refused_not_replaced(mp, tmp_path, key):
-    (tmp_path / "tls" / "ca.key.enc").unlink()
+@pytest.mark.parametrize("missing", ["ca.key.enc", "ca.crt"])
+def test_half_ca_is_refused_not_replaced(mp, tmp_path, key, missing):  # P4-R5
+    (tmp_path / "tls" / missing).unlink()
     before = _files(tmp_path / "tls")
-    with pytest.raises(RuntimeError, match="CA-Schlüssel fehlt"):
+    with pytest.raises(RuntimeError) as e:
         ManagerPki(tmp_path, SecretBox(key)).ensure(NOW)
+    assert str(e.value) == ("CA-Dateien unvollständig (ca.crt oder ca.key.enc fehlt) – Sicherung zurückspielen oder "
+                            "beide löschen, um eine neue CA zu erzeugen (alle Kopplungen gehen verloren)")
     assert _files(tmp_path / "tls") == before
+
+
+def test_new_ca_only_when_both_missing(mp, tmp_path, key):
+    d = tmp_path / "tls"
+    old = mp.ca_pem
+    (d / "ca.crt").unlink()
+    (d / "ca.key.enc").unlink()
+    ManagerPki(tmp_path, SecretBox(key)).ensure(NOW)
+    assert (d / "ca.crt").read_bytes() != old
+    pki.load_cert((d / "client.crt").read_bytes()).verify_directly_issued_by(pki.load_cert((d / "ca.crt").read_bytes()))
+
+
+HOSTS = ("moni.example.org", "localhost", "127.0.0.1")
+
+
+def _https(d):
+    return pki.load_cert((d / "https.crt").read_bytes())
+
+
+def _sans(cert):
+    san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    return [str(v.value) for v in san]
+
+
+def test_https_cert_sans_and_renewal(mp, tmp_path):
+    d = tmp_path / "tls"
+    assert mp.ensure_https(HOSTS, NOW) is True
+    assert _mode(d / "https.crt") == 0o600 and _mode(d / "https.key") == 0o600
+    cert = _https(d)
+    cert.verify_directly_issued_by(pki.load_cert(mp.ca_pem))
+    assert pki.matches_key(cert, pki.load_key((d / "https.key").read_bytes()))  # Klartext für nginx (D4)
+    assert _sans(cert) == list(HOSTS)
+    assert pki.has_eku(cert, "server") and not pki.has_eku(cert, "client")
+    assert pki.common_name(cert) != "moni-manager" and 396 < pki.days_left(cert, NOW) <= 397
+    before = _files(d)
+    assert mp.ensure_https(HOSTS, NOW) is False and _files(d) == before
+    assert mp.ensure_https(HOSTS, NOW + timedelta(days=366)) is False and _files(d) == before  # noch 31 Tage
+    assert mp.ensure_https(HOSTS, NOW + timedelta(days=368)) is True  # noch 29 Tage
+    renewed = _files(d)
+    assert renewed["https.crt"] != before["https.crt"] and renewed["https.key"] != before["https.key"]
+    assert 396 < pki.days_left(_https(d), NOW + timedelta(days=368)) <= 397
+    assert {k: v for k, v in renewed.items() if not k.startswith("https")} == \
+        {k: v for k, v in before.items() if not k.startswith("https")}
+
+
+def test_https_cert_renewed_on_hostname_change_or_damage(mp, tmp_path):
+    d = tmp_path / "tls"
+    assert mp.ensure_https(HOSTS, NOW) is True
+    assert mp.ensure_https(("neu.example.org", "localhost"), NOW) is True
+    assert _sans(_https(d)) == ["neu.example.org", "localhost"]
+    (d / "https.key").write_bytes(pki.key_pem(pki.new_key()))  # Schlüssel passt nicht mehr zum Zertifikat
+    assert mp.ensure_https(("neu.example.org", "localhost"), NOW) is True
+    (d / "https.crt").unlink()
+    assert mp.ensure_https(("neu.example.org", "localhost"), NOW) is True
+    assert mp.ensure_https(("neu.example.org", "localhost"), NOW) is False
 
 
 def test_sign_agent_uses_host_not_csr(mp):

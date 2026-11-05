@@ -15,6 +15,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("MONI_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("MONI_SECRET_KEY", generate_key())
     monkeypatch.setenv("MONI_ROLE", "manager")
+    monkeypatch.setattr("moni.manager.nginx.CONF_PATH", tmp_path / "nginx" / "moni.conf")  # nie das echte /tmp
     return tmp_path
 
 
@@ -202,14 +203,45 @@ def test_cli_reset_password_rejects_argument(env):
 
 # --- Paket 4: TLS und Kopplung ------------------------------------------------
 
-def test_cli_tls_init_creates_and_keeps_ca(env, capsys):
+def test_cli_tls_init_creates_and_keeps_ca(env, capsys, monkeypatch):
+    import stat
+
+    from cryptography import x509
+
+    from moni import pki
+    from moni.config import Settings
+    from moni.manager import nginx
+    monkeypatch.setenv("MONI_MANAGER_HOSTNAMES", "moni.example.org,localhost")
     assert cli.main(["tls", "init"]) == 0
     tls = env / "tls"
     before = {f.name: f.read_bytes() for f in tls.iterdir()}
-    assert set(before) == {"ca.crt", "ca.key.enc", "client.crt", "client.key.enc"}
+    assert set(before) == {"ca.crt", "ca.key.enc", "client.crt", "client.key.enc", "https.crt", "https.key"}
+    san = pki.load_cert(before["https.crt"]).extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert san.get_values_for_type(x509.DNSName) == ["moni.example.org", "localhost"]
+    conf = env / "nginx" / "moni.conf"
+    assert conf.read_text() == nginx.render(Settings.from_env()) and "listen 443 ssl;" in conf.read_text()
+    assert stat.S_IMODE(conf.stat().st_mode) == 0o600 and stat.S_IMODE(conf.parent.stat().st_mode) == 0o700
     assert cli.main(["tls", "init"]) == 0
     assert {f.name: f.read_bytes() for f in tls.iterdir()} == before
     assert "PRIVATE" not in capsys.readouterr().out
+    monkeypatch.setenv("MONI_MANAGER_HOSTNAMES", "neu.example.org")  # geänderte Hostnamen: neues HTTPS-Zertifikat
+    assert cli.main(["tls", "init"]) == 0
+    assert (tls / "https.crt").read_bytes() != before["https.crt"] and (tls / "ca.crt").read_bytes() == before["ca.crt"]
+
+
+def test_cli_tls_init_proxy_mode(env, monkeypatch):
+    monkeypatch.setenv("MONI_TLS", "off")
+    monkeypatch.setenv("MONI_TRUSTED_PROXIES", "172.18.0.0/16")
+    assert cli.main(["tls", "init"]) == 0
+    assert {f.name for f in (env / "tls").iterdir()} == {"ca.crt", "ca.key.enc", "client.crt", "client.key.enc"}
+    conf = (env / "nginx" / "moni.conf").read_text()
+    assert "listen 80;" in conf and "443" not in conf and "set_real_ip_from 172.18.0.0/16;" in conf
+
+
+def test_cli_tls_init_invalid_config_writes_nothing(env, monkeypatch, capsys):
+    monkeypatch.setenv("MONI_TRUSTED_PROXIES", "*")
+    assert cli.main(["tls", "init"]) == 2
+    assert "MONI_TRUSTED_PROXIES" in capsys.readouterr().err and not (env / "nginx").exists()
 
 
 def test_cli_server_add_needs_exactly_one_secret_source(env, capsys):

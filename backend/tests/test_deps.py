@@ -69,10 +69,30 @@ def test_disabled_or_demoted_user_effective_immediately(mgr_client, mgr_app, mak
     assert r.status_code == 403 and r.json()["detail"] == "Keine Berechtigung"
 
 
-@pytest.mark.parametrize("header", ["Bearer", "Bearer ", "", "Basic abc"])
-def test_bad_authorization_header_does_not_fall_back_to_cookie(mgr_client, make_user, login_cookie, header):
+@pytest.mark.parametrize("header", ["Bearer", "Bearer ", "bearer", "BEARER falsch", "Bearer  doppelt"])
+def test_bad_bearer_header_does_not_fall_back_to_cookie(mgr_client, make_user, login_cookie, header):
     mgr_client.cookies.set("moni_session", login_cookie(make_user("admin"))[0])
     r = mgr_client.get("/api/v1/servers", headers={"Authorization": header})
+    assert r.status_code == 401 and r.json()["detail"] == "Token fehlt oder ist ungültig"
+
+
+@pytest.mark.parametrize("header", ["Basic dXNlcjpwYXNz", "Digest username=x", "Negotiate abc", ""])
+def test_basic_auth_header_falls_back_to_cookie(mgr_client, make_user, login_cookie, header):
+    """Nur Bearer schaltet auf Token-Anmeldung; z. B. Basic vom Proxy davor blockiert den Cookie-Login nicht."""
+    r = mgr_client.get("/api/v1/servers", headers={"Authorization": header})
+    assert r.status_code == 401 and r.json()["detail"] == "Nicht angemeldet"  # ohne Cookie: Cookie-Pfad
+    mgr_client.cookies.set("moni_session", login_cookie(make_user("viewer"))[0])
+    assert mgr_client.get("/api/v1/servers", headers={"Authorization": header}).status_code == 200
+
+
+def test_bearer_scheme_case_insensitive(mgr_client, mgr_app):
+    _, plain = mgr_app.state.tokens.create("r", "read")
+    assert mgr_client.get("/api/v1/servers", headers={"Authorization": f"bEaReR {plain}"}).status_code == 200
+
+
+@pytest.mark.parametrize("header", ["Basic dXNlcjpwYXNz", ""])
+def test_agent_non_bearer_header_is_401(client, header):
+    r = client.get("/api/v1/info", headers={"Authorization": header})
     assert r.status_code == 401 and r.json()["detail"] == "Token fehlt oder ist ungültig"
 
 

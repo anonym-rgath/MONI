@@ -5,6 +5,7 @@ import json
 import logging
 import sqlite3
 import ssl
+import subprocess
 import threading
 import time
 import urllib.error
@@ -34,6 +35,7 @@ _MAX_WORKERS = 32  # je Server ein Worker, damit hängende Agents keine anderen 
 _GRACE = 5  # Sekunden über 3 Anfragen x Timeout hinaus, bevor ein Abruf als hängend gilt
 _RENEW_BEFORE = 30 * 86400  # Agent-Zertifikat ab 30 Tagen Restlaufzeit erneuern (D1)
 _RENEW_RETRY = 3600  # nach einem Fehlschlag frühestens nach einer Stunde erneut, ebenso pki.ensure
+_HTTPS_EVERY = 86400  # HTTPS-Zertifikat des Managers einmal täglich prüfen (D7)
 
 
 class AgentError(Exception):
@@ -184,6 +186,7 @@ class Poller:
         self._conn: sqlite3.Connection | None = None
         self._last_maintenance: int | None = None
         self._ensured_at: int | None = None
+        self._https_at: int | None = None
         self._info_at: dict[int, int] = {}  # Zeitpunkt des letzten Info-Versuchs, ob erfolgreich oder nicht
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -338,6 +341,10 @@ class Poller:
                 self._pki.ensure(at)
             except Exception as e:
                 log.error("Client-Zertifikat des Managers nicht erneuerbar (%s)", type(e).__name__)
+        if self._settings.role == "manager" and self._settings.tls == "on" and (
+                self._https_at is None or now - self._https_at >= _HTTPS_EVERY):
+            self._https_at = now
+            self._renew_https(at)
         due = self._conn.execute(
             "SELECT id, name, url FROM servers WHERE security='mtls' AND cert_not_after < ? "
             "AND (cert_renew_tried IS NULL OR cert_renew_tried <= ?) ORDER BY id",
@@ -372,6 +379,23 @@ class Poller:
         except BaseException:
             conn.rollback()
             raise
+
+    def _renew_https(self, at: datetime) -> None:
+        try:
+            if not self._pki.ensure_https(self._settings.manager_hostnames, at):
+                return
+        except Exception as e:
+            log.error("HTTPS-Zertifikat des Managers nicht erneuerbar (%s)", type(e).__name__)
+            return
+        try:  # Ausgabe nie ins Log; sie könnte Pfade oder Konfiguration enthalten
+            r = subprocess.run(["nginx", "-s", "reload"], timeout=10, check=False, capture_output=True)
+            err = f"Exit-Code {r.returncode}" if r.returncode else None
+        except (OSError, subprocess.SubprocessError) as e:
+            err = type(e).__name__
+        if err:
+            log.warning("nginx -s reload fehlgeschlagen (%s)", err)
+        else:
+            log.info("HTTPS-Zertifikat des Managers erneuert, nginx neu geladen")
 
     def close(self) -> None:
         if self._conn is not None:

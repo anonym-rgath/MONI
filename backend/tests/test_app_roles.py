@@ -92,6 +92,26 @@ def test_rate_limit_keyed_on_forwarded_client_when_trusted(settings):
     assert a["access_log"] is False and server_args(settings)["access_log"] is True
 
 
+def test_agent_forwarded_ips_only_from_trusted():
+    """D8: Agent mit tls=off hinter einem Proxy; uvicorn 0.48 nimmt CIDRs an, Header gelten nur vom Proxy."""
+    from uvicorn.middleware.proxy_headers import _TrustedHosts
+
+    from moni.__main__ import server_args
+    from moni.config import Settings
+    a = server_args(Settings.from_env({"MONI_TLS": "off", "MONI_TRUSTED_PROXIES": "10.0.0.0/8, 192.168.1.10, fd00::/8"}))
+    assert (a["proxy_headers"], a["forwarded_allow_ips"]) == (True, "10.0.0.0/8,192.168.1.10/32,fd00::/8")
+    trusted = _TrustedHosts(a["forwarded_allow_ips"])
+    assert all(ip in trusted for ip in ("10.1.2.3", "192.168.1.10", "fd00::1"))
+    assert not any(ip in trusted for ip in ("11.0.0.1", "192.168.1.11", "127.0.0.1", "fe80::1"))
+    # ohne Liste oder mit TLS (Proxys gelten nur bei tls=off): keine Weiterleitungs-Header
+    for env in ({"MONI_TLS": "off"}, {"MONI_TLS": "on", "MONI_TRUSTED_PROXIES": "10.0.0.0/8"}):
+        assert server_args(Settings.from_env(env))["proxy_headers"] is False
+    # Manager: das Backend vertraut weiter nur nginx auf 127.0.0.1, auch mit Liste
+    m = server_args(Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": generate_key(), "MONI_TLS": "off",
+                                       "MONI_TRUSTED_PROXIES": "10.0.0.0/8", "MONI_TRUST_LOCAL_PROXY": "1"}))
+    assert (m["proxy_headers"], m["forwarded_allow_ips"]) == (True, "127.0.0.1")
+
+
 def test_renamed_host_clashing_with_remote_keeps_local_name(settings, monkeypatch, caplog):  # Final 5
     from moni.manager import db
     from moni.manager.servers import ServerStore

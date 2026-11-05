@@ -9,7 +9,8 @@ from .auth.sessions import SessionStore
 from .auth.tokens import TokenStore
 from .auth.users import UserStore
 from .config import Settings
-from .manager import db, pairing
+from .fsutil import write_private
+from .manager import db, nginx, pairing
 from .manager.ca import ManagerPki
 from .manager.pairing import PairingError
 from .manager.servers import ServerStore
@@ -110,6 +111,19 @@ def _cli_audit(settings: Settings, action: str, target: str, details: dict | Non
             conn.close()
 
 
+def _tls_init(s: Settings, mpki: ManagerPki) -> int:
+    """Beim Containerstart vor nginx: CA, Client- und HTTPS-Zertifikat, dann die nginx-Konfiguration (D7, D8)."""
+    conf = nginx.render(s)
+    now = utcnow()
+    mpki.ensure(now)
+    if s.tls == "on":
+        mpki.ensure_https(s.manager_hostnames, now)
+    nginx.CONF_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(nginx.CONF_PATH, conf.encode())
+    print("CA, Zertifikate und nginx-Konfiguration des Managers sind bereit.")
+    return 0
+
+
 def _manager(args) -> int:
     try:
         s = Settings.from_env()
@@ -124,9 +138,7 @@ def _manager(args) -> int:
             if args.group == "user":
                 return _user(args, s, conn, box)
             if args.group == "tls":
-                mpki.ensure(utcnow())
-                print("CA und Client-Zertifikat des Managers sind bereit.")
-                return 0
+                return _tls_init(s, mpki)
             if args.group == "secret":
                 # TLS-Schlüssel erst als temporäre Dateien, eingesetzt erst nach dem DB-Commit (D4)
                 n_tls, commit_files, abort_files = mpki.prepare_reencrypt()

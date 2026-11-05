@@ -98,8 +98,10 @@ def require_scope(scope: str) -> Callable[[Request], Principal]:
     def dep(request: Request) -> Principal:
         if scope == "read" and manager_cert(request):  # Zertifikat gewinnt vor einem Bearer-Token
             return _MANAGER
-        # Ein Authorization-Header schließt das Cookie aus, auch wenn er kaputt ist; der Agent kennt nur Tokens.
-        if "authorization" in request.headers or request.app.state.settings.role != "manager":
+        # Nur das Schema Bearer schließt das Cookie aus, auch wenn das Token kaputt ist; andere Schemata (z. B. Basic
+        # vom Proxy davor) zählen nicht. Der Agent kennt nur Tokens.
+        scheme = request.headers.get("authorization", "").split(" ", 1)[0]
+        if scheme.lower() == "bearer" or request.app.state.settings.role != "manager":
             tok = _bearer(request)
             if RANK.get(tok.scope, 0) < RANK[scope]:
                 raise HTTPException(403, "Token hat nicht den nötigen Scope")

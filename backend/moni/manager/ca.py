@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from cryptography import x509
+
 from moni import pki
 from moni.fsutil import write_private, write_temp
 from moni.secretbox import SecretBox
@@ -13,6 +15,8 @@ CLIENT_CN = "moni-manager"
 _AGENT_CN = "moni-agent"
 _CLIENT_DAYS, _CLIENT_RENEW_DAYS = 365, 60
 _AGENT_DAYS = 90
+_HTTPS_CN = "moni-manager-https"  # nie CLIENT_CN; SANs können länger sein als die 64 Zeichen eines CN
+_HTTPS_DAYS, _HTTPS_RENEW_DAYS = 397, 30
 _KEY_FILES = ("ca.key.enc", "client.key.enc")
 
 
@@ -38,13 +42,14 @@ class ManagerPki:
     def ensure(self, now: datetime) -> None:
         """Legt CA und Client-Zertifikat an; erneuert das Client-Zertifikat ab 60 Tagen Restlaufzeit (D1)."""
         self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if not self._p("ca.crt").exists():
-            # Schlüssel vor Zertifikat: ohne ca.crt kann noch kein Agent gekoppelt sein, ein Neuanlegen ist gefahrlos
+        have = self._p("ca.crt").exists(), self._p("ca.key.enc").exists()
+        if have == (False, False):  # erster Start: ohne CA kann noch kein Agent gekoppelt sein
             key, cert = pki.create_ca(now)
             self._write_key("ca.key.enc", key)
             write_private(self._p("ca.crt"), pki.cert_pem(cert))
-        elif not self._p("ca.key.enc").exists():  # nie still eine neue CA: alle Kopplungen wären ungültig (D1)
-            raise RuntimeError("CA-Schlüssel fehlt (tls/ca.key.enc); die CA wird nicht neu angelegt")
+        elif not all(have):  # nie still eine neue CA: alle Kopplungen wären ungültig (D1, P4-R5)
+            raise RuntimeError("CA-Dateien unvollständig (ca.crt oder ca.key.enc fehlt) – Sicherung zurückspielen oder "
+                               "beide löschen, um eine neue CA zu erzeugen (alle Kopplungen gehen verloren)")
         ca_key, ca_cert = pki.load_key(self._key_pem("ca.key.enc")), pki.load_cert(self.ca_pem)
         if not pki.matches_key(ca_cert, ca_key):
             raise RuntimeError("CA-Schlüssel passt nicht zum CA-Zertifikat")
@@ -55,6 +60,28 @@ class ManagerPki:
                          now=now, days=_CLIENT_DAYS)
         self._write_key("client.key.enc", key)  # passt es danach nicht zum Zertifikat, erneuert der nächste Aufruf
         write_private(self._p("client.crt"), pki.cert_pem(cert))
+
+    def ensure_https(self, hostnames: tuple[str, ...], now: datetime) -> bool:
+        """HTTPS-Zertifikat für nginx (D7); True, wenn neu geschrieben (ab 30 Tagen Rest oder bei neuen Hostnamen)."""
+        ca_key, ca_cert = pki.load_key(self._key_pem("ca.key.enc")), pki.load_cert(self.ca_pem)
+        if self._https_ok(ca_cert, list(hostnames), now):
+            return False
+        key = pki.new_key()
+        cert = pki.issue(ca_key, ca_cert, pki.make_csr(key, _HTTPS_CN), cn=_HTTPS_CN, sans=list(hostnames),
+                         usage="server", now=now, days=_HTTPS_DAYS)
+        write_private(self._p("https.key"), pki.key_pem(key))  # Klartext mit 0600, nginx braucht ihn so (D4)
+        write_private(self._p("https.crt"), pki.cert_pem(cert))
+        return True
+
+    def _https_ok(self, ca_cert, hostnames: list[str], now: datetime) -> bool:
+        try:
+            cert = pki.load_cert(self._p("https.crt").read_bytes())
+            cert.verify_directly_issued_by(ca_cert)
+            sans = [str(n.value) for n in cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value]
+            return (sans == hostnames and pki.days_left(cert, now) >= _HTTPS_RENEW_DAYS
+                    and pki.matches_key(cert, pki.load_key(self._p("https.key").read_bytes())))
+        except Exception:  # fehlt, kaputt oder von alter CA: jederzeit ersetzbar
+            return False
 
     def _client_ok(self, ca_cert, now: datetime) -> bool:
         try:

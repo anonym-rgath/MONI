@@ -51,6 +51,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && sed -i 's|^pid .*|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
     && sed -i 's|^[[:space:]]*error_log .*|error_log /dev/stderr warn;|' /etc/nginx/nginx.conf \
     && sed -i 's|^[[:space:]]*access_log .*|    access_log /dev/stdout;|' /etc/nginx/nginx.conf \
+    && sed -i 's|include /etc/nginx/sites-enabled/\*;|include /tmp/moni-nginx/*.conf;|' /etc/nginx/nginx.conf \
+    && grep -q 'include /tmp/moni-nginx/\*.conf;' /etc/nginx/nginx.conf \
+    && rm -f /etc/nginx/sites-enabled/default \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements-docker.txt ./backend/
@@ -64,41 +67,6 @@ RUN addgroup --system app \
     && adduser --system --ingroup app --home /app app \
     && mkdir -p /data \
     && chown app:app /data
-
-# Nginx config
-RUN echo '# P3-R6: $uri statt $request, damit der OIDC-code (Query-String) nie im Zugriffslog landet \n\
-log_format moni '\''$remote_addr [$time_iso8601] "$request_method $uri" $status $body_bytes_sent "$http_user_agent"'\''; \n\
-server { \n\
-    listen 80; \n\
-    server_name localhost; \n\
-    access_log /dev/stdout moni; \n\
-    error_log /dev/stderr warn; \n\
-    client_max_body_size 1m; \n\
-    client_body_temp_path /tmp/nginx-client-body; \n\
-    proxy_temp_path /tmp/nginx-proxy; \n\
-    fastcgi_temp_path /tmp/nginx-fastcgi; \n\
-    uwsgi_temp_path /tmp/nginx-uwsgi; \n\
-    scgi_temp_path /tmp/nginx-scgi; \n\
-    add_header Content-Security-Policy "default-src '\''self'\''; font-src '\''self'\'' https://fonts.gstatic.com; style-src '\''self'\'' '\''unsafe-inline'\'' https://fonts.googleapis.com; script-src '\''self'\''; connect-src '\''self'\''; img-src '\''self'\'' data:; frame-ancestors '\''none'\''; base-uri '\''self'\''; form-action '\''self'\''" always; \n\
-    add_header X-Content-Type-Options "nosniff" always; \n\
-    add_header Referrer-Policy "no-referrer" always; \n\
-    add_header X-Frame-Options "DENY" always; \n\
-    add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always; \n\
-    \n\
-    location / { \n\
-        root /app/frontend/build; \n\
-        try_files $uri $uri/ /index.html; \n\
-    } \n\
-    \n\
-    location /api { \n\
-        proxy_pass http://127.0.0.1:8001; \n\
-        proxy_set_header Host $host; \n\
-        proxy_set_header X-Real-IP $remote_addr; \n\
-        proxy_set_header X-Forwarded-For $remote_addr; \n\
-        proxy_set_header X-Forwarded-Proto $scheme; \n\
-        proxy_read_timeout 30s; \n\
-    } \n\
-}' > /etc/nginx/sites-available/default
 
 # Supervisor config with logging
 RUN echo '[supervisord] \n\
@@ -132,9 +100,10 @@ RUN mkdir -p /var/log/supervisor
 
 USER app
 
-EXPOSE 80
+EXPOSE 80 443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1/api/v1/health || exit 1
+    CMD curl -fsSk https://127.0.0.1/api/v1/health || curl -fsS http://127.0.0.1/api/v1/health
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# nginx-Konfiguration und HTTPS-Zertifikat entstehen beim Start aus den Settings (moni/manager/nginx.py)
+CMD ["sh", "-c", "python -m moni.cli tls init && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"]

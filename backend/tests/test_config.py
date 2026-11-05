@@ -107,3 +107,44 @@ def test_session_settings():
     for name in ("MONI_SESSION_IDLE_MINUTES", "MONI_SESSION_MAX_HOURS"):
         with pytest.raises(ValueError, match=name):
             Settings.from_env({name: "0"})
+
+
+# --- Paket 4: vertrauenswürdige Proxys und Manager-Hostnamen (D7, D8) ----------
+
+@pytest.mark.parametrize("value,exp", [
+    ("10.0.0.0/8", ("10.0.0.0/8",)), ("172.18.0.1", ("172.18.0.1/32",)), ("fd00::/8", ("fd00::/8",)),
+    ("10.0.0.0/8, 192.168.1.10", ("10.0.0.0/8", "192.168.1.10/32")),
+    ("10.1.2.3/8", ("10.0.0.0/8",)),  # wie uvicorn (strikt) es braucht
+])
+def test_trusted_proxies_valid(value, exp):
+    assert Settings.from_env({"MONI_TRUSTED_PROXIES": value}).trusted_proxies == exp
+
+
+@pytest.mark.parametrize("value", ["kein-ip", "10.0.0.0/33", "*", "10.0.0.0/8;"])
+def test_trusted_proxies_invalid(value):
+    with pytest.raises(ValueError, match="MONI_TRUSTED_PROXIES enthält eine ungültige Adresse: "):
+        Settings.from_env({"MONI_TRUSTED_PROXIES": value})
+
+
+def test_trusted_proxies_default_empty():
+    assert Settings.from_env({}).trusted_proxies == ()
+
+
+def test_manager_hostnames_default_from_host(tmp_path):
+    (tmp_path / "hostname").write_text("pi5\n")
+    assert Settings.from_env({"HOST_ETC": str(tmp_path)}).manager_hostnames == ("pi5", "localhost", "127.0.0.1")
+    (tmp_path / "hostname").write_text("localhost\n")
+    assert Settings.from_env({"HOST_ETC": str(tmp_path)}).manager_hostnames == ("localhost", "127.0.0.1")
+    (tmp_path / "hostname").write_text("kaputt_name\n")  # unbrauchbarer Hostname fällt aus dem Standard heraus
+    assert Settings.from_env({"HOST_ETC": str(tmp_path)}).manager_hostnames == ("localhost", "127.0.0.1")
+
+
+def test_manager_hostnames_explicit():
+    s = Settings.from_env({"MONI_MANAGER_HOSTNAMES": "Moni.Example.org, 10.0.0.5,,::1"})
+    assert s.manager_hostnames == ("moni.example.org", "10.0.0.5", "::1")
+
+
+@pytest.mark.parametrize("value", ["a b", "bad_host", "x;", "-x", "a" * 254, "*.example.org"])
+def test_manager_hostnames_invalid(value):
+    with pytest.raises(ValueError, match="MONI_MANAGER_HOSTNAMES enthält einen ungültigen Namen"):
+        Settings.from_env({"MONI_MANAGER_HOSTNAMES": value})

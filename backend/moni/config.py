@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from moni.collect.host import read_hostname
+
 
 def _num(conv, what, env, name, default):
     try:
@@ -30,12 +32,52 @@ def _flag(raw: str) -> bool:
     return v in ("1", "true")
 
 
+_HOST_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?")
+
+
 def _check_host(host: str) -> None:
     try:
         ipaddress.ip_address(host)
     except ValueError:
-        if not re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?", host):
+        if not _HOST_RE.fullmatch(host):
             raise ValueError("MONI_BIND_HOST muss eine IP-Adresse oder ein Hostname sein") from None
+
+
+def _list(raw: str) -> list[str]:
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def _proxies(raw: str) -> tuple[str, ...]:
+    """IPs und CIDRs (D8); als Netz normalisiert, weil uvicorn Netze strikt parst."""
+    out = []
+    for x in _list(raw):
+        try:
+            out.append(str(ipaddress.ip_network(x, strict=False)))
+        except ValueError:
+            raise ValueError(f"MONI_TRUSTED_PROXIES enthält eine ungültige Adresse: {x}") from None
+    return tuple(out)
+
+
+def _host_name(x: str) -> str | None:
+    """IP-Adresse oder DNS-Name in der Form, die auch im Zertifikat steht; sonst None."""
+    try:
+        return str(ipaddress.ip_address(x))
+    except ValueError:
+        ok = len(x) <= 253 and _HOST_RE.fullmatch(x)
+        return x.lower() if ok else None
+
+
+def _manager_hostnames(raw: str, host_etc: str) -> tuple[str, ...]:
+    """SANs des HTTPS-Zertifikats (D7); Standard <hostname>, localhost, 127.0.0.1."""
+    names = _list(raw)
+    if not names:  # ein unbrauchbarer Hostname des Systems fällt aus dem Standard heraus, statt den Start zu blockieren
+        return tuple(dict.fromkeys(n for n in (_host_name(read_hostname(host_etc)), "localhost", "127.0.0.1") if n))
+    out = []
+    for x in names:
+        if (n := _host_name(x)) is None:
+            raise ValueError(f"MONI_MANAGER_HOSTNAMES enthält einen ungültigen Namen: {x}")
+        out.append(n)
+    return tuple(dict.fromkeys(out))
 
 
 def _public_url(raw: str) -> str:
@@ -83,6 +125,8 @@ class Settings:
     session_idle_minutes: int = 60
     session_max_hours: int = 12
     public_url: str = ""
+    trusted_proxies: tuple[str, ...] = ()
+    manager_hostnames: tuple[str, ...] = ("localhost", "127.0.0.1")
 
     @property
     def db_path(self) -> Path:
@@ -118,6 +162,8 @@ class Settings:
             session_idle_minutes=_int(env, "MONI_SESSION_IDLE_MINUTES", "60"),
             session_max_hours=_int(env, "MONI_SESSION_MAX_HOURS", "12"),
             public_url=_public_url(g("MONI_PUBLIC_URL", "")),
+            trusted_proxies=_proxies(g("MONI_TRUSTED_PROXIES", "")),
+            manager_hostnames=_manager_hostnames(g("MONI_MANAGER_HOSTNAMES", ""), g("HOST_ETC", "/etc")),
         )
         if s.role not in ("agent", "manager"):
             raise ValueError(f"MONI_ROLE muss agent oder manager sein, nicht {s.role!r}")

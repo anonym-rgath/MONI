@@ -11,9 +11,12 @@ from moni.timeutil import utcnow
 
 
 def server_args(s: Settings) -> dict:
-    # Nur hinter dem nginx im Manager-Image (127.0.0.1) werden Weiterleitungs-Header vertraut, sonst nie:
-    # Rate-Limit pro echter IP darf nicht per X-Forwarded-For umgehbar sein.
-    return dict(host=s.bind_host, port=s.port, proxy_headers=s.trust_local_proxy, forwarded_allow_ips="127.0.0.1",
+    # Weiterleitungs-Header nur vom nginx im Manager-Image (127.0.0.1) oder, beim Agent mit tls=off, von den
+    # vertrauenswürdigen Proxys (D8): Rate-Limit pro echter IP darf nicht per X-Forwarded-For umgehbar sein.
+    # uvicorn 0.48 nimmt in forwarded_allow_ips auch CIDRs an.
+    proxied = s.role == "agent" and s.tls == "off" and bool(s.trusted_proxies)
+    return dict(host=s.bind_host, port=s.port, proxy_headers=proxied or s.trust_local_proxy,
+                forwarded_allow_ips=",".join(s.trusted_proxies) if proxied else "127.0.0.1",
                 access_log=s.role != "manager")  # P3-R6: nginx loggt, ohne Query-String (OIDC-code)
 
 

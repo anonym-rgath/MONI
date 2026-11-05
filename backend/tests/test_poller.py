@@ -69,7 +69,9 @@ class StubCollector:
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": generate_key(), "MONI_DATA_DIR": str(tmp_path)})
+    # tls=off: die tägliche HTTPS-Prüfung (mit nginx -s reload) testen eigene Tests
+    return Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": generate_key(), "MONI_DATA_DIR": str(tmp_path),
+                              "MONI_TLS": "off"})
 
 
 @pytest.fixture
@@ -919,3 +921,88 @@ def test_renewal_runs_after_cycle_commit(paired_env, clock, monkeypatch):
     clock.set(paired_env.real)
     paired_env.poller.poll_once(clock.now)
     assert seen == [False]
+
+
+# --- HTTPS-Zertifikat des Managers (D7) -------------------------------------------
+
+@pytest.fixture
+def https_env(tmp_path, monkeypatch):
+    """Manager mit tls=on, echter PKI und aufgezeichnetem `nginx -s reload`."""
+    import subprocess
+    from types import SimpleNamespace
+
+    from moni.manager.ca import ManagerPki
+    s = Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": generate_key(), "MONI_DATA_DIR": str(tmp_path),
+                           "MONI_MANAGER_HOSTNAMES": "moni.example.org,localhost"})
+    db.migrate(s.db_path)
+    box = SecretBox(s.secret_key)
+    mp = ManagerPki(tmp_path, box)
+    mp.ensure(_at(T))
+    runs, rc = [], [0]
+
+    def run(cmd, **kw):
+        runs.append((cmd, kw))
+        return subprocess.CompletedProcess(cmd, rc[0], stdout=b"geheime-ausgabe", stderr=b"geheime-ausgabe")
+    monkeypatch.setattr(pmod.subprocess, "run", run)
+    p = Poller(s, box, StubCollector(), pki=mp)
+    yield SimpleNamespace(poller=p, pki=mp, runs=runs, rc=rc, crt=lambda: (tmp_path / "tls" / "https.crt").read_bytes())
+    p.close()
+
+
+_RELOAD = (["nginx", "-s", "reload"], {"timeout": 10, "check": False, "capture_output": True})
+
+
+def test_https_checked_daily_and_nginx_reloaded_only_on_change(https_env):
+    https_env.pki.ensure_https(("moni.example.org", "localhost"), _at(T))  # wie `tls init` beim Start
+    first = https_env.crt()
+    https_env.poller.poll_once(T)
+    assert https_env.runs == [] and https_env.crt() == first  # gültig: nichts zu tun
+    https_env.poller.poll_once(T + 368 * 86400)  # noch 29 Tage
+    assert https_env.runs == [_RELOAD] and https_env.crt() != first
+    second = https_env.crt()
+    https_env.poller.poll_once(T + 368 * 86400 + 86399)  # innerhalb von 24 h: keine Prüfung
+    https_env.poller.poll_once(T + 368 * 86400 + 86400)  # Prüfung, aber gültig
+    assert https_env.runs == [_RELOAD] and https_env.crt() == second
+
+
+def test_https_check_skipped_more_than_daily(https_env, monkeypatch):
+    calls = []
+    monkeypatch.setattr(https_env.pki, "ensure_https", lambda hosts, now: calls.append((hosts, int(now.timestamp()))))
+    for dt in (0, 15, 3600, 86399, 86400):
+        https_env.poller.poll_once(T + dt)
+    assert calls == [(("moni.example.org", "localhost"), T), (("moni.example.org", "localhost"), T + 86400)]
+    assert https_env.runs == []  # ensure_https lieferte nichts Wahres
+
+
+def test_nginx_reload_failure_logged_without_output(https_env, caplog):
+    https_env.rc[0] = 1
+    https_env.poller.poll_once(T)  # noch kein Zertifikat: neu geschrieben, reload scheitert
+    assert https_env.runs == [_RELOAD]
+    assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == [
+        "nginx -s reload fehlgeschlagen (Exit-Code 1)"]
+    assert "geheime-ausgabe" not in caplog.text
+
+
+def test_https_error_logged_and_cycle_continues(https_env, monkeypatch, caplog):
+    import subprocess
+
+    def boom(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 10)
+    monkeypatch.setattr(pmod.subprocess, "run", boom)
+    https_env.poller.poll_once(T)
+    assert "nginx -s reload fehlgeschlagen (TimeoutExpired)" in caplog.text
+    monkeypatch.setattr(https_env.pki, "ensure_https", lambda hosts, now: (_ for _ in ()).throw(OSError("x")))
+    https_env.poller.poll_once(T + 86400)
+    assert "HTTPS-Zertifikat des Managers nicht erneuerbar (OSError)" in caplog.text
+
+
+def test_no_https_check_in_proxy_mode(settings, box, monkeypatch, tmp_path):
+    calls = []
+    p = Poller(settings, box, StubCollector(), pki=type("P", (), {"ensure": lambda self, now: None,
+                                                                    "ensure_https": lambda self, *a: calls.append(a)})())
+    db.migrate(settings.db_path)
+    try:
+        p.poll_once(T)
+    finally:
+        p.close()
+    assert calls == [] and settings.tls == "off"
