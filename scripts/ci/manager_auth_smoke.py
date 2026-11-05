@@ -2,7 +2,7 @@
 """Anmelde-Smoketest gegen einen laufenden Manager: manager_auth_smoke.py BASE_URL SETUP_TOKEN [STATE_FILE].
 
 Gemeinsame Helfer in _moni.py (Zertifikat des Managers wird nicht geprüft, nur CI). STATE_FILE (0600) bekommt
-einen Wiederherstellungscode für pair_smoke.py. Gibt nie Passwort, Secret, Codes, Cookies oder CSRF aus.
+alle Wiederherstellungscodes (einer je Zeile, je Folgetest einer, siehe take_recovery). Gibt nie Passwort, Secret, Codes, Cookies oder CSRF aus.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def main(base: str, token: str, state_file: str | None) -> None:
     expect("setup mit falschem Token", st, 403)
     codes = setup_admin(c, "Anmeldung", token)
     if state_file:
-        write_secret_file(state_file, codes[0])
+        write_secret_file(state_file, "".join(c + "\n" for c in codes))
     st, sess = c.call("GET", "/api/v1/auth/session")
     expect("session nach totp", st, 200)
     if sess.get("stage") != "full":

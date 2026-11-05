@@ -2,8 +2,8 @@
 """Kopplungs-Smoketest: pair_smoke.py MANAGER_URL PAIRING_CODE AGENT_URL STATE_FILE.
 
 Koppelt einen echten Agent per mTLS an den Manager und wartet auf Status ok, Sicherheit mtls und Verlaufspunkte.
-Angemeldet wird mit den festen CI-Zugangsdaten aus _moni.py und dem Wiederherstellungscode, den
-manager_auth_smoke.py in STATE_FILE ablegt (robust gegen den TOTP-Zeitschritt, der nach der Anmeldung dort
+Angemeldet wird mit den festen CI-Zugangsdaten aus _moni.py und dem nächsten Wiederherstellungscode, den
+manager_auth_smoke.py in STATE_FILE ablegt (einmal nutzbar, wird entnommen) (robust gegen den TOTP-Zeitschritt, der nach der Anmeldung dort
 bereits verbraucht ist). Gibt nie Passwort, Codes, Cookies oder CSRF aus.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 import time
 
-from _moni import Client, expect as _expect, fail as _fail, login_with_recovery
+from _moni import Client, expect as _expect, fail as _fail, login_with_recovery, take_recovery
 
 
 def fail(step: str, detail: str = "") -> None:
@@ -23,8 +23,7 @@ def expect(step: str, got: int, want: int) -> None:
 
 
 def main(base: str, pairing_code: str, agent_url: str, state_file: str) -> None:
-    with open(state_file) as f:
-        recovery = f.read().strip()
+    recovery = take_recovery(state_file)
     c = Client(base)
     csrf = login_with_recovery(c, "Kopplung", recovery)
     st, server = c.call("POST", "/api/v1/servers", {"name": "ci-agent", "pairing_code": pairing_code, "url": agent_url}, csrf=csrf)

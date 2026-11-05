@@ -99,6 +99,16 @@ def login_with_recovery(c: Client, label: str, recovery_code: str) -> str:
     return sess["csrf_token"]
 
 
+def take_recovery(path: str) -> str:
+    """Nimmt den ersten Wiederherstellungscode aus der Datei (einmal nutzbar) und schreibt den Rest zurück."""
+    with open(path) as f:
+        codes = f.read().split()
+    if not codes:
+        fail("Anmeldung", "keine Wiederherstellungscodes mehr in " + os.path.basename(path))
+    write_secret_file(path, "".join(c + "\n" for c in codes[1:]))
+    return codes[0]
+
+
 def write_secret_file(path: str, text: str) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:

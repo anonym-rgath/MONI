@@ -10,7 +10,7 @@ Umgebung:
   HOOK_BIND  Bind-Adresse des Empfängers, Standard: HOOK_HOST. Der Empfänger bindet nie 0.0.0.0.
              Lokal mit Docker Desktop: HOOK_HOST=host.docker.internal HOOK_BIND=127.0.0.1
 
-Angemeldet wird wie in pair_smoke.py mit dem Wiederherstellungscode aus STATE_FILE. Gibt nie Secret,
+Angemeldet wird wie in pair_smoke.py mit dem nächsten Wiederherstellungscode aus STATE_FILE (wird entnommen). Gibt nie Secret,
 Passwort, Codes oder Cookies aus.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from _moni import Client, expect as _expect, fail as _fail, login_with_recovery
+from _moni import Client, expect as _expect, fail as _fail, login_with_recovery, take_recovery
 
 SECRET = "ci-hmac-geheim-5f2c"  # fester CI-Wert, die CI prüft, dass er nicht im Log steht
 received: list[tuple[dict, bytes]] = []
@@ -77,8 +77,7 @@ def main(base: str, state_file: str, port: int) -> None:
     bind = os.environ.get("HOOK_BIND") or host
     if bind in ("0.0.0.0", "::", ""):
         fail("Umgebung", "HOOK_BIND darf nicht alle Schnittstellen sein")
-    with open(state_file) as f:
-        recovery = f.read().strip()
+    recovery = take_recovery(state_file)
     srv = HTTPServer((bind, port), Hook)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     c = Client(base)
