@@ -67,17 +67,18 @@ server {
 """
 
 _REDIRECT = """
-server {
+server {{
     listen 80;
     access_log /dev/stdout moni;
-    return 301 https://$host$request_uri;
-}
+    return 301 https://$host{port}$request_uri;
+}}
 """
 
 
 def render(s: Settings) -> str:
     if s.tls == "on":
-        return _HEAD + _TLS + _BODY + _REDIRECT
+        assert isinstance(s.https_port, int)  # gegen jede Einschleusung in die Konfiguration
+        return _HEAD + _TLS + _BODY + _REDIRECT.format(port="" if s.https_port == 443 else f":{s.https_port}")
     realip = ""
     if s.trusted_proxies:  # nur Anfragen von diesen Adressen dürfen $remote_addr per X-Forwarded-For ersetzen (D8)
         for cidr in s.trusted_proxies:

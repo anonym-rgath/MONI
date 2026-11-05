@@ -148,3 +148,21 @@ def test_manager_hostnames_explicit():
 def test_manager_hostnames_invalid(value):
     with pytest.raises(ValueError, match="MONI_MANAGER_HOSTNAMES enthält einen ungültigen Namen"):
         Settings.from_env({"MONI_MANAGER_HOSTNAMES": value})
+
+
+def test_https_port():
+    assert Settings.from_env({}).https_port == 8443
+    assert Settings.from_env({"MONI_HTTPS_PORT": "443"}).https_port == 443
+
+
+@pytest.mark.parametrize("value", ["0", "65536", "-1"])
+def test_https_port_out_of_range(value):
+    with pytest.raises(ValueError) as e:
+        Settings.from_env({"MONI_HTTPS_PORT": value})
+    assert str(e.value) == "MONI_HTTPS_PORT muss zwischen 1 und 65535 liegen"
+
+
+@pytest.mark.parametrize("value", ["abc", "443;", "8443.0"])
+def test_https_port_not_a_number(value):
+    with pytest.raises(ValueError, match="MONI_HTTPS_PORT"):
+        Settings.from_env({"MONI_HTTPS_PORT": value})

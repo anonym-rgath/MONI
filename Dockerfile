@@ -102,8 +102,10 @@ USER app
 
 EXPOSE 80 443
 
+# Ein Befehl für tls=on und off: -L folgt der Umleitung von Port 80; deren Ziel ist der veröffentlichte Port
+# (MONI_HTTPS_PORT), im Container lauscht nginx aber auf 443. Ohne Backend liefert nginx 502, die Prüfung schlägt fehl.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsSk https://127.0.0.1/api/v1/health || curl -fsS http://127.0.0.1/api/v1/health
+    CMD curl -fsSkL --connect-to "127.0.0.1:${MONI_HTTPS_PORT:-8443}:127.0.0.1:443" http://127.0.0.1/api/v1/health
 
 # nginx-Konfiguration und HTTPS-Zertifikat entstehen beim Start aus den Settings (moni/manager/nginx.py)
 CMD ["sh", "-c", "python -m moni.cli tls init && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"]

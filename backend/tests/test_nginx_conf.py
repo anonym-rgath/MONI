@@ -43,7 +43,7 @@ def test_render_tls_on_has_443_redirect_and_no_realip():
         assert line in main
     assert "location /api {" in main and "location / {" in main
     assert [ln.strip() for ln in redirect.splitlines()[1:-1] if ln.strip() and "log" not in ln] == [
-        "listen 80;", "return 301 https://$host$request_uri;"]
+        "listen 80;", "return 301 https://$host:8443$request_uri;"]  # Standard: veröffentlichter Port 8443 (D7)
     assert "real_ip" not in conf and "set_real_ip_from" not in conf
 
 
@@ -121,4 +121,17 @@ def test_render_keeps_security_headers_and_log_format(tls):
 def test_render_rejects_injected_tokens(bad):
     s = dataclasses.replace(_s(MONI_TLS="off"), trusted_proxies=("10.0.0.0/8", bad))
     with pytest.raises(ValueError):
+        nginx.render(s)
+
+
+@pytest.mark.parametrize("port,target", [("8443", "https://$host:8443$request_uri"), ("443", "https://$host$request_uri"),
+                                         ("9443", "https://$host:9443$request_uri")])
+def test_render_redirect_uses_published_https_port(port, target):
+    conf = nginx.render(_s(MONI_TLS="on", MONI_HTTPS_PORT=port))
+    assert [ln.strip() for ln in _servers(conf)[1].splitlines() if "return" in ln] == [f"return 301 {target};"]
+
+
+def test_render_rejects_non_int_port():
+    s = dataclasses.replace(_s(MONI_TLS="on"), https_port="443;\n    return 200")
+    with pytest.raises(AssertionError):
         nginx.render(s)

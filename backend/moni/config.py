@@ -127,6 +127,7 @@ class Settings:
     public_url: str = ""
     trusted_proxies: tuple[str, ...] = ()
     manager_hostnames: tuple[str, ...] = ("localhost", "127.0.0.1")
+    https_port: int = 8443  # von außen erreichbarer HTTPS-Port des Managers, Ziel der Umleitung von Port 80
 
     @property
     def db_path(self) -> Path:
@@ -163,6 +164,7 @@ class Settings:
             session_max_hours=_int(env, "MONI_SESSION_MAX_HOURS", "12"),
             public_url=_public_url(g("MONI_PUBLIC_URL", "")),
             trusted_proxies=_proxies(g("MONI_TRUSTED_PROXIES", "")),
+            https_port=_int(env, "MONI_HTTPS_PORT", "8443"),
             manager_hostnames=_manager_hostnames(g("MONI_MANAGER_HOSTNAMES", ""), g("HOST_ETC", "/etc")),
         )
         if s.role not in ("agent", "manager"):
@@ -176,6 +178,8 @@ class Settings:
             raise ValueError("MONI_BUFFER_SECONDS muss >= MONI_COLLECT_INTERVAL sein")
         if not 1 <= s.port <= 65535:
             raise ValueError("MONI_PORT muss zwischen 1 und 65535 liegen")
+        if not 1 <= s.https_port <= 65535:
+            raise ValueError("MONI_HTTPS_PORT muss zwischen 1 und 65535 liegen")
         for name, v in [("MONI_RATE_LIMIT_PER_MINUTE", s.rate_limit_per_minute), ("MAX_DOCKER_WORKERS", s.max_docker_workers),
                         ("MONI_RETENTION_RAW_HOURS", s.retention_raw_hours),
                         ("MONI_RETENTION_MINUTE_DAYS", s.retention_minute_days),
