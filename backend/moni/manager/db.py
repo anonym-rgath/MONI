@@ -1,8 +1,11 @@
 """SQLite-Zugriff des Managers: Verbindung, versionierte Migrationen, Sicherung vor Upgrades."""
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+
+from fastapi import HTTPException, Request
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -27,6 +30,25 @@ def connect(path: Path) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+@contextmanager
+def request_conn(request: Request):
+    """Verbindung für eine Anfrage; im selben Thread öffnen, nutzen und schließen (check_same_thread bleibt aktiv).
+
+    Eine Sync-Dependency kann in einem anderen Thread laufen als der Endpoint, deshalb nie über Funktionen hinweg teilen.
+    """
+    try:
+        conn = connect(request.app.state.settings.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as e:  # Poller-Zyklus oder CLI hält die Schreibsperre länger als busy_timeout
+        if "locked" not in str(e) and "busy" not in str(e):
+            raise
+        raise HTTPException(503, "Datenbank ist gerade beschäftigt, bitte erneut versuchen",
+                            headers={"Retry-After": "5"}) from None
 
 
 def _statements(sql: str):

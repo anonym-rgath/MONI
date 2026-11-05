@@ -1,7 +1,6 @@
 """Manager-API v1: Serverliste, Verwaltung (admin) und Verlaufsabfrage. Nie Token- oder Header-Werte ausgeben."""
 import json
 import logging
-import sqlite3
 from contextlib import contextmanager
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
@@ -37,19 +36,8 @@ class Patch(BaseModel):
 
 @contextmanager
 def _store(request: Request):
-    # Verbindung im selben Worker-Thread öffnen und nutzen (check_same_thread bleibt aktiv); eine Sync-Dependency
-    # könnte in einem anderen Thread laufen als der Endpoint.
-    try:
-        conn = db.connect(request.app.state.settings.db_path)
-        try:
-            yield conn, ServerStore(conn, request.app.state.box)
-        finally:
-            conn.close()
-    except sqlite3.OperationalError as e:  # Poller-Zyklus oder CLI hält die Schreibsperre länger als busy_timeout
-        if "locked" not in str(e) and "busy" not in str(e):
-            raise
-        raise HTTPException(503, "Datenbank ist gerade beschäftigt, bitte erneut versuchen",
-                            headers={"Retry-After": "5"}) from None
+    with db.request_conn(request) as conn:
+        yield conn, ServerStore(conn, request.app.state.box)
 
 
 def _json(s: str | None):

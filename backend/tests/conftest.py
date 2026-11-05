@@ -80,3 +80,75 @@ def code_at(secret, t):
     from cryptography.hazmat.primitives.twofactor.totp import TOTP
     key = base64.b32decode(secret + "=" * (-len(secret) % 8))
     return TOTP(key, 6, SHA1(), 30, enforce_key_length=False).generate(t).decode()
+
+
+# --- Manager-Fixtures (Benutzer, Sessions) ----------------------------------
+TEST_PASSWORD = "Test-Passwort-123"
+
+
+class Dummy:
+    """Ersatz für Collector/Poller: wird nicht gestartet."""
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+@pytest.fixture
+def mgr_settings(tmp_path):
+    from moni.config import Settings
+    from moni.secretbox import generate_key
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    (etc / "hostname").write_text("moni-test\n")
+    return Settings.from_env({"MONI_DATA_DIR": str(tmp_path), "MONI_ROLE": "manager", "MONI_SECRET_KEY": generate_key(),
+                              "MONI_RATE_LIMIT_PER_MINUTE": "10000", "HOST_ETC": str(etc)})
+
+
+@pytest.fixture
+def mgr_app(mgr_settings):
+    from moni.app import create_app
+    return create_app(mgr_settings, collector=Dummy(), poller=Dummy())
+
+
+@pytest.fixture
+def mgr_client(mgr_app):
+    from fastapi.testclient import TestClient
+    return TestClient(mgr_app, base_url="https://testserver")  # sonst schickt der Client Secure-Cookies nicht mit
+
+
+@pytest.fixture
+def make_user(mgr_app):
+    import itertools
+
+    from moni.auth.users import UserStore
+    from moni.manager import db
+    n = itertools.count(1)
+
+    def make(role, kind="local", email=None):
+        conn = db.connect(mgr_app.state.settings.db_path)
+        try:
+            return UserStore(conn, mgr_app.state.box).create(email or f"u{next(n)}@example.org", "Test", role, kind,
+                                                             TEST_PASSWORD if kind == "local" else None)
+        finally:
+            conn.close()
+    return make
+
+
+@pytest.fixture
+def login_cookie(mgr_app):
+    import time
+
+    from moni.auth.sessions import SessionStore
+    from moni.manager import db
+
+    def login(user, stage="full"):
+        conn = db.connect(mgr_app.state.settings.db_path)
+        try:
+            s, plain = SessionStore(conn, mgr_app.state.settings).create(user.id, stage, int(time.time()), None)
+        finally:
+            conn.close()
+        return plain, s.csrf
+    return login
