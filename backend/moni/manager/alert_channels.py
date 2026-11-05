@@ -36,6 +36,17 @@ class SendError(Exception):
     """Fester deutscher Text ohne Antwortinhalte, URLs oder Zugangsdaten."""
 
 
+# Die einzigen Versand-Fehlertexte, die nach außen gehen (API, last_error). Der Text kommt aus dieser Tabelle,
+# nie aus der Exception selbst; so kann auch ein künftiger Fehler ohne festen Text nichts preisgeben.
+_SEND_TEXTS = {t: t for t in ("Webhook nicht erreichbar", "SMTP-Anmeldung fehlgeschlagen", "SMTP-Server nicht erreichbar",
+                              "SMTP-Server lehnt Nachricht ab", "TLS-Prüfung fehlgeschlagen",
+                              *(f"Webhook antwortet mit HTTP {n}" for n in range(100, 600)))}
+
+
+def error_text(e: SendError) -> str:
+    return _SEND_TEXTS.get(str(e), "Versand fehlgeschlagen")
+
+
 @dataclass(frozen=True)
 class Channel:
     """Bewusst ohne Geheimnisse (URL, HMAC, Passwort), damit repr() und API-Ausgaben sicher sind."""

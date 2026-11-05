@@ -62,7 +62,7 @@ class Notifier:
         try:
             self._deliver(ch, item["secrets"], item["event"], manager_name)
         except SendError as e:
-            item["error"] = str(e)
+            item["error"] = alert_channels.error_text(e)
         except Exception as e:
             log.error("Versand fehlgeschlagen (%s)", type(e).__name__)  # nie Text: kann URL oder Antwort enthalten
             item["error"] = "Versand fehlgeschlagen"

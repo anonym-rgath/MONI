@@ -317,3 +317,13 @@ def test_cli_reencrypt_counts_channels(tmp_path, monkeypatch, capsys):
     ChannelStore(c, SecretBox(os.environ["MONI_SECRET_KEY"])).create(_wh(), 1)
     assert cli.main(["secret", "reencrypt"]) == 0
     assert capsys.readouterr().out.strip().endswith("1")
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Webhook antwortet mit HTTP 500", "Webhook antwortet mit HTTP 500"),
+    ("TLS-Prüfung fehlgeschlagen", "TLS-Prüfung fehlgeschlagen"),
+    ("Webhook antwortet: GEHEIM https://hooks.example/T/B/x", "Versand fehlgeschlagen"),
+    ("Webhook antwortet mit HTTP 9999", "Versand fehlgeschlagen"),
+])
+def test_error_text_only_from_fixed_list(text, expected):
+    assert ac.error_text(SendError(text)) == expected

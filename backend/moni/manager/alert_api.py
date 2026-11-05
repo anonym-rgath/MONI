@@ -294,7 +294,7 @@ def test_channel(request: Request, channel_id: Id, p: Principal = admin):
             try:
                 ch.deliver(c, secrets, event, name)
             except ch.SendError as e:
-                error = str(e)
+                error = ch.error_text(e)
             except Exception as e:
                 log.error("Test-Versand fehlgeschlagen (%s)", type(e).__name__)
                 error = "Versand fehlgeschlagen"
