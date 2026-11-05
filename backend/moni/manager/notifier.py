@@ -21,6 +21,9 @@ class Notifier:
         self._settings, self._box, self._deliver, self._interval = settings, box, deliver, interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # zugestellt, Ergebnis aber nicht gespeichert: im nächsten Lauf ohne Neuversand speichern (D6, P5-R19)
+        # shortcut: nur im Speicher, ein Neustart dazwischen sendet einmal doppelt; reicht für den seltenen DB-Fehler
+        self._unsaved: list[dict] = []
 
     def _read(self, now: int) -> tuple[list[dict], str]:
         """Eigene Verbindung, am Ende geschlossen: beim Versand hält niemand eine Transaktion."""
@@ -88,8 +91,16 @@ class Notifier:
             conn.close()
 
     def run_once(self, now: int) -> int:
-        items, manager_name = self._read(now)
         done = 0
+        while self._unsaved:
+            try:
+                self._persist(self._unsaved[0], now)
+            except Exception as e:  # noch pending: nicht lesen, sonst ginge er erneut raus
+                log.error("Ergebnis der Benachrichtigung nicht gespeichert (%s)", type(e).__name__)
+                return done
+            self._unsaved.pop(0)
+            done += 1
+        items, manager_name = self._read(now)
         for item in items:
             if self._stop.is_set():
                 break  # Rest bleibt pending
@@ -98,6 +109,8 @@ class Notifier:
                 self._persist(item, now)
             except Exception as e:  # ohne Festhalten nicht weitersenden
                 log.error("Ergebnis der Benachrichtigung nicht gespeichert (%s)", type(e).__name__)
+                if item["error"] is None and item["channel"] is not None:
+                    self._unsaved.append({**item, "secrets": None})
                 break
             done += 1
         return done

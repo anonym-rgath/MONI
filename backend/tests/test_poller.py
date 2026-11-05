@@ -333,6 +333,31 @@ def test_alerting_error_does_not_break_poll_cycle(poller, servers, agents, conn,
     assert conn.execute("SELECT COUNT(*) FROM alert_events").fetchone()[0] == 0 and not poller._conn.in_transaction
 
 
+def test_alerting_lock_timeout_does_not_escape_poll_cycle(poller, servers, agents, conn, settings, caplog):  # P5-R19
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T)]})
+    other = db.connect(settings.db_path)
+    poller._conn = db.connect(settings.db_path)
+    poller._conn.execute("PRAGMA busy_timeout=50")
+
+    class LockAfterWrite(threading.Event):  # sperrt zwischen Commit des Zyklus und _alerts
+        def is_set(self):
+            c = poller._conn
+            if c.total_changes and not c.in_transaction and not other.in_transaction:
+                other.execute("BEGIN IMMEDIATE")
+            return super().is_set()
+    poller._stop = LockAfterWrite()
+    renewed = []
+    poller._renew_certs = renewed.append
+    try:
+        with caplog.at_level("ERROR", logger="moni.poller"):
+            poller.poll_once(now=T)
+    finally:
+        other.rollback()
+        other.close()
+    assert renewed == [T] and servers.get(a).status == "ok" and not poller._conn.in_transaction
+    assert "Alarmauswertung fehlgeschlagen (OperationalError)" in caplog.text and "Traceback" not in caplog.text
+
+
 def test_maintenance_purges_sessions_and_old_audit(poller, conn, settings):  # D4/D10
     from moni.auth import audit
     from moni.auth.sessions import SessionStore

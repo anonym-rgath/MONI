@@ -209,6 +209,25 @@ def test_persist_failure_stops_batch(conn, settings, box, monkeypatch):
     assert n.run_once(0) == 0 and len(calls) == 1
 
 
+def test_delivered_but_unsaved_is_saved_next_run_without_resend(conn, settings, box, caplog):  # P5-R19, D6
+    add(conn, box)
+    calls = []
+    n = Notifier(settings, box, ok_deliver(calls))
+    real, fails = n._persist, [RuntimeError("x")]
+
+    def flaky(it, now):
+        if fails:
+            raise fails.pop()
+        real(it, now)
+    n._persist = flaky
+    with caplog.at_level(logging.ERROR):
+        assert n.run_once(0) == 0
+    assert row(conn)["status"] == "pending" and "RuntimeError" in caplog.text
+    assert n.run_once(10) == 1
+    assert row(conn)["status"] == "sent" and len(calls) == 1
+    assert n.run_once(20) == 0 and len(calls) == 1
+
+
 def test_broken_channel_does_not_block_others(conn, settings, box, caplog):
     add(conn, box, name="kaputt")
     conn.execute("UPDATE alert_channels SET secret_enc=? WHERE id=1", (box.encrypt("kein json"),))

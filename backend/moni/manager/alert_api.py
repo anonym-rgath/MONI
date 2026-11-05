@@ -157,6 +157,10 @@ def create_rule(request: Request, body: RulePatch, p: Principal = admin):
         return JSONResponse(_rule_out(r), status_code=201)
 
 
+_EVAL_FIELDS = ("metric", "func", "window_seconds", "op", "warning", "critical", "for_seconds", "key_labels",
+                "label_filter", "require_prior_ok", "server_id")
+
+
 @router.patch("/alert-rules/{rule_id}")
 def update_rule(request: Request, rule_id: Id, body: RulePatch, p: Principal = admin):
     patch = _given(body)
@@ -164,20 +168,28 @@ def update_rule(request: Request, rule_id: Id, body: RulePatch, p: Principal = a
         raise HTTPException(422, "Mindestens ein Feld angeben")
     with db.request_conn(request) as conn:
         store = alert_rules.RuleStore(conn)
-        old = store.get(rule_id)
-        if old is None:
-            raise HTTPException(404, "Regel nicht gefunden")
-        cur = {k: v for k, v in _rule_out(old).items() if k not in ("id", "created_at", "updated_at")}
-        merged = {**cur, **patch}  # Schwellenreihenfolge wird gegen die zusammengeführten Werte geprüft
-        try:
-            r = store.update(rule_id, merged, int(time.time()))
-        except (ValueError, Conflict) as e:
-            _fail(e)
-        if r is None:
-            raise HTTPException(404, "Regel nicht gefunden")
-        new = _rule_out(r)
-        audit.record(conn, p.actor, "rule.updated", target=r.name, ip=client_ip(request),
-                     details=sorted(k for k in patch if new[k] != cur[k]))
+        with store._tx():  # Lesen, Auflösen, Ändern und Audit gemeinsam oder gar nicht (P5-R17)
+            old = store.get(rule_id)
+            if old is None:
+                raise HTTPException(404, "Regel nicht gefunden")
+            cur = {k: v for k, v in _rule_out(old).items() if k not in ("id", "created_at", "updated_at")}
+            merged = {**cur, **patch}  # Schwellenreihenfolge wird gegen die zusammengeführten Werte geprüft
+            try:
+                v = alert_rules.validate(merged)
+            except ValueError as e:
+                _fail(e)
+            if v == cur:
+                return _rule_out(old)  # nichts geändert: kein updated_at, kein Audit
+            now = int(time.time())
+            if any(v[k] != cur[k] for k in _EVAL_FIELDS):
+                alerting.drop_rule(conn, rule_id, now, reason="regel geändert")  # Verlauf mit altem Namen
+            try:
+                r = store.update(rule_id, merged, now)
+            except (ValueError, Conflict) as e:
+                _fail(e)
+            new = _rule_out(r)
+            audit.record(conn, p.actor, "rule.updated", target=r.name, ip=client_ip(request),
+                         details=sorted(k for k in patch if new[k] != cur[k]))
         return new
 
 

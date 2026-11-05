@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from moni.auth.sessions import COOKIE
-from moni.manager import alert_api, db
+from moni.manager import alert_api, alerting, db
 from moni.manager.alerting import _event
 
 P = "/api/v1"
@@ -112,6 +112,7 @@ def test_test_send_reports_fixed_error(admin_client):
         r = admin_client.post(f"{P}/alert-channels/{cid}/test")
     finally:
         httpd.shutdown()
+        httpd.server_close()
     assert r.status_code == 200
     assert r.json() == {"ok": False, "error": "Webhook antwortet mit HTTP 500"} and "INTERN" not in r.text
     ok = admin_client.get(f"{P}/audit").json()["entries"][0]
@@ -126,6 +127,7 @@ def test_test_send_success_and_unexpected_error(admin_client, monkeypatch, caplo
         assert admin_client.post(f"{P}/alert-channels/{cid}/test").json() == {"ok": True, "error": None}
     finally:
         httpd.shutdown()
+        httpd.server_close()
 
     def boom(*a):
         raise RuntimeError("geheimer Text")
@@ -235,3 +237,72 @@ def test_settings_validation(admin_client):
     assert admin_client.put(f"{P}/alert-settings", json={"remind_minutes": 1, "x": 1}).status_code == 422
     e = admin_client.get(f"{P}/audit").json()["entries"][0]
     assert (e["action"], e["details"]) == ("alerting.settings_changed", {"remind_minutes": 60})
+
+
+def _firing_rule(admin_client, conn, server_id):
+    """Eigene Regel (ohne Dauer) feuert auf pi und war benachrichtigt; Snapshot hält den Wert über der Schwelle."""
+    rid = admin_client.post(f"{P}/alert-rules", json=RULE).json()["id"]
+    now = int(time.time())
+    snap = {"schema_version": 1, "timestamp": _iso(timedelta(0)), "host": {"cpu": {"usage_percent": 95}},
+            "containers": [], "docker": {"reachable": True}}
+    conn.execute("UPDATE servers SET status='ok', last_snapshot=? WHERE id=?", (json.dumps(snap), server_id))
+    conn.execute("INSERT INTO alert_channels (name, kind, config, min_severity, enabled, created_at) "
+                 "VALUES ('h', 'webhook', '{}', 'warning', 1, 0)")
+    conn.execute("INSERT INTO alert_instances (rule_id, server_id, key, state, severity, value, fired_at, last_notified) "
+                 "VALUES (?,?,?,?,?,?,?,?)", (rid, server_id, "{}", "firing", "critical", 95, now - 60, now - 60))
+    conn.commit()
+    return rid, now
+
+
+def _rule_events(conn, rid):
+    return [tuple(e) for e in conn.execute("SELECT event, reason FROM alert_events WHERE rule_id=? ORDER BY id", (rid,))]
+
+
+def _rule_outbox(conn, rid):
+    return conn.execute("SELECT COUNT(*) FROM alert_outbox o JOIN alert_events e ON e.id=o.event_id "
+                        "WHERE e.rule_id=?", (rid,)).fetchone()[0]
+
+
+def _instances(conn, rid):
+    return [tuple(i) for i in conn.execute("SELECT state, severity FROM alert_instances WHERE rule_id=?", (rid,))]
+
+
+def test_rule_patch_resolves_once_in_patch_and_poll_race_does_not_refire(admin_client, conn, server_id):  # P5-R17
+    rid, now = _firing_rule(admin_client, conn, server_id)
+    admin_client.post(f"{P}/alert-rules", json={**RULE, "name": "Andere"})
+    assert admin_client.patch(f"{P}/alert-rules/{rid}", json={"warning": 95}).status_code == 422
+    # Namenskonflikt nach dem Auflösen: alles in einer Transaktion, also auch das Auflösen zurückgerollt
+    assert admin_client.patch(f"{P}/alert-rules/{rid}", json={"name": "Andere", "critical": 92}).status_code == 409
+    assert _rule_events(conn, rid) == [] and _instances(conn, rid) == [("firing", "critical")]
+    assert admin_client.patch(f"{P}/alert-rules/{rid}", json={"critical": 92}).status_code == 200
+    assert _rule_events(conn, rid) == [("resolved", "regel geändert")]
+    assert _rule_outbox(conn, rid) == 0 and _instances(conn, rid) == []
+    for t in (now - 30, now - 15, now):  # now des Poll-Zyklus liegt vor updated_at
+        alerting.run(conn, t)
+        conn.commit()
+    assert [e[0] for e in _rule_events(conn, rid)] == ["resolved", "firing"]
+    assert _rule_outbox(conn, rid) == 1
+    acts = [e for e in admin_client.get(f"{P}/audit").json()["entries"] if e["action"] == "rule.updated"]
+    assert [e["details"] for e in acts] == [["critical"]]
+
+
+def test_noop_and_name_only_patch_keep_firing_instance(admin_client, conn, server_id):  # P5-R17
+    rid, now = _firing_rule(admin_client, conn, server_id)
+    conn.execute("UPDATE alert_rules SET updated_at=1 WHERE id=?", (rid,))
+    conn.commit()
+    r = admin_client.patch(f"{P}/alert-rules/{rid}", json={"warning": 70, "critical": 90, "name": " Eigene Regel "})
+    assert r.status_code == 200 and r.json()["updated_at"] == "1970-01-01T00:00:01Z"
+    r = admin_client.patch(f"{P}/alert-rules/{rid}", json={"name": "Umbenannt", "enabled": True})
+    assert r.status_code == 200 and r.json()["name"] == "Umbenannt"
+    alerting.run(conn, now)
+    conn.commit()
+    assert _rule_events(conn, rid) == [] and _instances(conn, rid) == [("firing", "critical")]
+    acts = [e for e in admin_client.get(f"{P}/audit").json()["entries"] if e["action"] == "rule.updated"]
+    assert [e["details"] for e in acts] == [["name"]]
+
+
+def test_rule_patch_server_id_drops_instances(admin_client, conn, server_id):  # P5-R17
+    rid, now = _firing_rule(admin_client, conn, server_id)
+    assert admin_client.patch(f"{P}/alert-rules/{rid}", json={"server_id": server_id}).status_code == 200
+    assert _rule_events(conn, rid) == [("resolved", "regel geändert")]
+    assert _rule_outbox(conn, rid) == 0 and _instances(conn, rid) == []

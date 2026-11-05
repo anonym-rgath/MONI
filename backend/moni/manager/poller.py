@@ -335,15 +335,17 @@ class Poller:
     def _alerts(self, now: int) -> None:
         """Eigene kurze Transaktion nach dem Commit: ein Fehler kostet nur die Auswertung, nicht die Serverdaten."""
         conn = self._conn
-        conn.execute("BEGIN IMMEDIATE")
         try:
+            conn.execute("BEGIN IMMEDIATE")  # im try: eine Sperr-Zeitüberschreitung kostet nur diese Auswertung
             alerting.run(conn, now)
             conn.commit()
         except Exception as e:
-            conn.rollback()
+            if conn.in_transaction:
+                conn.rollback()
             log.error("Alarmauswertung fehlgeschlagen (%s)", type(e).__name__)  # Text könnte Werte enthalten
         except BaseException:
-            conn.rollback()
+            if conn.in_transaction:
+                conn.rollback()
             raise
 
     def _renew_certs(self, now: int) -> None:

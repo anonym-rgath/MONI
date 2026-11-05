@@ -9,7 +9,7 @@ from moni.manager.servers import ServerStore
 from moni.secretbox import SecretBox, generate_key
 from moni.timeutil import iso
 
-T = 4_000_000_000  # nach dem updated_at der Standardregeln (Migration), sonst gälte jede Regel als geändert
+T = 4_000_000_000
 
 
 @pytest.fixture
@@ -266,6 +266,38 @@ def test_min_severity_routing(db_, servers, server, channel):
     assert [o["channel_id"] for o in outbox(db_)[3:]] == [channel, crit]
 
 
+def test_critical_channel_gets_deescalation_and_resolved(db_, servers, server, channel):  # P5-R18
+    crit = add_channel(db_, "crit", "critical")
+    set_snapshot(db_, servers, server, cpu=90)
+    alerting.run(db_, T)
+    alerting.run(db_, T + 300)
+    late = add_channel(db_, "spaet", "critical")  # nach dem Auslösen angelegt: nichts für die Warnstufe
+    set_snapshot(db_, servers, server, cpu=80, ts=T + 315)
+    alerting.run(db_, T + 315)
+    set_snapshot(db_, servers, server, cpu=10, ts=T + 330)
+    alerting.run(db_, T + 330)
+    sent = {e["id"]: [o["channel_id"] for o in outbox(db_) if o["event_id"] == e["id"]] for e in events(db_)}
+    assert [(e["event"], e["severity"], sent[e["id"]]) for e in events(db_)] == [
+        ("firing", "critical", [channel, crit]), ("changed", "warning", [channel, crit]),
+        ("resolved", "warning", [channel, crit])]
+    assert late not in {o["channel_id"] for o in outbox(db_)}
+
+
+def test_steady_state_many_filesystems_writes_nothing(db_, servers, server, channel):  # Review Focus 2
+    fs = [(f"/m{i}", 90) for i in range(8)]
+    set_snapshot(db_, servers, server, filesystems=fs)
+    alerting.run(db_, T)
+    alerting.run(db_, T + 300)
+    disk = rule_id(db_, "Dateisystem voll")
+    n_events, n_outbox = len(events(db_)), len(outbox(db_))
+    assert n_events == 8 and n_outbox == 8
+    for i in range(1, 21):
+        set_snapshot(db_, servers, server, filesystems=fs, ts=T + 300 + 15 * i)
+        assert alerting.run(db_, T + 300 + 15 * i) == 0
+    assert (len(events(db_)), len(outbox(db_))) == (n_events, n_outbox)
+    assert len([i for i in instances(db_) if i["rule_id"] == disk and i["state"] == "firing"]) == 8
+
+
 def _fire_cpu(db_, servers, server):
     set_snapshot(db_, servers, server, cpu=90)
     alerting.run(db_, T)
@@ -273,10 +305,16 @@ def _fire_cpu(db_, servers, server):
     assert len(outbox(db_)) == 1
 
 
-def test_rule_change_resolves_silently(db_, servers, server, channel):
+def test_rule_change_resolves_silently(db_, servers, server, channel):  # P5-R17: der PATCH löst auf, nicht run
     _fire_cpu(db_, servers, server)
     store = RuleStore(db_)
     r = store.get(rule_id(db_, "CPU-Auslastung"))
+    store.update(r.id, {"name": r.name, "metric": r.metric, "op": ">", "warning": 75, "critical": 85,
+                        "for_seconds": 300}, now=T + 400)
+    alerting.run(db_, T + 315)  # now vor updated_at (Wettlauf mit poll_once): kein Auflösen, kein Neuauslösen
+    alerting.run(db_, T + 330)
+    assert len(events(db_)) == 1 and len(outbox(db_)) == 1
+    assert alerting.drop_rule(db_, r.id, T + 400, reason="regel geändert") == 1
     store.update(r.id, {"name": r.name, "metric": r.metric, "op": ">", "warning": 70, "critical": 95,
                         "for_seconds": 300}, now=T + 400)
     alerting.run(db_, T + 500)
@@ -285,6 +323,7 @@ def test_rule_change_resolves_silently(db_, servers, server, channel):
     assert len(outbox(db_)) == 1
     inst = instances(db_)
     assert len(inst) == 1 and (inst[0]["state"], inst[0]["pending_since"]) == ("pending", T + 500)
+    assert (ev["ts"], ev["rule_name"]) == (T + 400, "CPU-Auslastung")
     store.update(r.id, {"name": r.name, "metric": r.metric, "op": ">", "warning": 70, "critical": 95,
                         "for_seconds": 300, "enabled": False}, now=T + 600)
     alerting.run(db_, T + 600)

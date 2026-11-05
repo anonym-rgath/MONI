@@ -54,9 +54,9 @@ def _event(conn, now: int, rule_id, rule_name, server_id, server_name, key, even
          int(muted))).lastrowid
 
 
-def _queue(conn, event_id: int, severity: str, channels, now: int) -> None:
-    for c in channels:  # D9
-        if _RANK[severity] >= _RANK[c["min_severity"]]:
+def _queue(conn, event_id: int, severity: str, channels, now: int, prior=frozenset()) -> None:
+    for c in channels:  # D9, dazu Kanäle, die diesen Vorfall schon bekamen (P5-R18)
+        if c["id"] in prior or _RANK[severity] >= _RANK[c["min_severity"]]:
             conn.execute("INSERT INTO alert_outbox (event_id, channel_id, status, attempts, next_try, created_at) "
                          "VALUES (?, ?, 'pending', 0, ?, ?)", (event_id, c["id"], now, now))
 
@@ -86,10 +86,11 @@ def _drop(conn, r: sqlite3.Row, reason: str, now: int) -> int:
     return 1
 
 
-def drop_rule(conn: sqlite3.Connection, rule_id: int, now: int) -> int:
-    """Vor RuleStore.delete in derselben Transaktion aufrufen: die FK-Kaskade löscht sonst ohne Verlauf."""
+def drop_rule(conn: sqlite3.Connection, rule_id: int, now: int, reason: str = "regel gelöscht") -> int:
+    """Vor RuleStore.delete bzw. vor einer auswertungsrelevanten Änderung (P5-R17) in derselben Transaktion aufrufen:
+    die FK-Kaskade löscht sonst ohne Verlauf."""
     rows = conn.execute(_INSTANCES + " WHERE i.rule_id=?", (rule_id,)).fetchall()
-    return sum(_drop(conn, r, "regel gelöscht", now) for r in rows)
+    return sum(_drop(conn, r, reason, now) for r in rows)
 
 
 def _increase(conn, rule: Rule, server_id: int, now: int) -> dict[str, float]:
@@ -134,7 +135,13 @@ def _apply(conn, rule: Rule, srv: sqlite3.Row, old: Instance | None, t: Transiti
                      t.threshold, t.reason, muted)
         n = 1
         if not muted and (event in ("firing", "reminder") or (old is not None and old.last_notified is not None)):
-            _queue(conn, eid, t.severity, channels, now)
+            prior = frozenset()
+            if event in ("changed", "resolved") and old.fired_at is not None:
+                prior = frozenset(x[0] for x in conn.execute(
+                    "SELECT DISTINCT o.channel_id FROM alert_outbox o JOIN alert_events e ON e.id=o.event_id "
+                    "WHERE e.rule_id=? AND e.server_id=? AND e.key=? AND e.ts>=?",
+                    (rule.id, srv["id"], t.key, old.fired_at)))
+            _queue(conn, eid, t.severity, channels, now, prior)
             if inst is not None and inst.state == "firing":
                 inst = replace(inst, last_notified=now)
     if inst is None:
@@ -162,8 +169,7 @@ def run(conn: sqlite3.Connection, now: int) -> int:
     for r in conn.execute(_INSTANCES).fetchall():  # D11
         rule = by_id[r["rule_id"]]
         enabled = rule.enabled and r["server_enabled"]
-        since = r["fired_at"] if r["state"] == "firing" else r["pending_since"]
-        changed = rule.server_id not in (None, r["server_id"]) or (since is not None and rule.updated_at > since)
+        changed = rule.server_id not in (None, r["server_id"])  # Regeländerungen löst der PATCH auf (P5-R17)
         if not enabled or changed:
             n += _drop(conn, r, "deaktiviert" if not enabled else "regel geändert", now)
             continue
