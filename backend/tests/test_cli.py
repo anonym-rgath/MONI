@@ -1,4 +1,5 @@
 import io
+import sqlite3
 import os
 import pytest
 from moni import cli
@@ -197,3 +198,100 @@ def test_cli_credential_change_and_session_end_are_atomic(env, monkeypatch, cmd)
 def test_cli_reset_password_rejects_argument(env):
     with pytest.raises(SystemExit):
         cli.main(["user", "reset-password", "a@b.de", "--password", "x"])
+
+
+# --- Paket 4: TLS und Kopplung ------------------------------------------------
+
+def test_cli_tls_init_creates_and_keeps_ca(env, capsys):
+    assert cli.main(["tls", "init"]) == 0
+    tls = env / "tls"
+    before = {f.name: f.read_bytes() for f in tls.iterdir()}
+    assert set(before) == {"ca.crt", "ca.key.enc", "client.crt", "client.key.enc"}
+    assert cli.main(["tls", "init"]) == 0
+    assert {f.name: f.read_bytes() for f in tls.iterdir()} == before
+    assert "PRIVATE" not in capsys.readouterr().out
+
+
+def test_cli_server_add_needs_exactly_one_secret_source(env, capsys):
+    (env / "tok").write_text("t\n")
+    with pytest.raises(SystemExit):
+        cli.main(["server", "add", "--name", "a", "--url", "https://a"])
+    with pytest.raises(SystemExit):
+        cli.main(["server", "add", "--name", "a", "--url", "https://a", "--token-file", str(env / "tok"),
+                  "--pairing-code-file", str(env / "tok")])
+    assert cli.main(["server", "add", "--name", "a", "--token-file", str(env / "tok")]) == 2
+    assert "URL fehlt" in capsys.readouterr().err
+
+
+def test_cli_server_add_by_pairing_code(env, agent_tls_server, monkeypatch, capsys, caplog):
+    mgr = env / "mgr"
+    mgr.mkdir()
+    monkeypatch.setenv("MONI_DATA_DIR", str(mgr))  # agent_tls_server nutzt env/tls
+    (env / "bad").write_text("kaputt\n")
+    assert cli.main(["server", "add", "--name", "pi", "--url", agent_tls_server.url, "--pairing-code-file", str(env / "bad")]) == 2
+    assert "Kopplungscode ist ungültig" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO(agent_tls_server.code + "\n"))
+    assert cli.main(["server", "add", "--name", "pi", "--url", agent_tls_server.url, "--pairing-code-file", "-"]) == 0
+    assert agent_tls_server.state.paired
+    assert cli.main(["server", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "pi" in out and "mtls" in out
+    es = _audit_rows(mgr)
+    assert es[0]["action"] == "server.added" and es[0]["details"] == {"url": agent_tls_server.url, "security": "mtls",
+                                                                       "header_names": []}
+    token = agent_tls_server.code.split(":")[2]
+    assert token not in out + caplog.text + str(es)
+    # zweiter Versuch: Fingerabdruck passt nicht mehr (neues Zertifikat) -> fester Text, kein Eintrag
+    (env / "code").write_text(agent_tls_server.code)
+    assert cli.main(["server", "add", "--name", "pi2", "--url", agent_tls_server.url, "--pairing-code-file", str(env / "code")]) == 2
+    assert "Fingerabdruck des Agents passt nicht zum Kopplungscode" in capsys.readouterr().err
+
+
+def _tls_files(env):
+    return {f.name: f.read_bytes() for f in (env / "tls").iterdir()}
+
+
+def test_reencrypt_rotates_tls_keys_atomically(env, capsys, monkeypatch):
+    from moni.manager.ca import ManagerPki
+    from moni.timeutil import utcnow
+    old = os.environ["MONI_SECRET_KEY"]
+    assert add(env) == 0 and cli.main(["tls", "init"]) == 0
+    uid = _mk_user(env).id
+    new = generate_key()
+    monkeypatch.setenv("MONI_SECRET_KEY", f"{new},{old}")
+    # simulierter DB-Fehler: Nutzer-Secret mit fremdem Schlüssel, Rotation in der Transaktion scheitert
+    conn = db.connect(env / "moni.db")
+    UserStore(conn, SecretBox(generate_key())).begin_totp(uid)
+    conn.close()
+    before = _tls_files(env)
+    capsys.readouterr()
+    assert cli.main(["secret", "reencrypt"]) == 2
+    assert _tls_files(env) == before and not list((env / "tls").glob("*.tmp"))
+    # ohne den kaputten Eintrag: Server, TLS-Schlüssel (2) neu verschlüsselt
+    conn = db.connect(env / "moni.db")
+    conn.execute("UPDATE users SET totp_pending_enc=NULL")
+    conn.commit()
+    conn.close()
+    assert cli.main(["secret", "reencrypt"]) == 0
+    assert capsys.readouterr().out.strip().endswith("3")
+    after = _tls_files(env)
+    assert after["ca.crt"] == before["ca.crt"] and after["ca.key.enc"] != before["ca.key.enc"]
+    assert after["client.key.enc"] != before["client.key.enc"] and not list((env / "tls").glob("*.tmp"))
+    ManagerPki(env, SecretBox(new)).ensure(utcnow())  # nur noch mit dem neuen Schlüssel lesbar
+
+
+def test_reencrypt_db_error_aborts_tls_files(env, monkeypatch, capsys):
+    from moni.manager import ca
+    assert cli.main(["tls", "init"]) == 0
+    calls = []
+    real = ca.ManagerPki.prepare_reencrypt
+
+    def spy(self):
+        n, commit, abort = real(self)
+        return n, commit, lambda: calls.append("abort") or abort()
+
+    monkeypatch.setattr(ca.ManagerPki, "prepare_reencrypt", spy)
+    monkeypatch.setattr("moni.cli.oidc.reencrypt", lambda conn, box: (_ for _ in ()).throw(sqlite3.OperationalError("x")))
+    with pytest.raises(sqlite3.OperationalError):
+        cli.main(["secret", "reencrypt"])
+    assert calls == ["abort"] and not list((env / "tls").glob("*.tmp"))

@@ -238,7 +238,7 @@ def test_server_changes_are_audited(mgr_app, admin_client, csrf):
     assert admin_client.delete(f"/api/v1/servers/{sid}", headers=csrf).status_code == 204
     es = _audit(mgr_app)[:3]
     assert [e["action"] for e in es] == ["server.removed", "server.updated", "server.added"]
-    assert es[2]["target"] == "pi2" and es[2]["details"] == {"url": "https://pi2.example", "header_names": ["CF-Access-Client-Id"]}
+    assert es[2]["target"] == "pi2" and es[2]["details"] == {"url": "https://pi2.example", "security": "token", "header_names": ["CF-Access-Client-Id"]}
     assert es[1]["details"] == {"enabled": False} and es[2]["actor"].startswith("user:")
     assert "geheim-token" not in str(es) and "id1" not in str(es)
     # Bearer-Akteur

@@ -6,13 +6,14 @@ from typing import Annotated
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstraints
 
 from moni import __version__
 from moni.auth import audit
 from moni.auth.deps import Principal, client_ip, require_scope
 from moni.collect.host import read_hostname
-from moni.manager import db, tsdb
+from moni.manager import db, pairing, tsdb
+from moni.manager.pairing import PairingError
 from moni.manager.servers import Server, ServerStore
 from moni.timeutil import iso, parse_iso, utcnow
 
@@ -24,10 +25,13 @@ admin = Depends(require_scope("admin"))
 
 
 class NewServer(BaseModel):
+    """Entweder Token-Modus {name, url, token, headers?} oder mTLS {name, pairing_code, url?}."""
+    model_config = ConfigDict(extra="forbid")
     name: str
-    url: str
-    token: str
+    url: str | None = None
+    token: str | None = None
     headers: dict[str, str] | None = None
+    pairing_code: Annotated[StrictStr, StringConstraints(max_length=512)] | None = None
 
 
 class Patch(BaseModel):
@@ -72,7 +76,8 @@ def _out(conn, s: Server, detail: bool = False) -> dict:
            "failures": s.failures, "last_error": s.last_error,
            "last_seen": iso(datetime.fromtimestamp(s.last_seen, timezone.utc)) if s.last_seen is not None else None,
            "header_names": s.header_names, "warnings": len(w) if isinstance(w := (snap.get("warnings") if isinstance(snap, dict) else None), list) else 0,
-           "agent_version": (info or {}).get("version")}
+           "agent_version": (info or {}).get("version"), "security": s.security,
+           "cert_not_after": iso(datetime.fromtimestamp(s.cert_not_after, timezone.utc)) if s.cert_not_after is not None else None}
     if detail:
         out["agent_info"] = info
     return out
@@ -99,6 +104,12 @@ def info(request: Request):
             "tls": cfg.tls, "server_count": n}
 
 
+@router.get("/ca.crt")
+def ca_crt(request: Request):
+    """Ohne Anmeldung (D11): Fremdsysteme prüfen damit Agent-Zertifikate. Kein Geheimnis."""
+    return Response(request.app.state.pki.ca_pem, media_type="application/x-pem-file")
+
+
 @router.get("/servers", dependencies=[read])
 def list_servers(request: Request):
     with _store(request) as (conn, store):
@@ -107,13 +118,23 @@ def list_servers(request: Request):
 
 @router.post("/servers", status_code=201)
 def create_server(request: Request, body: NewServer, p: Principal = admin):
-    with _store(request) as (conn, store):
+    if (body.token is None) == (body.pairing_code is None) or (body.pairing_code is not None and body.headers is not None):
+        raise HTTPException(422, "Entweder token oder pairing_code angeben")
+    with _store(request) as (conn, store):  # keine offene Transaktion während der Kopplung
         try:
-            s = store.add(body.name, body.url, body.token, body.headers)
+            if body.token is None:
+                s = pairing.add_server(store, request.app.state.pki, body.name, body.pairing_code, body.url, utcnow(),
+                                       request.app.state.settings.poll_timeout_seconds)
+            elif not body.url:
+                raise ValueError("URL fehlt")
+            else:
+                s = store.add(body.name, body.url, body.token, body.headers)
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+        except PairingError as e:
+            raise HTTPException(e.status, e.message) from None
         audit.record(conn, p.actor, "server.added", target=s.name, ip=client_ip(request),
-                     details={"url": s.url, "header_names": s.header_names})
+                     details={"url": s.url, "security": s.security, "header_names": s.header_names})
         return _out(conn, s)
 
 

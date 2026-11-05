@@ -1,8 +1,10 @@
 """Abruf der Agents: parallel per HTTP, Lückenfüllung über /history, ein DB-Schreibzyklus pro Takt."""
+import functools
 import http.client
 import json
 import logging
 import sqlite3
+import ssl
 import threading
 import time
 import urllib.error
@@ -11,6 +13,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
+from .. import pki
 from ..auth import audit
 from ..auth.sessions import SessionStore
 from ..collector import Collector
@@ -47,13 +50,24 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 # Kein Proxy aus HTTP(S)_PROXY: Token und Header gingen sonst an einen Dritten (Proxy-Option: Paket 7, Doku).
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+_TLS_FAILED = "TLS-Prüfung des Agents fehlgeschlagen"
+
+
+@functools.cache
+def _system_context() -> ssl.SSLContext:
+    return pki.client_context(None)  # Token-Server mit https: System-Vertrauensspeicher, nie die Moni-CA (D5)
 
 
 class AgentClient:
-    def __init__(self, url: str, token: str, headers: dict[str, str], timeout: float):
+    def __init__(self, url: str, token: str, headers: dict[str, str], timeout: float,
+                 ssl_context: ssl.SSLContext | None = None):
+        """Mit `ssl_context` (mTLS) meldet das Client-Zertifikat an, ohne Authorization-Header."""
         self._base = url.rstrip("/")
-        self._headers = {**headers, "Authorization": f"Bearer {token}", "Accept": "application/json"}
+        auth = {} if ssl_context is not None else {"Authorization": f"Bearer {token}"}
+        self._headers = {**headers, **auth, "Accept": "application/json"}
         self._timeout = timeout
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect,
+                                                   urllib.request.HTTPSHandler(context=ssl_context or _system_context()))
 
     def __repr__(self) -> str:
         return "AgentClient(…)"
@@ -65,7 +79,7 @@ class AgentClient:
         err = body = None
         deadline = time.monotonic() + self._timeout  # Gesamtfrist: urllib-Timeout gilt nur je Socket-Operation
         try:
-            with _OPENER.open(urllib.request.Request(url, headers=self._headers), timeout=self._timeout) as resp:
+            with self._opener.open(urllib.request.Request(url, headers=self._headers), timeout=self._timeout) as resp:
                 body = bytearray()
                 while len(body) <= _MAX_BYTES and (chunk := resp.read1(65536)):
                     body += chunk
@@ -75,6 +89,11 @@ class AgentClient:
             e.close()
             err = AgentError("Agent lehnt Token ab", fatal=True) if e.code in (401, 403) else \
                 AgentError(f"Agent antwortet mit HTTP {e.code}")
+        except ssl.SSLError:  # auch beim Lesen, z. B. wenn der Agent das Client-Zertifikat ablehnt (TLS 1.3)
+            err = AgentError(_TLS_FAILED, fatal=True)
+        except urllib.error.URLError as e:
+            err = AgentError(_TLS_FAILED, fatal=True) if isinstance(e.reason, ssl.SSLError) else \
+                AgentError("Agent nicht erreichbar")
         except (OSError, http.client.HTTPException, ValueError):  # URLError, Timeout, Abbruch, kaputte Antwort
             err = AgentError("Agent nicht erreichbar")
         if err is None:
@@ -133,8 +152,9 @@ def fetch_new(client: AgentClient, last_ts: int | None, now: int, interval: int)
 
 
 class Poller:
-    def __init__(self, settings: Settings, box: SecretBox, collector: Collector, client_factory=AgentClient):
+    def __init__(self, settings: Settings, box: SecretBox, collector: Collector, client_factory=AgentClient, pki=None):
         self._settings = settings
+        self._pki = pki  # ManagerPki; ohne sie sind mTLS-Server nicht abrufbar
         self._box = box
         self._collector = collector
         self._client_factory = client_factory
@@ -244,6 +264,17 @@ class Poller:
                 results[s.id] = ([x for x in snaps if x is not None and (ts := _ts(x)) is not None
                                   and (s.last_ts is None or ts > s.last_ts)], None)
                 continue
+            timeout = self._settings.poll_timeout_seconds
+            if s.security == "mtls":
+                try:
+                    if self._pki is None:
+                        raise ValueError
+                    ctx = self._pki.client_context()
+                except (SecretError, OSError, ValueError):  # ssl.SSLError ist ein OSError; Text ohne Details
+                    results[s.id] = AgentError("Client-Zertifikat nicht verfügbar", fatal=True)
+                    continue
+                jobs.append((s, self._client_factory(s.url, "", {}, timeout, ssl_context=ctx)))
+                continue
             try:
                 token, headers = store.credentials(s.id)
                 if not isinstance(headers, dict):
@@ -251,7 +282,7 @@ class Poller:
             except (SecretError, ValueError):  # falscher Schlüssel oder kaputte Zeile; Text ohne Details
                 results[s.id] = AgentError("Zugangsdaten nicht entschlüsselbar", fatal=True)
                 continue
-            jobs.append((s, self._client_factory(s.url, token, headers, self._settings.poll_timeout_seconds)))
+            jobs.append((s, self._client_factory(s.url, token, headers, timeout)))
         if jobs:
             results.update(self._fetch_all(jobs, now))
         if self._stop.is_set():

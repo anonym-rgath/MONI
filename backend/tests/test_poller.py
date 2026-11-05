@@ -581,7 +581,7 @@ def test_warning_logged_only_on_status_change(poller, servers, agents, caplog):
     with caplog.at_level("DEBUG", logger="moni.poller"):
         for i in range(5):
             poller.poll_once(now=T + 15 * i)
-    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and r.name == "moni.poller"]  # D5-Warnung beim Anlegen zählt nicht
     assert warnings == ["Abruf von a fehlgeschlagen: Agent nicht erreichbar (Status unreachable)"]
 
 
@@ -688,3 +688,47 @@ def test_nan_snapshot_keeps_previous_json(poller, servers, agents, conn, caplog)
     assert json.loads(stored, parse_constant=lambda c: pytest.fail(c)) == snap(T)
     assert servers.get(a).last_ts == T + 15 and count_raw_points(conn, a, "moni_host_uptime_seconds") == 1
     assert "nicht als JSON speicherbar" in caplog.text
+
+
+# --- mTLS-Server (Paket 4) ----------------------------------------------------
+
+class _Pki:
+    def __init__(self, ctx=None, error=None):
+        self.ctx, self.error = ctx, error
+
+    def client_context(self):
+        if self.error:
+            raise self.error
+        return self.ctx
+
+
+def _mtls_factory(agents, made):
+    def factory(url, token, headers, timeout, ssl_context=None):
+        made.append((url, token, headers, ssl_context))
+        return FakeClient(agents, url)
+    return factory
+
+
+def test_mtls_server_polled_with_client_context_and_no_token(settings, box, servers, agents, local_collector):
+    sid = servers.add_mtls("pi", "https://pi.example", 1).id
+    tid = add(servers, agents, "tok", {"/api/v1/snapshot": [snap(T)]})
+    agents.scripts["https://pi.example"] = {"/api/v1/snapshot": [snap(T)]}
+    ctx, made = object(), []
+    p = Poller(settings, box, local_collector, client_factory=_mtls_factory(agents, made), pki=_Pki(ctx))
+    p.poll_once(now=T)
+    p.close()
+    assert ("https://pi.example", "", {}, ctx) in made
+    assert ("https://tok.example.org", "tok-tok", {}, None) in made  # Token-Server: kein Moni-Kontext
+    assert servers.get(sid).status == "ok" and servers.get(tid).status == "ok"
+
+
+@pytest.mark.parametrize("pki", [None, _Pki(error=pmod.SecretError("Geheimnis nicht entschlüsselbar")),
+                                 _Pki(error=OSError("kaputt"))])
+def test_mtls_server_without_usable_client_cert_is_error(settings, box, servers, agents, local_collector, pki):
+    sid = servers.add_mtls("pi", "https://pi.example", 1).id
+    made = []
+    p = Poller(settings, box, local_collector, client_factory=_mtls_factory(agents, made), pki=pki)
+    p.poll_once(now=T)
+    p.close()
+    s = servers.get(sid)
+    assert made == [] and (s.status, s.last_error) == ("error", "Client-Zertifikat nicht verfügbar")

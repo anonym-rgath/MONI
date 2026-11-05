@@ -118,6 +118,19 @@ def agent_tls_server(tmp_path):
     assert not t.is_alive()
 
 
+@pytest.fixture
+def manager_pki(tmp_path):
+    """Manager-CA und Client-Zertifikat in eigenem Verzeichnis (agent_tls_server nutzt tmp_path/tls)."""
+    from moni.manager.ca import ManagerPki
+    from moni.secretbox import SecretBox, generate_key
+    from moni.timeutil import utcnow
+    d = tmp_path / "mgr"
+    d.mkdir()
+    p = ManagerPki(d, SecretBox(generate_key()))
+    p.ensure(utcnow())
+    return p
+
+
 def code_at(secret, t):
     """TOTP-Code (6 Stellen, 30 s, SHA-1) für ein Base32-Secret zum Zeitpunkt t; für alle Auth-Tests."""
     import base64

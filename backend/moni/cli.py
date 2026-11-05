@@ -9,7 +9,9 @@ from .auth.sessions import SessionStore
 from .auth.tokens import TokenStore
 from .auth.users import UserStore
 from .config import Settings
-from .manager import db
+from .manager import db, pairing
+from .manager.ca import ManagerPki
+from .manager.pairing import PairingError
 from .manager.servers import ServerStore
 from .secretbox import SecretBox, SecretError, generate_key
 from .timeutil import utcnow
@@ -24,8 +26,10 @@ def _parser() -> argparse.ArgumentParser:
     sv = g.add_parser("server").add_subparsers(dest="cmd", required=True)
     a = sv.add_parser("add", allow_abbrev=False)  # sonst würde --token als --token-file gelten
     a.add_argument("--name", required=True)
-    a.add_argument("--url", required=True)
-    a.add_argument("--token-file", required=True, help="Datei mit dem Agent-Token, '-' für stdin")
+    a.add_argument("--url", help="beim Kopplungscode optional, wenn er die URL enthält")
+    src = a.add_mutually_exclusive_group(required=True)
+    src.add_argument("--token-file", help="Datei mit dem Agent-Token, '-' für stdin (Token-Modus)")
+    src.add_argument("--pairing-code-file", help="Datei mit dem Kopplungscode, '-' für stdin (mTLS)")
     a.add_argument("--header", action="append", default=[], metavar="NAME=WERT")
     sv.add_parser("list")
     sv.add_parser("remove").add_argument("id", type=int)
@@ -43,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     rp.add_argument("--password-file", required=True, help="Datei mit dem neuen Passwort, '-' für stdin")
     u.add_parser("reset-2fa").add_argument("email")
     u.add_parser("unlock").add_argument("email")
+    g.add_parser("tls").add_subparsers(dest="cmd", required=True).add_parser("init")
     pr = g.add_parser("pair").add_subparsers(dest="cmd", required=True)
     pr.add_parser("code")
     pr.add_parser("reset")
@@ -115,19 +120,42 @@ def _manager(args) -> int:
         try:
             box = SecretBox(s.secret_key)
             store = ServerStore(conn, box)
+            mpki = ManagerPki(Path(s.data_dir), box)
             if args.group == "user":
                 return _user(args, s, conn, box)
+            if args.group == "tls":
+                mpki.ensure(utcnow())
+                print("CA und Client-Zertifikat des Managers sind bereit.")
+                return 0
             if args.group == "secret":
-                conn.execute("BEGIN IMMEDIATE")  # eine Transaktion für alle Secrets: scheitert eine Rotation, bleibt alles unverändert
+                # TLS-Schlüssel erst als temporäre Dateien, eingesetzt erst nach dem DB-Commit (D4)
+                n_tls, commit_files, abort_files = mpki.prepare_reencrypt()
                 try:
-                    n = store.reencrypt_all() + UserStore(conn, box).reencrypt_all() + oidc.reencrypt(conn, box)
+                    conn.execute("BEGIN IMMEDIATE")  # eine Transaktion für alle Secrets: scheitert eine Rotation, bleibt alles unverändert
+                    n = store.reencrypt_all() + UserStore(conn, box).reencrypt_all() + oidc.reencrypt(conn, box) + n_tls
                     conn.commit()
                 except BaseException:
                     conn.rollback()
+                    abort_files()
                     raise
+                commit_files()
                 audit.record(conn, _ACTOR, "secret.reencrypted")
                 print(f"Neu verschlüsselt: {n}")
+            elif args.cmd == "add" and args.pairing_code_file is not None:
+                if args.header:
+                    raise ValueError("--header gibt es nur mit --token-file")
+                try:
+                    code = _read_token(args.pairing_code_file)
+                except (OSError, UnicodeDecodeError):
+                    raise ValueError("Kopplungscode-Datei nicht lesbar") from None
+                mpki.ensure(utcnow())
+                srv = pairing.add_server(store, mpki, args.name, code, args.url, utcnow(), s.poll_timeout_seconds)
+                audit.record(conn, _ACTOR, "server.added", target=srv.name,
+                             details={"url": srv.url, "security": srv.security, "header_names": srv.header_names})
+                print(f"Server {srv.id} ({srv.name}) gekoppelt und angelegt.")
             elif args.cmd == "add":
+                if not args.url:
+                    raise ValueError("URL fehlt (--url)")
                 headers = {}
                 for h in args.header:
                     k, sep, v = h.partition("=")
@@ -140,11 +168,11 @@ def _manager(args) -> int:
                     raise ValueError("Token-Datei nicht lesbar") from None
                 srv = store.add(args.name, args.url, token, headers)
                 audit.record(conn, _ACTOR, "server.added", target=srv.name,
-                             details={"url": srv.url, "header_names": srv.header_names})
+                             details={"url": srv.url, "security": srv.security, "header_names": srv.header_names})
                 print(f"Server {srv.id} ({srv.name}) angelegt.")
             elif args.cmd == "list":
                 for v in store.list():
-                    print(f"{v.id}  {v.name}  {v.url or 'lokal'}  {v.status}  {','.join(v.header_names) or '-'}")
+                    print(f"{v.id}  {v.name}  {v.url or 'lokal'}  {v.security}  {v.status}  {','.join(v.header_names) or '-'}")
             elif (old := store.get(args.id)) is None or not store.delete(args.id):
                 print(f"Kein Server mit der ID {args.id}.", file=sys.stderr)
                 return 1
@@ -153,7 +181,7 @@ def _manager(args) -> int:
                 print(f"Server {args.id} entfernt.")
         finally:
             conn.close()
-    except (OSError, RuntimeError, ValueError, SecretError) as e:
+    except (OSError, RuntimeError, ValueError, SecretError, PairingError) as e:
         print(f"Fehler: {e}", file=sys.stderr)
         return 2
     return 0
@@ -186,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.group == "secret" and args.cmd == "generate":  # braucht weder Konfiguration noch Datenverzeichnis
         print(generate_key())
         return 0
-    if args.group in ("server", "secret", "user"):
+    if args.group in ("server", "secret", "user", "tls"):
         return _manager(args)
     if args.group == "pair":
         return _pair(args)

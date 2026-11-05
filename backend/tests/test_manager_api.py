@@ -222,3 +222,12 @@ def test_other_operational_error_stays_500(client, admin_auth, monkeypatch):
     monkeypatch.setattr(ServerStore, "add", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")))
     c = TestClient(client.app, raise_server_exceptions=False)
     assert c.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "t"}, headers=admin_auth).status_code == 500
+
+
+def test_token_server_output_and_strict_body(client, admin_auth, local_id):
+    r = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t"}, headers=admin_auth)
+    assert r.status_code == 201 and (r.json()["security"], r.json()["cert_not_after"]) == ("token", None)
+    items = client.get("/api/v1/servers", headers=admin_auth).json()
+    assert [(i["name"], i["security"]) for i in items] == [("lokal", "token"), ("a", "token")]
+    r = client.post("/api/v1/servers", json={"name": "b", "url": "https://b", "token": "geheim-t", "x": 1}, headers=admin_auth)
+    assert r.status_code == 422 and "geheim" not in r.text

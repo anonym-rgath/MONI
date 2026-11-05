@@ -22,11 +22,12 @@ from moni.collect.host import read_hostname
 from moni.config import Settings
 from moni.manager import db
 from moni.manager.api import router as manager_router
+from moni.manager.ca import ManagerPki
 from moni.manager.poller import Poller
 from moni.manager.servers import ServerStore
 from moni.logs import setup_logging
 from moni.ratelimit import RateLimitMiddleware
-from moni.secretbox import SecretBox
+from moni.secretbox import SecretBox, SecretError
 from moni.timeutil import utcnow
 
 log = logging.getLogger("moni.app")
@@ -39,7 +40,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     manager = settings.role == "manager"
     own_col, own_pol = collector is None, poller is None
     collector = collector or Collector(settings)
-    box = setup_hash = None
+    box = setup_hash = manager_pki = None
     if manager:
         try:
             db.migrate(settings.db_path)
@@ -65,7 +66,12 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
                         "der lokale Server behält seinen bisherigen Namen", name)
         finally:
             conn.close()
-        poller = poller or Poller(settings, box, collector)
+        manager_pki = ManagerPki(Path(settings.data_dir), box)
+        try:
+            manager_pki.ensure(utcnow())
+        except SecretError:
+            raise RuntimeError("TLS-Schlüssel des Managers nicht entschlüsselbar (MONI_SECRET_KEY geändert?)") from None
+        poller = poller or Poller(settings, box, collector, pki=manager_pki)
     elif settings.tls == "on":
         if tls_state is None:
             tls_state = TlsState(Path(settings.data_dir))
@@ -96,7 +102,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     app.state.tls = tls_state if not manager and settings.tls == "on" else None
     errors.install(app)
     if manager:
-        app.state.box, app.state.poller = box, poller
+        app.state.box, app.state.poller, app.state.pki = box, poller, manager_pki
         app.state.setup_hash, app.state.throttle = setup_hash, LoginThrottle()
         app.state.oidc_flows = oidc.Flows()
         app.include_router(manager_router)

@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 from moni.manager import db
 from moni.manager.servers import Server, ServerStore
@@ -147,3 +149,58 @@ def test_add_rejects_framing_headers(store, name):  # Final 7
     with pytest.raises(ValueError, match="nicht erlaubt"):
         store.add("x", "https://a", "t", {name: "1"})
     assert store.list() == []
+
+
+def test_add_mtls(store):
+    s = store.add_mtls("pi", "https://pi.example:8443", 1800000000)
+    assert (s.security, s.cert_not_after, s.url, s.header_names) == ("mtls", 1800000000, "https://pi.example:8443", [])
+    raw = store._conn.execute("SELECT token_enc, headers_enc FROM servers WHERE id=?", (s.id,)).fetchone()
+    assert tuple(raw) == (None, None)
+    with pytest.raises(ValueError):
+        store.credentials(s.id)  # mTLS-Server haben keine Zugangsdaten
+    assert store.reencrypt_all() == 0
+    t = store.add("sau", "https://sau.example", "t")
+    assert (t.security, t.cert_not_after) == ("token", None)
+
+
+@pytest.mark.parametrize("name,url,msg", [
+    ("x", "http://pi.example", "mTLS braucht eine https://-URL"), ("x", "ftp://pi", "URL muss"),
+    ("", "https://pi", "Name muss"), ("x", "https://u:p@pi", "Zugangsdaten"), ("x", "https://pi?x", "Query"),
+    ("x", "https://bad_host!", "Hostname"),
+])
+def test_add_mtls_validation(store, name, url, msg):
+    with pytest.raises(ValueError, match=msg):
+        store.check_mtls(name, url)
+    with pytest.raises(ValueError, match=msg):
+        store.add_mtls(name, url, 1)
+    assert store.list() == []
+
+
+def test_check_mtls_refuses_taken_name(store):
+    store.add("pi", "https://a", "t")
+    with pytest.raises(ValueError, match="bereits vergeben"):
+        store.check_mtls("pi", "https://pi")
+    with pytest.raises(ValueError, match="bereits vergeben"):
+        store.add_mtls("pi", "https://pi", 1)
+
+
+def test_migration_v3_keeps_servers(tmp_path, monkeypatch):
+    p = tmp_path / "moni.db"
+    old = tmp_path / "mig"
+    old.mkdir()
+    for f in ("0001_init.sql", "0002_auth.sql"):
+        (old / f).write_text((db.MIGRATIONS_DIR / f).read_text())
+    monkeypatch.setattr(db, "MIGRATIONS_DIR", old)
+    assert db.migrate(p) == 2
+    c = db.connect(p)
+    c.execute("INSERT INTO servers (id, name, url, token_enc, headers_enc, created_at) VALUES (1, 'alt', 'https://a', 'x', 'y', 0)")
+    c.commit()
+    c.close()
+    monkeypatch.undo()
+    assert db.migrate(p) == 3
+    c = db.connect(p)
+    r = c.execute("SELECT name, token_enc, security, cert_not_after, cert_renew_tried FROM servers").fetchone()
+    assert tuple(r) == ("alt", "x", "token", None, None)
+    with pytest.raises(sqlite3.IntegrityError):
+        c.execute("UPDATE servers SET security='keins'")
+    c.close()
