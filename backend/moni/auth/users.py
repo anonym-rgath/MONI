@@ -12,7 +12,6 @@ LOCK_AFTER = 5
 LOCK_SECONDS = 900
 _LAST_ADMIN = "Der letzte aktive Admin kann nicht entfernt, herabgestuft oder deaktiviert werden"
 _EMAIL_TAKEN = "E-Mail-Adresse ist bereits vergeben"
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _TOTP_CODE = re.compile(r"[0-9]{6}")
 _ROLES, _KINDS = ("admin", "viewer"), ("local", "oidc")
 
@@ -42,10 +41,17 @@ def _user(r: sqlite3.Row) -> User:
                 r["failed_logins"], r["locked_until"], r["created_at"], r["last_login"], r["oidc_sub"] is not None)
 
 
+def _email_shape(s: str) -> bool:
+    """lokal@domain.tld ohne Leerraum; linear statt Regex (CodeQL: Backtracking bei vielen Punkten)."""
+    local, sep, domain = s.partition("@")
+    return bool(sep and local and "@" not in domain and "." in domain[1:-1]
+                and not any(c.isspace() for c in s))
+
+
 def normalize_email(email: str) -> str:
     # Steuerzeichen vor dem Trimmen prüfen, sonst verschwindet ein angehängtes "\n" stillschweigend
     if (not isinstance(email, str) or any(not c.isprintable() for c in email) or len(email.strip()) > 254
-            or not _EMAIL_RE.fullmatch(email.strip())):
+            or not _email_shape(email.strip())):
         raise ValueError("Ungültige E-Mail-Adresse")
     return email.strip().lower()
 

@@ -189,3 +189,20 @@ def test_migration_v2_on_v1_db_keeps_servers(tmp_path, monkeypatch):
     assert c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
     assert c.execute("PRAGMA user_version").fetchone()[0] == 2
     c.close()
+
+
+@pytest.mark.parametrize("email,ok", [("a@b.de", True), ("a@b..", True), ("a@.de", False), ("a@de.", False),
+                                      ("a@b@c.de", False), ("@b.de", False), ("a@b", False), ("a b@c.de", False)])
+def test_email_shape(email, ok):
+    from moni.auth.users import _email_shape
+    assert _email_shape(email) is ok
+
+
+def test_email_check_is_linear():
+    import time
+    from moni.auth.users import normalize_email
+    t = time.perf_counter()
+    for bad in ("a@" + "!" * 250, "a@" + "!." * 120 + " x"):  # ohne Punkt in der Domain / mit Leerzeichen
+        with pytest.raises(ValueError):
+            normalize_email(bad)
+    assert time.perf_counter() - t < 0.05
