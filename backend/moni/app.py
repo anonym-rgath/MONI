@@ -1,4 +1,6 @@
+import hashlib
 import logging
+import secrets
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from moni import __version__, errors
 from moni.agent.api import metrics_router, router
+from moni.auth import api as auth_api
+from moni.auth.throttle import LoginThrottle
 from moni.auth.tokens import TokenStore
+from moni.auth.users import UserStore
 from moni.collector import Collector
 from moni.collect.host import read_hostname
 from moni.config import Settings
@@ -29,7 +34,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     manager = settings.role == "manager"
     own_col, own_pol = collector is None, poller is None
     collector = collector or Collector(settings)
-    box = None
+    box = setup_hash = None
     if manager:
         try:
             db.migrate(settings.db_path)
@@ -41,6 +46,11 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         conn = db.connect(settings.db_path)
         name = read_hostname(settings.host_etc)
         try:
+            if UserStore(conn, box).count() == 0:
+                tok = f"setup_{secrets.token_urlsafe(24)}"
+                # einzige erlaubte Ausnahme von „keine Geheimnisse im Log“ (D9); gespeichert wird nur der Hash
+                log.warning("Ersteinrichtung offen: Setup-Token %s – gilt, bis der erste Admin angelegt ist", tok)
+                setup_hash = hashlib.sha256(tok.encode()).digest()
             store = ServerStore(conn, box)
             store.ensure_local(name)
         except ValueError:
@@ -75,7 +85,9 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     errors.install(app)
     if manager:
         app.state.box, app.state.poller = box, poller
+        app.state.setup_hash, app.state.throttle = setup_hash, LoginThrottle()
         app.include_router(manager_router)
+        app.include_router(auth_api.router)
     else:
         app.include_router(router)
         app.include_router(metrics_router)
