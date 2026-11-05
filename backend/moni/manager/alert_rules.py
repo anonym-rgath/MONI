@@ -124,6 +124,7 @@ class RuleStore:
 
     def create(self, data: dict, now: int) -> Rule:
         v = validate(data)
+        dup = False
         try:
             with self._tx():
                 self._check_server(v["server_id"])
@@ -131,19 +132,28 @@ class RuleStore:
                     "INSERT INTO alert_rules (name, metric, func, window_seconds, op, warning, critical, for_seconds, "
                     "key_labels, label_filter, require_prior_ok, server_id, enabled, created_at, updated_at) "
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*self._values(v), now, now))
-        except sqlite3.IntegrityError:
-            raise Conflict("Regelname ist bereits vergeben") from None
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE" not in str(e):
+                raise
+            dup = True
+        if dup:
+            raise Conflict("Regelname ist bereits vergeben")
         return self.get(cur.lastrowid)
 
     def update(self, rule_id: int, data: dict, now: int) -> Rule | None:
         v = validate(data)
+        dup = False
         try:
             with self._tx():
                 self._check_server(v["server_id"])
                 cur = self._conn.execute(f"UPDATE alert_rules SET {self._COLS}, updated_at=? WHERE id=?",
                                          (*self._values(v), now, rule_id))
-        except sqlite3.IntegrityError:
-            raise Conflict("Regelname ist bereits vergeben") from None
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE" not in str(e):
+                raise
+            dup = True
+        if dup:
+            raise Conflict("Regelname ist bereits vergeben")
         return self.get(rule_id) if cur.rowcount else None
 
     def delete(self, rule_id: int) -> bool:

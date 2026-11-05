@@ -75,12 +75,14 @@ def test_crud_and_unique_name(conn):
     r = st.create(_data(key_labels=["mountpoint"], label_filter={"mountpoint": "/"}), 100)
     assert isinstance(r, Rule) and r.created_at == r.updated_at == 100 and r.label_filter == {"mountpoint": "/"}
     assert st.get(r.id) == r and not conn.in_transaction
-    with pytest.raises(Conflict, match="Regelname ist bereits vergeben"):
+    with pytest.raises(Conflict, match="Regelname ist bereits vergeben") as e:
         st.create(_data(), 101)
+    assert e.value.__context__ is None
     u = st.update(r.id, _data(name="R2", enabled=False, critical=95), 200)
     assert (u.name, u.enabled, u.critical, u.created_at, u.updated_at) == ("R2", False, 95, 100, 200)
-    with pytest.raises(Conflict):
+    with pytest.raises(Conflict) as e:
         st.update(r.id, _data(name="CPU-Auslastung"), 300)
+    assert e.value.__context__ is None
     assert st.update(9999, _data(name="Q"), 1) is None
     assert st.delete(r.id) is True and st.delete(r.id) is False and st.get(r.id) is None
 
