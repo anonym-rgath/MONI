@@ -217,3 +217,21 @@ def test_routes_absent_when_tls_off(client, auth):
     for method, path in (("POST", "/api/v1/tls/csr"), ("POST", "/api/v1/tls/cert"), ("GET", "/api/v1/tokens"),
                          ("POST", "/api/v1/tokens"), ("DELETE", "/api/v1/tokens/abcd1234")):
         assert client.request(method, path, headers=auth).status_code == 404, path
+
+
+def test_oversized_body_is_413_before_auth(agent_client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(TlsState, "check_token", lambda self, t: calls.append(t) or False)
+    big = b'{"certificate": "' + b"x" * 70000 + b'", "ca": "y"}'
+    r = agent_client.post("/api/v1/tls/cert", content=big, headers={"Content-Type": "application/json"})
+    assert _detail(r) == (413, "Anfrage zu groß") and r.headers["content-type"].startswith("application/problem+json")
+    r = agent_client.post("/api/v1/tls/cert", content=iter([big[:40000], big[40000:]]),  # chunked, ohne Content-Length
+                          headers={"Content-Type": "application/json"})
+    assert _detail(r) == (413, "Anfrage zu groß")
+    assert calls == []  # Endpunkt und Anmeldung nie erreicht
+
+
+def test_malformed_json_under_limit_without_token(agent_client):
+    # FastAPI parst JSON vor den Abhängigkeiten: kaputtes JSON ergibt 422 vor der Anmeldung (Kosten durch die Grenze gedeckelt)
+    r = agent_client.post("/api/v1/tls/cert", content=b"{kaputt", headers={"Content-Type": "application/json"})
+    assert r.status_code == 422

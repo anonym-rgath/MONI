@@ -16,6 +16,7 @@ from moni.auth import admin_api, api as auth_api, oidc
 from moni.auth.throttle import LoginThrottle
 from moni.auth.tokens import TokenStore
 from moni.auth.users import UserStore
+from moni.bodylimit import BodyLimitMiddleware
 from moni.collector import Collector
 from moni.collect.host import read_hostname
 from moni.config import Settings
@@ -108,6 +109,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         if settings.tls == "on":
             app.state.pairing_throttle = LoginThrottle(max_failures=10, window=60)
             app.include_router(pairing_api.router)
+        app.add_middleware(BodyLimitMiddleware)  # kein nginx davor (Manager: client_max_body_size)
     app.add_middleware(RateLimitMiddleware, per_minute=settings.rate_limit_per_minute)
     if settings.cors_origins:  # zuletzt = aussen, damit auch 429 CORS-Header bekommt
         app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["GET"],
