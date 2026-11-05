@@ -11,7 +11,7 @@ import pytest
 
 from conftest import raw
 from moni.config import Settings
-from moni.manager import db, poller as pmod, tsdb
+from moni.manager import alerting, db, poller as pmod, tsdb
 from moni.manager.poller import AgentClient, AgentError, Poller
 from moni.manager.servers import ServerStore
 from moni.secretbox import SecretBox, generate_key
@@ -300,9 +300,37 @@ def test_rollup_and_prune_every_300s(poller, servers, monkeypatch):
     calls = []
     monkeypatch.setattr(tsdb, "rollup", lambda c, now: calls.append(("rollup", now)))
     monkeypatch.setattr(tsdb, "prune", lambda c, now, s: calls.append(("prune", now)))
+    monkeypatch.setattr(alerting, "prune", lambda c, now: calls.append(("alerts", now)))
     for now in (T, T + 15, T + 299, T + 300):
         poller.poll_once(now=now)
-    assert calls == [("rollup", T), ("prune", T), ("rollup", T + 300), ("prune", T + 300)]
+    assert calls == [("rollup", T), ("prune", T), ("alerts", T), ("rollup", T + 300), ("prune", T + 300),
+                     ("alerts", T + 300)]
+
+
+def test_poll_cycle_runs_alerting_after_commit_before_certs(poller, servers, agents, conn, monkeypatch):
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [AgentError("Agent lehnt Token ab", fatal=True)]})
+    seen = []
+    monkeypatch.setattr(poller, "_renew_certs", lambda now: seen.append(
+        conn.execute("SELECT COUNT(*) FROM alert_events").fetchone()[0]))
+    poller.poll_once(now=T)
+    assert [(r["rule_name"], r["event"], r["server_id"]) for r in conn.execute("SELECT * FROM alert_events")] == \
+        [("Server nicht erreichbar", "firing", a)]
+    assert seen == [1] and not poller._conn.in_transaction  # schon committet, als _renew_certs lief
+
+
+def test_alerting_error_does_not_break_poll_cycle(poller, servers, agents, conn, monkeypatch, caplog):
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T)]})
+
+    def boom(c, now):
+        c.execute("INSERT INTO alert_events (ts, rule_name, server_name, key, event) VALUES (?, 'r', 's', '{}', "
+                  "'firing')", (now,))
+        raise RuntimeError("geheimer Text")
+    monkeypatch.setattr(alerting, "run", boom)
+    with caplog.at_level("ERROR", logger="moni.poller"):
+        poller.poll_once(now=T)
+    assert servers.get(a).status == "ok" and count_raw_points(conn, a, M) == 1
+    assert "Alarmauswertung fehlgeschlagen (RuntimeError)" in caplog.text and "geheimer" not in caplog.text
+    assert conn.execute("SELECT COUNT(*) FROM alert_events").fetchone()[0] == 0 and not poller._conn.in_transaction
 
 
 def test_maintenance_purges_sessions_and_old_audit(poller, conn, settings):  # D4/D10

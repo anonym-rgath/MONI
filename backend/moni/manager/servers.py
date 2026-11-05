@@ -36,12 +36,13 @@ class Server:
     created_at: int
     security: str  # "token" oder "mtls" (D5)
     cert_not_after: int | None  # nur mtls: Ablauf des Agent-Zertifikats (Unix-Sekunden)
+    muted_until: int | None  # Alarme stumm bis (Unix-Sekunden, D5)
 
 
 def _server(r: sqlite3.Row) -> Server:
     return Server(r["id"], r["name"], r["url"], bool(r["is_local"]), json.loads(r["header_names"]), bool(r["enabled"]),
                   r["status"], r["failures"], r["last_error"], r["last_seen"], r["last_ts"], r["created_at"],
-                  r["security"], r["cert_not_after"])
+                  r["security"], r["cert_not_after"], r["muted_until"])
 
 
 def _visible_ascii(value: str, allow_space: bool = False) -> bool:
@@ -178,6 +179,10 @@ class ServerStore:
     def set_enabled(self, server_id: int, enabled: bool) -> bool:
         with self._tx():
             return self._conn.execute("UPDATE servers SET enabled=? WHERE id=?", (int(enabled), server_id)).rowcount > 0
+
+    def set_muted(self, server_id: int, until: int | None) -> bool:
+        with self._tx():
+            return self._conn.execute("UPDATE servers SET muted_until=? WHERE id=?", (until, server_id)).rowcount > 0
 
     def credentials(self, server_id: int) -> tuple[str, dict[str, str]]:
         r = self._row(server_id)

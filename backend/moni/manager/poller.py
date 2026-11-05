@@ -21,7 +21,7 @@ from ..collector import Collector
 from ..config import Settings
 from ..secretbox import SecretBox, SecretError
 from ..timeutil import iso, parse_iso
-from . import db, tsdb
+from . import alerting, db, tsdb
 from .servers import ServerStore
 
 log = logging.getLogger("moni.poller")
@@ -269,6 +269,7 @@ class Poller:
             tsdb.prune(conn, now, self._settings)
             SessionStore(conn, self._settings).purge_expired(now)  # beide joinen die offene Transaktion
             audit.prune(conn, now - audit.RETENTION_DAYS * 86400)
+            alerting.prune(conn, now)
         except Exception as e:
             conn.execute("ROLLBACK TO maintenance")
             conn.execute("RELEASE maintenance")
@@ -327,7 +328,23 @@ class Poller:
             raise
         if maintenance:
             self._last_maintenance = now
+        if not self._stop.is_set():
+            self._alerts(now)
         self._renew_certs(now)
+
+    def _alerts(self, now: int) -> None:
+        """Eigene kurze Transaktion nach dem Commit: ein Fehler kostet nur die Auswertung, nicht die Serverdaten."""
+        conn = self._conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            alerting.run(conn, now)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            log.error("Alarmauswertung fehlgeschlagen (%s)", type(e).__name__)  # Text könnte Werte enthalten
+        except BaseException:
+            conn.rollback()
+            raise
 
     def _renew_certs(self, now: int) -> None:
         """Nach dem Commit des Zyklus: das Netzwerk läuft nie, während die DB-Schreibsperre gehalten wird."""
