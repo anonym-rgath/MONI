@@ -601,3 +601,42 @@ Nicht durch Subagents.
 1. **Pi (Manager):** Er läuft hinter Traefik mit Domain. In `.env` `MONI_TLS=off` und `MONI_TRUSTED_PROXIES=<IP bzw. Netz des Traefik-Containers>` setzen. Traefik leitet auf Port 8080 des Managers weiter. Prüfen: Fehlversuche beim Login werden pro echter Client-IP gezählt (Audit-Log zeigt verschiedene IPs).
 2. **SAU-INDEX (Agent):** bleibt im Token-Modus hinter dem Cloudflare Tunnel (`MONI_TLS=off`, Spec §6.3). Server-Eintrag wie in Paket 2, Task 10. In der Serverliste steht `security: "token"`.
 3. **Optional mTLS testen:** einen Agent im selben Netz wie den Pi mit `MONI_TLS=on` und `MONI_AGENT_BIND=0.0.0.0` starten, den Kopplungscode aus `docker compose logs moni-agent` holen und den Agent per `POST /api/v1/servers` mit `pairing_code` koppeln.
+
+---
+
+## Nachlauf aus dem Abschlussreview (2026-11-05)
+
+Paket 4 ist umgesetzt (Commits `92fd657..c09b8f5`, 853 Tests grün). Die CI-Schritte „HTTPS-Smoke“ und „Kopplung (mTLS)“ liefen lokal; auf GitHub Actions laufen sie mit diesem Push zum ersten Mal.
+
+Diese Punkte hat der Abschlussreview bewusst auf spätere Pakete verschoben:
+
+- **Paket 6 (Oberfläche):**
+  - Für Fehler nach erfolgter Kopplung einen Hinweis auf `pair reset` zeigen. Das betrifft drei Fälle: Die Antwort ging verloren, die Datenbank war gesperrt, oder ein Agent wurde erneut hinzugefügt.
+  - Für unbekannte Agent-Token-IDs 404 statt 502 zurückgeben.
+  - Der 401-Handler der Oberfläche darf `"Kopplungs-Token ungültig"` nicht als „Sitzung abgelaufen“ deuten.
+  - `GET agent-tokens` in den Test aufnehmen, der prüft, was Betrachter lesen dürfen.
+- **Paket 7 (Release, Doku, Härtung):**
+  - Agent-`install()` (Absturzfenster zwischen `key.pem` und `cert.pem`): `cert.pem` zuerst schreiben, `pending_key.pem` bis zum Schluss behalten und die Wiederherstellung in `ensure()` einbauen, dazu ein deutscher Hinweis auf `pair reset` statt eines SSL-Tracebacks.
+  - Die Kopplung braucht eine Gesamtfrist.
+  - `_OPENER` ist toter Code.
+  - Warnung ausgeben, wenn `MONI_TRUSTED_PROXIES` bei `MONI_TLS=on` gesetzt ist; dann wird es ignoriert.
+  - Doku:
+    - CA-Rotation.
+    - Die CA nur gezielt einsetzen (`--cacert` statt System-Vertrauensspeicher).
+    - Ein Agent, dessen Zertifikat ganz abgelaufen ist, muss neu gekoppelt werden.
+    - Upgrade-Hinweis: Der Agent hat jetzt standardmäßig TLS an.
+    - Die nginx-Zertifikatspfade sind fest auf `/data/tls` gesetzt.
+  - Kleinere Punkte:
+    - `san_for_host` strenger machen.
+    - `sans=[]` abweisen.
+    - Ein einzeln übergebenes Zertifikat oder ein einzelner Schlüssel in `client_context` soll einen Fehler auslösen.
+    - Den eingelesenen CA-Schlüssel im Agent zwischenspeichern.
+    - Die doppelte `NewToken`-Validierung zusammenführen.
+    - `throttle_key` nach `throttle.py` verschieben.
+    - Die Erneuerung soll `_stop` beachten.
+  - CI und Testlücken:
+    - Agent-Neustart vor der Prüfung, dass der Code nicht erneut geloggt wird.
+    - Getrennte Fristen in `pair_smoke`.
+    - `fchmod` in `write_secret_file`.
+    - Die Ziffern-Regex soll auch URLs erfassen.
+  - Die `StarletteDeprecationWarning` aus der Testausgabe entfernen.
