@@ -692,6 +692,11 @@ Wunsch des Auftraggebers: Wenn die Anmeldung über Google möglich ist, muss sie
   - Audit `oidc.config_changed` mit `details={"provider": id}` bzw. `{"public_url": true}`.
 - Konto-Verknüpfung (D7, erweitert): Die E-Mail gilt als bestätigt, wenn `email_verified is True` **oder** `xms_edov is True` (Microsoft-Claim „email domain owner verified“). Sonst bleibt der Grund `email_unverified`. Weiterhin werden nur Konten mit `kind="oidc"` verknüpft, die noch nicht verknüpft sind. `(iss, sub)` ist anbieterübergreifend eindeutig.
 - Microsoft-Hinweis: Liefert die Discovery einen `issuer` mit dem Platzhalter `{tenantid}` (Endpunkte `/common` oder `/organizations`, mehrmandantenfähig), lehnt `PUT /providers/{id}` mit `422 "Für Microsoft die mandantenspezifische Issuer-URL verwenden: https://login.microsoftonline.com/<Mandanten-ID>/v2.0"` ab. Mehrmandanten-Anmeldung bleibt bewusst aus, sie ist die Ursache der bekannten „nOAuth“-Kontoübernahmen.
+- **Private Microsoft-Konten** (Entscheidung des Auftraggebers, 2026-11-05):
+  - Konstante `MS_CONSUMER_ISSUER = "https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0"`.
+  - Ist der `iss` des Tokens genau diese Adresse, gilt eine vorhandene `email` als bestätigt. Diesen Bereich verwaltet Microsoft selbst, kein fremder Mandant kann dort Adressen setzen.
+  - Für alle anderen Aussteller gilt das nicht.
+  - Gibt ein Admin als Issuer `https://login.microsoftonline.com/consumers/v2.0` an, lehnt `PUT /providers/{id}` mit `422 "Für private Microsoft-Konten als Issuer https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0 eintragen"` ab.
 
 - [ ] **Step 1: Failing tests**
 
@@ -708,6 +713,9 @@ def test_microsoft_xms_edov_binds(oidc_client, idp_microsoft, make_user):
     assert r.headers["location"] == "/"
 
 def test_microsoft_without_verification_rejected(...): ...   # weder email_verified noch xms_edov → email_unverified
+def test_personal_microsoft_account_binds(...): ...         # iss == MS_CONSUMER_ISSUER, nur email → bindet
+def test_consumer_rule_not_applied_to_other_issuers(...): ... # gleicher Token-Inhalt, anderer iss → email_unverified
+def test_consumers_alias_issuer_rejected_with_hint(...): ...  # issuer …/consumers/v2.0 → 422 mit GUID-Hinweis
 def test_common_issuer_rejected_with_hint(...): ...          # Discovery-issuer mit {tenantid} → 422 mit Hinweistext
 def test_unknown_provider_404(...): ...                      # /start ohne oder mit unbekanntem provider → 404
 def test_provider_deleted_between_start_and_callback(...): ...   # → /login?fehler=oidc, grund config
@@ -769,3 +777,7 @@ Nicht durch Subagents. Voraussetzung ist ein Manager, der per HTTPS unter einer 
    - Einen geheimen Clientschlüssel erzeugen.
    - Dann `PUT /api/v1/auth/oidc/providers/microsoft` mit `issuer=https://login.microsoftonline.com/<Mandanten-ID>/v2.0` aufrufen.
    - Den Test wie in Schritt 4 wiederholen, mit `provider=microsoft`.
+6. Private Microsoft-Konten (z. B. outlook.com):
+   - App-Registrierung mit der Kontoart „nur persönliche Microsoft-Konten“ anlegen.
+   - Dann `PUT /api/v1/auth/oidc/providers/microsoft-privat` mit `issuer=https://login.microsoftonline.com/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0` aufrufen.
+   - Den Benutzer mit seiner Outlook-Adresse und `kind="oidc"` anlegen.
