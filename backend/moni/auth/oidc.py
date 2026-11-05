@@ -265,14 +265,17 @@ def _b64(data: bytes) -> str:
 
 
 class Flows:
-    """state -> (nonce, PKCE-Verifier, Beginn, Anbieter-id); nur im Speicher, jeder state ist einmal verwendbar."""
+    """state -> (nonce, PKCE-Verifier, Beginn, Anbieter); nur im Speicher, jeder state ist einmal verwendbar.
+
+    Anbieter = (id, issuer, client_id) zum Zeitpunkt des Starts.
+    """
     MAX = 1000
 
     def __init__(self):
-        self._d: dict[str, tuple[str, str, float, str]] = {}
+        self._d: dict[str, tuple[str, str, float, tuple]] = {}
         self._lock = threading.Lock()
 
-    def add(self, now: float, provider: str) -> tuple[str, str, str]:
+    def add(self, now: float, provider: tuple) -> tuple[str, str, str]:
         state, nonce, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         with self._lock:
             for s in [s for s, e in self._d.items() if now - e[2] >= FLOW_SECONDS]:
@@ -282,7 +285,7 @@ class Flows:
             self._d[state] = (nonce, verifier, now, provider)
         return state, nonce, _b64(hashlib.sha256(verifier.encode()).digest())
 
-    def pop(self, state: str, now: float) -> tuple[str, str, str] | None:
+    def pop(self, state: str, now: float) -> tuple[str, str, tuple] | None:
         with self._lock:
             e = self._d.pop(state, None)
         if e is None or now - e[2] >= FLOW_SECONDS:
@@ -371,8 +374,9 @@ def _provider_out(p: dict) -> dict:
             "client_secret_set": bool(p.get("client_secret_enc"))}
 
 
-def _redirect_uri(cfg: dict) -> str:
-    return cfg["public_url"] + "/api/v1/auth/oidc/callback"
+def _redirect_uri(public_url: str, pid: str) -> str:
+    """Eigene Redirect-URI je Anbieter: Mix-up-Schutz nach RFC 9700 §4.4 (P3-R10)."""
+    return f"{public_url}/api/v1/auth/oidc/callback/{pid}"
 
 
 @router.get("")
@@ -440,8 +444,9 @@ def start(request: Request, provider: str | None = None):
     except OidcError:
         log.warning("OIDC-Anbieter nicht erreichbar")
         return RedirectResponse(_FAIL_URL, 303)
-    state, nonce, challenge = request.app.state.oidc_flows.add(now, p["id"])
-    query = urllib.parse.urlencode({"response_type": "code", "client_id": p["client_id"], "redirect_uri": _redirect_uri(cfg),
+    state, nonce, challenge = request.app.state.oidc_flows.add(now, (p["id"], p["issuer"], p["client_id"]))
+    query = urllib.parse.urlencode({"response_type": "code", "client_id": p["client_id"],
+                                    "redirect_uri": _redirect_uri(cfg["public_url"], p["id"]),
                                     "scope": "openid email profile", "state": state, "nonce": nonce,
                                     "code_challenge": challenge, "code_challenge_method": "S256"})
     response = RedirectResponse(ep + ("&" if "?" in ep else "?") + query, 302)
@@ -449,7 +454,7 @@ def start(request: Request, provider: str | None = None):
     return response
 
 
-def _verify(request: Request, now: int) -> tuple[dict | None, str | None]:
+def _verify(request: Request, pid: str, now: int) -> tuple[dict | None, str | None]:
     """Prüft den Rücksprung bis zum gültigen ID-Token: (claims, None) oder (None, Fehlercode)."""
     app, q = request.app, request.query_params
     if app.state.throttle.retry_after(throttle_key(request), now) is not None:
@@ -461,23 +466,34 @@ def _verify(request: Request, now: int) -> tuple[dict | None, str | None]:
     flow = app.state.oidc_flows.pop(state, now)
     if flow is None:
         return None, "state"
+    nonce, verifier, (flow_pid, flow_issuer, flow_client_id) = flow
+    if pid != flow_pid:  # Rücksprung an die Redirect-URI eines anderen Anbieters: Mix-up, kein Anbieter wird gefragt
+        return None, "state"
     if "error" in q:
         return None, "anbieter"
-    nonce, verifier, pid = flow  # Anbieter aus dem Flow, nie aus der Anfrage
     with db.request_conn(request) as conn:
         try:
-            cfg = load_provider(conn, app.state.box, pid)
+            cfg = load_provider(conn, app.state.box, flow_pid)
         except SecretError:
             cfg = None
-    if cfg is None:  # inzwischen gelöscht oder Secret nicht entschlüsselbar
+    # inzwischen gelöscht, umkonfiguriert oder Secret nicht entschlüsselbar
+    if cfg is None or (cfg["issuer"], cfg["client_id"]) != (flow_issuer, flow_client_id):
         return None, "config"
     code = q.get("code")
     try:
+        d = _discover(cfg["issuer"], now)
+    except OidcError:
+        return None, "token"
+    if d.get("authorization_response_iss_parameter_supported") is True:  # RFC 9207
+        iss = q.get("iss")
+        if not iss or not hmac.compare_digest(iss.encode("utf-8", "surrogatepass"), cfg["issuer"].encode()):
+            return None, "state"
+    try:
         if not code:
             raise OidcError("code fehlt")
-        d = _discover(cfg["issuer"], now)
         tokens = _http("POST", d["token_endpoint"],
-                       data={"grant_type": "authorization_code", "code": code, "redirect_uri": _redirect_uri(cfg),
+                       data={"grant_type": "authorization_code", "code": code,
+                             "redirect_uri": _redirect_uri(cfg["public_url"], flow_pid),
                              "code_verifier": verifier},
                        headers={"Authorization": _basic(cfg["client_id"], cfg["client_secret"])})
     except OidcError:
@@ -522,11 +538,11 @@ def _account(users: UserStore, claims: dict) -> tuple[User | None, str | None, b
     return user, None, bind
 
 
-@router.get("/callback")
-def callback(request: Request):
+@router.get("/callback/{pid}")
+def callback(request: Request, pid: str):  # ohne Pattern: unpassende pid zählt als Fehlversuch (Drosselung, Audit)
     now = int(time.time())
     ip = client_ip(request)
-    claims, grund = _verify(request, now)
+    claims, grund = _verify(request, pid, now)
     plain = None
     with db.request_conn(request) as conn:
         if claims is not None:

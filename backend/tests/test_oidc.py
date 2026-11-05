@@ -4,7 +4,7 @@ import io
 import json
 import time
 import urllib.error
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import jwt
 import pytest
@@ -174,11 +174,20 @@ def _claims(idp, nonce, **over):
     return {"iss": idp.issuer, "aud": idp.client_id, "sub": "s1", "iat": now, "exp": now + 300, "nonce": nonce, **over}
 
 
-def complete_flow(client, idp, claims, sign=None, provider=None):
-    _, q = _start(client, provider or idp.pid)
+def _cb(provider, params):
+    return f"/api/v1/auth/oidc/callback/{provider}?{params}"
+
+
+def complete_flow(client, idp, claims, sign=None, provider=None, extra=""):
+    provider = provider or idp.pid
+    _, q = _start(client, provider)
     c = _claims(idp, q["nonce"][0], **claims)
     idp.id_token = sign(c) if sign else idp.sign(c)
-    return client.get(f"/api/v1/auth/oidc/callback?code=c-geheim&state={q['state'][0]}", follow_redirects=False)
+    return client.get(_cb(provider, f"code=c-geheim&state={q['state'][0]}{extra}"), follow_redirects=False)
+
+
+def _token_calls(*idps):
+    return [c for i in idps for c in i.calls if c[1] == i.token_endpoint]
 
 
 def _session(client):
@@ -191,7 +200,7 @@ def test_start_redirect_has_pkce_state_nonce(oidc_client, idp):
     r, q = _start(oidc_client)
     assert r.status_code == 302 and q["code_challenge_method"] == ["S256"] and q["state"] and q["nonce"]
     assert r.headers["location"].startswith(idp.authorization_endpoint + "?")
-    assert q["redirect_uri"] == ["https://moni.example.org/api/v1/auth/oidc/callback"]
+    assert q["redirect_uri"] == ["https://moni.example.org/api/v1/auth/oidc/callback/google"]
     assert q["response_type"] == ["code"] and q["client_id"] == ["moni"] and q["scope"] == ["openid email profile"]
     assert len(q["code_challenge"][0]) == 43
     sc = r.headers["set-cookie"].lower()
@@ -203,7 +212,9 @@ def test_two_providers_listed_and_started(oidc_client, idp_google, idp_microsoft
     assert {p["id"] for p in oidc_client.get("/api/v1/auth/oidc").json()["providers"]} == {"google", "microsoft"}
     loc = oidc_client.get("/api/v1/auth/oidc/start?provider=microsoft", follow_redirects=False).headers["location"]
     assert loc.startswith(idp_microsoft.authorization_endpoint)
-    assert parse_qs(urlparse(loc).query)["client_id"] == ["moni-ms"]
+    q = parse_qs(urlparse(loc).query)
+    assert q["client_id"] == ["moni-ms"]
+    assert q["redirect_uri"] == ["https://moni.example.org/api/v1/auth/oidc/callback/microsoft"]
 
 
 def test_start_and_status_without_config(mgr_client, net):
@@ -233,7 +244,7 @@ def test_happy_path_binds_and_logs_in(oidc_client, idp, make_user, caplog):
     # Token-Austausch: client_secret_basic, PKCE-Verifier passt zur Challenge, redirect_uri wie beim Start
     method, url, data, headers = [c for c in idp.calls if c[1] == idp.token_endpoint][0]
     assert data["grant_type"] == "authorization_code" and data["code"] == "c-geheim"
-    assert data["redirect_uri"] == "https://moni.example.org/api/v1/auth/oidc/callback"
+    assert data["redirect_uri"] == "https://moni.example.org/api/v1/auth/oidc/callback/google"
     assert headers["Authorization"] == "Basic " + base64.b64encode(f"moni:{SECRET}".encode()).decode()
     assert "client_secret" not in data
     conn = _conn(oidc_client.app)
@@ -323,7 +334,7 @@ def test_pkce_verifier_matches_challenge(oidc_client, idp, make_user):
     make_user("viewer", kind="oidc", email="o@example.org")
     _, q = _start(oidc_client)
     idp.id_token = idp.sign(_claims(idp, q["nonce"][0], email="o@example.org", email_verified=True))
-    oidc_client.get(f"/api/v1/auth/oidc/callback?code=c&state={q['state'][0]}", follow_redirects=False)
+    oidc_client.get(_cb("google", f"code=c&state={q['state'][0]}"), follow_redirects=False)
     verifier = [c for c in idp.calls if c[1] == idp.token_endpoint][0][2]["code_verifier"]
     assert base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode() == q["code_challenge"][0]
 
@@ -349,9 +360,66 @@ def test_provider_deleted_between_start_and_callback(oidc_client, idp_microsoft,
     finally:
         conn.close()
     idp_microsoft.id_token = idp_microsoft.sign(_claims(idp_microsoft, q["nonce"][0], email="m@firma.de", xms_edov=True))
-    r = oidc_client.get(f"/api/v1/auth/oidc/callback?code=c&state={q['state'][0]}", follow_redirects=False)
+    r = oidc_client.get(_cb("microsoft", f"code=c&state={q['state'][0]}"), follow_redirects=False)
     assert r.headers["location"] == FAIL and last_audit(oidc_client)["details"] == {"grund": "config"}
     assert not [c for c in idp_microsoft.calls if c[1] == idp_microsoft.token_endpoint]
+
+
+@pytest.mark.parametrize("started,returned", [("microsoft", "google"), ("google", "microsoft")])
+def test_mix_up_callback_on_other_provider_path(oidc_client, idp_google, idp_microsoft, make_user, started, returned):
+    """RFC 9700 §4.4: Flow für A gestartet, code kommt an der Redirect-URI von H an → kein Token-Aufruf."""
+    make_user("viewer", kind="oidc", email="o@example.org")
+    idps = {"google": idp_google, "microsoft": idp_microsoft}
+    _, q = _start(oidc_client, started)
+    for i in idps.values():
+        i.id_token = i.sign(_claims(i, q["nonce"][0], email="o@example.org", email_verified=True))
+    r = oidc_client.get(_cb(returned, f"code=c-ehrlich&state={q['state'][0]}"), follow_redirects=False)
+    assert r.headers["location"] == FAIL and last_audit(oidc_client)["details"] == {"grund": "state"}
+    assert _token_calls(idp_google, idp_microsoft) == []
+    assert _session(oidc_client).status_code == 401
+    # der state ist verbraucht: auch der passende Rücksprung danach scheitert
+    oidc_client.cookies.set("moni_oidc", q["state"][0])
+    r = oidc_client.get(_cb(started, f"code=c&state={q['state'][0]}"), follow_redirects=False)
+    assert r.headers["location"] == FAIL and last_audit(oidc_client)["details"] == {"grund": "state"}
+    assert _token_calls(idp_google, idp_microsoft) == []
+
+
+@pytest.mark.parametrize("over", [{"client_id": "moni-ms-neu"},
+                                  {"issuer": "https://login.microsoftonline.com/99999999-0000-0000-0000-000000000000/v2.0"}])
+def test_provider_changed_between_start_and_callback(oidc_client, idp_microsoft, make_user, over):
+    make_user("viewer", kind="oidc", email="m@firma.de")
+    _, q = _start(oidc_client, "microsoft")
+    conn = _conn(oidc_client.app)
+    try:
+        cfg = {"issuer": MS, "client_id": "moni-ms", "client_secret": "neues-secret", "label": None, **over}
+        oidc.save_provider(conn, oidc_client.app.state.box, "microsoft", **cfg)
+    finally:
+        conn.close()
+    idp_microsoft.id_token = idp_microsoft.sign(_claims(idp_microsoft, q["nonce"][0], email="m@firma.de", xms_edov=True))
+    r = oidc_client.get(_cb("microsoft", f"code=c&state={q['state'][0]}"), follow_redirects=False)
+    assert r.headers["location"] == FAIL and last_audit(oidc_client)["details"] == {"grund": "config"}
+    assert _token_calls(idp_microsoft) == []
+
+
+@pytest.mark.parametrize("advertised,iss,ok", [
+    (True, MS, True),
+    (True, None, False),
+    (True, "", False),
+    (True, "https://evil.example.org", False),
+    (True, GOOGLE, False),               # Issuer eines anderen konfigurierten Anbieters
+    (True, MS + "/", False),
+    (False, None, True),
+])
+def test_rfc9207_iss_parameter(oidc_client, idp_microsoft, make_user, advertised, iss, ok):
+    make_user("viewer", kind="oidc", email="m@firma.de")
+    idp_microsoft.discovery["authorization_response_iss_parameter_supported"] = advertised
+    extra = "" if iss is None else "&iss=" + quote(iss, safe="")
+    r = complete_flow(oidc_client, idp_microsoft, {"email": "m@firma.de", "xms_edov": True}, extra=extra)
+    if ok:
+        assert r.headers["location"] == "/"
+    else:
+        assert r.headers["location"] == FAIL and last_audit(oidc_client)["details"] == {"grund": "state"}
+        assert _token_calls(idp_microsoft) == []
 
 
 # --- manipulierte Rücksprünge -----------------------------------------------
@@ -405,10 +473,10 @@ def run_tampered(client, idp, other, tamper):
             UserStore(conn, app.state.box).delete(UserStore(conn, app.state.box).by_email("o@example.org").id)
         finally:
             conn.close()
-        assert client.get(f"/api/v1/auth/oidc/callback?{params}", follow_redirects=False).status_code == 303
+        assert client.get(_cb(idp.pid, params), follow_redirects=False).status_code == 303
         assert last_audit(client)["details"] == {"grund": "unknown_user"}
         client.cookies.set("moni_oidc", state)
-    return client.get(f"/api/v1/auth/oidc/callback?{params}", follow_redirects=False)
+    return client.get(_cb(idp.pid, params), follow_redirects=False)
 
 
 @pytest.mark.parametrize("pid", ["google", "microsoft"])
@@ -435,7 +503,7 @@ def test_tampered_callbacks_never_login(oidc_client, idp_google, idp_microsoft, 
 def test_callback_failures_count_for_throttle(oidc_client, idp):
     app = oidc_client.app
     for _ in range(20):
-        oidc_client.get("/api/v1/auth/oidc/callback?code=c&state=falsch", follow_redirects=False)
+        oidc_client.get(_cb("google", "code=c&state=falsch"), follow_redirects=False)
     r = complete_flow(oidc_client, idp, {"email": "o@example.org", "email_verified": True})
     assert r.headers["location"] == FAIL
     assert last_audit(oidc_client)["details"] == {"grund": "drosselung"}
@@ -444,8 +512,11 @@ def test_callback_failures_count_for_throttle(oidc_client, idp):
 
 def test_callback_garbage(oidc_client, idp):
     oidc_client.cookies.set("moni_oidc", "x")
-    r = oidc_client.get("/api/v1/auth/oidc/callback?state=%C3%A4&code=%00", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == FAIL
+    for path in ("google", "%00x", "x" * 300):
+        r = oidc_client.get(_cb(path, "state=%C3%A4&code=%00"), follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == FAIL
+    # die gemeinsame Redirect-URI ohne Anbieter gibt es nicht mehr
+    assert oidc_client.get("/api/v1/auth/oidc/callback?code=c&state=x", follow_redirects=False).status_code == 404
 
 
 # --- validate_id_token direkt -------------------------------------------------
@@ -601,7 +672,7 @@ def test_public_url_change_keeps_secrets(mgr_app, admin, idp_google, idp_microso
     assert _provider(mgr_app, "microsoft")["client_secret"] == MS_SECRET
     assert all(p["client_secret_set"] for p in admin.get("/api/v1/auth/oidc/providers").json()["providers"])
     _, q = _start(admin, "microsoft")
-    assert q["redirect_uri"] == ["https://moni2.example.org:8443/api/v1/auth/oidc/callback"]
+    assert q["redirect_uri"] == ["https://moni2.example.org:8443/api/v1/auth/oidc/callback/microsoft"]
 
 
 @pytest.mark.parametrize("pid,over", [
@@ -750,15 +821,15 @@ def test_basic_auth_is_form_encoded():
 
 def test_flows_ttl_and_bound():
     f = oidc.Flows()
-    state, nonce, challenge = f.add(1000, "microsoft")
+    state, nonce, challenge = f.add(1000, ("microsoft", MS, "moni-ms"))
     n, verifier, provider = f.pop(state, 1599)
     assert n == nonce and base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode() == challenge
-    assert provider == "microsoft"
+    assert provider == ("microsoft", MS, "moni-ms")
     assert f.pop(state, 1599) is None  # nur einmal verwendbar
-    s2, _, _ = f.add(1000, "google")
+    s2, _, _ = f.add(1000, ("google", GOOGLE, "moni"))
     assert f.pop(s2, 1600) is None  # abgelaufen
-    first, _, _ = f.add(2000, "google")
-    states = [f.add(2000, "google")[0] for _ in range(1000)]
+    first, _, _ = f.add(2000, ("google", GOOGLE, "moni"))
+    states = [f.add(2000, ("google", GOOGLE, "moni"))[0] for _ in range(1000)]
     assert f.pop(first, 2001) is None and f.pop(states[-1], 2001) is not None
     assert len(f._d) <= 1000
     assert f.pop("unbekannt", 2001) is None
