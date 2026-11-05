@@ -38,6 +38,18 @@ def test_passed_in_not_started(settings):
     assert (col.started, col.stopped, pol.started, pol.stopped) == (0, 0, 0, 0)
 
 
+def test_notifier_lifespan_only_when_self_owned(settings):
+    mgr = _mgr(settings)
+    app = create_app(mgr, collector=Dummy(), poller=Dummy())
+    with TestClient(app):
+        assert app.state.notifier._thread.is_alive()
+    assert not app.state.notifier._thread.is_alive()
+    inj = Dummy()
+    with TestClient(create_app(mgr, collector=Dummy(), poller=Dummy(), notifier=inj)):
+        pass
+    assert (inj.started, inj.stopped) == (0, 0)
+
+
 def test_bad_key_raises_without_key(settings):
     with pytest.raises(ValueError) as e:
         create_app(_mgr(settings, "kaputt-geheim"))

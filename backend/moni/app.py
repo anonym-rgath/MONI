@@ -23,6 +23,7 @@ from moni.config import Settings
 from moni.manager import db
 from moni.manager.api import router as manager_router
 from moni.manager.ca import ManagerPki
+from moni.manager.notifier import Notifier
 from moni.manager.poller import Poller
 from moni.manager.servers import ServerStore
 from moni.logs import setup_logging
@@ -34,11 +35,11 @@ log = logging.getLogger("moni.app")
 
 
 def create_app(settings: Settings | None = None, collector: Collector | None = None, poller: Poller | None = None,
-               tls_state: TlsState | None = None) -> FastAPI:
+               tls_state: TlsState | None = None, notifier: Notifier | None = None) -> FastAPI:
     setup_logging()
     settings = settings or Settings.from_env()
     manager = settings.role == "manager"
-    own_col, own_pol = collector is None, poller is None
+    own_col, own_pol, own_not = collector is None, poller is None, notifier is None
     collector = collector or Collector(settings)
     box = setup_hash = manager_pki = None
     if manager:
@@ -72,6 +73,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         except SecretError:
             raise RuntimeError("TLS-Schlüssel des Managers nicht entschlüsselbar (MONI_SECRET_KEY geändert?)") from None
         poller = poller or Poller(settings, box, collector, pki=manager_pki)
+        notifier = notifier or Notifier(settings, box)
     elif settings.tls == "on":
         if tls_state is None:
             tls_state = TlsState(Path(settings.data_dir))
@@ -87,8 +89,12 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
             if manager and own_pol:
                 poller.start()
             try:
+                if manager and own_not:
+                    notifier.start()
                 yield
             finally:
+                if manager and own_not:
+                    notifier.stop()
                 if manager and own_pol:
                     poller.stop()
         finally:
@@ -103,6 +109,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     errors.install(app)
     if manager:
         app.state.box, app.state.poller, app.state.pki = box, poller, manager_pki
+        app.state.notifier = notifier
         app.state.setup_hash, app.state.throttle = setup_hash, LoginThrottle()
         app.state.oidc_flows = oidc.Flows()
         app.include_router(manager_router)
