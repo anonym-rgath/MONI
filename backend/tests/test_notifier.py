@@ -185,3 +185,37 @@ def test_thread_start_stop_and_survives_errors(conn, settings, box, monkeypatch)
         threading.Event().wait(0.02)
     n.stop()
     assert len(calls) >= 2 and not n._thread.is_alive()
+
+
+def test_stop_between_deliveries_persists_first_and_leaves_rest(conn, settings, box):
+    add(conn, box)
+    for _ in range(2):
+        conn.execute("INSERT INTO alert_outbox (event_id, channel_id, next_try, created_at) VALUES (1, 1, 0, 0)")
+    conn.commit()
+    calls = []
+    n = Notifier(settings, box, lambda *a: (calls.append(1), n._stop.set()))
+    assert n.run_once(0) == 1
+    rows = [r["status"] for r in conn.execute("SELECT status FROM alert_outbox ORDER BY id")]
+    assert rows == ["sent", "pending", "pending"] and len(calls) == 1
+
+
+def test_persist_failure_stops_batch(conn, settings, box, monkeypatch):
+    add(conn, box)
+    conn.execute("INSERT INTO alert_outbox (event_id, channel_id, next_try, created_at) VALUES (1, 1, 0, 0)")
+    conn.commit()
+    calls = []
+    n = Notifier(settings, box, ok_deliver(calls))
+    monkeypatch.setattr(n, "_persist", lambda *a: (_ for _ in ()).throw(RuntimeError("x")))
+    assert n.run_once(0) == 0 and len(calls) == 1
+
+
+def test_broken_channel_does_not_block_others(conn, settings, box, caplog):
+    add(conn, box, name="kaputt")
+    conn.execute("UPDATE alert_channels SET secret_enc=? WHERE id=1", (box.encrypt("kein json"),))
+    add(conn, box, name="gut")
+    calls = []
+    Notifier(settings, box, ok_deliver(calls)).run_once(0)
+    rows = [dict(r) for r in conn.execute("SELECT * FROM alert_outbox ORDER BY id")]
+    assert [c[0] for c in calls] == ["gut"]
+    assert rows[0]["status"] == "pending" and rows[0]["attempts"] == 1 and rows[0]["last_error"] == "Versand fehlgeschlagen"
+    assert rows[1]["status"] == "sent"

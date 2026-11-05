@@ -40,6 +40,9 @@ class Notifier:
                         item["secrets"] = store.secrets(x["channel_id"])
                 except SecretError:
                     item["error"] = "Kanal-Geheimnis nicht entschlüsselbar"
+                except Exception as e:  # ein defekter Kanal darf die übrigen nicht blockieren
+                    log.error("Kanal nicht ladbar (%s)", type(e).__name__)
+                    item["error"] = "Versand fehlgeschlagen"
                 items.append(item)
             return items, (r["name"] if r else "moni")
         finally:
@@ -61,34 +64,43 @@ class Notifier:
             log.error("Versand fehlgeschlagen (%s)", type(e).__name__)  # nie Text: kann URL oder Antwort enthalten
             item["error"] = "Versand fehlgeschlagen"
 
-    def run_once(self, now: int) -> int:
-        items, manager_name = self._read(now)
-        for item in items:
-            self._send(item, manager_name)
-        if not items:
-            return 0
+    def _persist(self, it: dict, now: int) -> None:
+        """Ergebnis eines Eintrags sofort festhalten, damit ein Abbruch nichts doppelt sendet."""
+        if it["channel"] is None and not it["error"]:
+            return  # Kanal inzwischen gelöscht (Cascade entfernt den Eintrag)
+        if it["error"] is None:
+            sql, args = "status='sent', last_error=NULL", ()
+        elif it.get("final"):
+            sql, args = "status='failed', last_error=?", (it["error"],)
+        else:
+            n = it["attempts"] + 1
+            if n >= MAX_ATTEMPTS:
+                sql, args = "attempts=?, status='failed', last_error=?", (n, it["error"])
+                log.warning("Benachrichtigung über %s endgültig fehlgeschlagen", it["cname"])
+            else:
+                sql, args = "attempts=?, last_error=?, next_try=?", (n, it["error"], now + RETRY[min(n - 1, 3)])
         conn = db.connect(self._settings.db_path)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            for it in items:
-                if it["channel"] is None and not it["error"]:
-                    continue  # Kanal inzwischen gelöscht (Cascade entfernt den Eintrag)
-                if it["error"] is None:
-                    sql, args = "status='sent', last_error=NULL", ()
-                elif it.get("final"):
-                    sql, args = "status='failed', last_error=?", (it["error"],)
-                else:
-                    n = it["attempts"] + 1
-                    if n >= MAX_ATTEMPTS:
-                        sql, args = "attempts=?, status='failed', last_error=?", (n, it["error"])
-                        log.warning("Benachrichtigung über %s endgültig fehlgeschlagen", it["cname"])
-                    else:
-                        sql, args = "attempts=?, last_error=?, next_try=?", (n, it["error"], now + RETRY[min(n - 1, 3)])
-                conn.execute(f"UPDATE alert_outbox SET {sql} WHERE id=? AND status='pending'", (*args, it["id"]))
+            conn.execute(f"UPDATE alert_outbox SET {sql} WHERE id=? AND status='pending'", (*args, it["id"]))
             conn.commit()
         finally:
             conn.close()
-        return len(items)
+
+    def run_once(self, now: int) -> int:
+        items, manager_name = self._read(now)
+        done = 0
+        for item in items:
+            if self._stop.is_set():
+                break  # Rest bleibt pending
+            self._send(item, manager_name)
+            try:
+                self._persist(item, now)
+            except Exception as e:  # ohne Festhalten nicht weitersenden
+                log.error("Ergebnis der Benachrichtigung nicht gespeichert (%s)", type(e).__name__)
+                break
+            done += 1
+        return done
 
     def _loop(self) -> None:
         while not self._stop.is_set():
