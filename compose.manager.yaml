@@ -35,23 +35,22 @@ services:
       - MONI_RETENTION_HOUR_DAYS=${MONI_RETENTION_HOUR_DAYS:-365}
       - MONI_SESSION_IDLE_MINUTES=${MONI_SESSION_IDLE_MINUTES:-60}
       - MONI_SESSION_MAX_HOURS=${MONI_SESSION_MAX_HOURS:-12}
+      - MONI_TLS=${MONI_TLS:-on}
+      - MONI_TRUSTED_PROXIES=${MONI_TRUSTED_PROXIES:-}
+      - MONI_MANAGER_HOSTNAMES=${MONI_MANAGER_HOSTNAMES:-}
+      - MONI_HTTPS_PORT=${MONI_HTTPS_PORT:-8443}
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    # Nur localhost, solange kein Reverse-Proxy mit TLS davorsteht.
+    # Standardmäßig nur localhost. 443 = HTTPS (MONI_TLS=on), 80 leitet dann auf https um bzw. ist bei MONI_TLS=off der Proxy-Eingang.
     ports:
+      - "${MONI_MANAGER_BIND:-127.0.0.1}:${MONI_HTTPS_PORT:-8443}:443"
       - "${MONI_MANAGER_BIND:-127.0.0.1}:8080:80"
     networks:
       - default
       - socket-proxy
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/api/v1/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
 
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459

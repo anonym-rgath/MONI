@@ -23,13 +23,15 @@ services:
       - HOST_ETC=/host/etc
       - HOST_ROOT=/host/root
       - DOCKER_API_BASE=http://docker-socket-proxy:2375
-      - MONI_TLS=off
+      - MONI_TLS=${MONI_TLS:-on}
+      - MONI_PUBLIC_URL=${MONI_PUBLIC_URL:-}
+      - MONI_TRUSTED_PROXIES=${MONI_TRUSTED_PROXIES:-}
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    # Nur localhost, solange es kein TLS gibt.
+    # Standardmäßig nur localhost (sicherer). Für die mTLS-Anbindung durch den Manager: MONI_AGENT_BIND=0.0.0.0 (siehe .env.example).
     ports:
       - "${MONI_AGENT_BIND:-127.0.0.1}:9810:9810"
     networks:

@@ -33,8 +33,10 @@ USER app
 
 EXPOSE 9810
 
+# Nur Lebenszeichen: https ohne Zertifikatsprüfung (MONI_TLS=on), sonst http (MONI_TLS=off).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9810/api/v1/health', timeout=3)"]
+    CMD python -c "import ssl, urllib.request as u; u.urlopen('https://127.0.0.1:9810/api/v1/health', timeout=3, context=ssl._create_unverified_context())" \
+        || python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:9810/api/v1/health', timeout=3)"
 
 CMD ["python", "-m", "moni"]
 
