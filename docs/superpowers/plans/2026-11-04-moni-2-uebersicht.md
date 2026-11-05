@@ -40,6 +40,6 @@ Die Pakete 4 und 5 sind voneinander unabhängig und können parallel laufen.
 - [x] Paket 2 – Plan: [`2026-11-04-moni-2-paket-2-manager-kern.md`](2026-11-04-moni-2-paket-2-manager-kern.md) (umgesetzt; Task 10 durch Betreiber offen)
 - [x] Paket 3 – Plan: [`2026-11-05-moni-2-paket-3-benutzer-anmeldung.md`](2026-11-05-moni-2-paket-3-benutzer-anmeldung.md) (umgesetzt, inkl. mehrerer OIDC-Anbieter mit Microsoft; Task 9 durch Betreiber offen)
 - [x] Paket 4 – Plan: [`2026-11-05-moni-2-paket-4-mtls-kopplung.md`](2026-11-05-moni-2-paket-4-mtls-kopplung.md) (umgesetzt; Task 8 durch Betreiber offen)
-- [ ] Paket 5
+- [ ] Paket 5 – Plan: [`2026-11-05-moni-2-paket-5-alarmierung.md`](2026-11-05-moni-2-paket-5-alarmierung.md) (geschrieben, Umsetzung offen)
 - [ ] Paket 6
 - [ ] Paket 7
