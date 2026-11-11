@@ -447,10 +447,10 @@ export const de = {
     fToken: 'Token des Agents',
     proxyWarnung: 'Nur hinter einem vertrauenswürdigen Proxy verwenden.',
     headerTitel: 'Zusätzliche Header (optional)',
-    headerName: 'Header-Name',
-    headerWert: 'Header-Wert',
+    headerName: 'Header-Name {n}',
+    headerWert: 'Header-Wert {n}',
     headerPlus: 'Header hinzufügen',
-    headerWeg: 'Header entfernen',
+    headerWeg: 'Header {n} entfernen',
     gekoppelt: 'Server gekoppelt.',
     // Tokens (API und Agent)
     tokenListe: 'API-Tokens',

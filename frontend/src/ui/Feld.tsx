@@ -1,9 +1,10 @@
-import { useId, type InputHTMLAttributes } from 'react'
+import { useId, type InputHTMLAttributes, type Ref } from 'react'
 
 interface FeldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string
   hinweis?: string
   fehler?: string
+  ref?: Ref<HTMLInputElement> // React 19: ref ist eine normale Prop und landet über rest am input
 }
 
 // Label per htmlFor, Hinweis und Fehler per aria-describedby (D11).

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { schluessel } from '../../api/abfragen'
 import { ApiFehler, api } from '../../api/client'
 import { t } from '../../texte/de'
@@ -23,6 +23,8 @@ export function Koppeln({ onFertig, onAbbrechen }: { onFertig: () => void; onAbb
   const [header, setHeader] = useState<Zeile[]>([])
   const [naechste, setNaechste] = useState(1)
   const [codeFehler, setCodeFehler] = useState<string | undefined>()
+  const codeFeld = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (codeFehler) codeFeld.current?.focus() }, [codeFehler]) // Fehler am Feld wahrnehmbar machen
   const koppeln = useMutation({ mutationFn: (body: object) => api.post('/servers', body), gcTime: 0 }) // Token und Code gehören nicht in den Cache (D5)
 
   async function senden() {
@@ -56,7 +58,7 @@ export function Koppeln({ onFertig, onAbbrechen }: { onFertig: () => void; onAbb
         <Feld label={t('verwaltung.fName')} value={name} onChange={(e) => setName(e.target.value)} required autoComplete="off" />
         {art === 'code' ? (
           <>
-            <Feld label={t('verwaltung.fCode')} hinweis={t('verwaltung.fCodeHinweis')} fehler={codeFehler} value={code} onChange={(e) => setCode(e.target.value)} required autoComplete="off" spellCheck={false} />
+            <Feld label={t('verwaltung.fCode')} hinweis={t('verwaltung.fCodeHinweis')} fehler={codeFehler} ref={codeFeld} value={code} onChange={(e) => setCode(e.target.value)} required autoComplete="off" spellCheck={false} />
             <Feld label={t('verwaltung.fUrlOptional')} hinweis={t('verwaltung.fUrlOptionalHinweis')} value={url} onChange={(e) => setUrl(e.target.value)} inputMode="url" autoComplete="off" spellCheck={false} />
           </>
         ) : (
@@ -66,11 +68,11 @@ export function Koppeln({ onFertig, onAbbrechen }: { onFertig: () => void; onAbb
             <Feld label={t('verwaltung.fToken')} type="password" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="off" />
             <fieldset className="m-0 flex flex-col gap-3 border-0 p-0">
               <legend className="mb-1 p-0 text-sm font-medium">{t('verwaltung.headerTitel')}</legend>
-              {header.map((h) => (
+              {header.map((h, i) => (
                 <div key={h.id} className="flex flex-wrap items-end gap-2">
-                  <Feld label={t('verwaltung.headerName')} value={h.name} onChange={(e) => aendern(h.id, 'name', e.target.value)} autoComplete="off" spellCheck={false} />
-                  <Feld label={t('verwaltung.headerWert')} type="password" value={h.wert} onChange={(e) => aendern(h.id, 'wert', e.target.value)} autoComplete="off" />
-                  <Knopf onClick={() => setHeader((r) => r.filter((z) => z.id !== h.id))}>{t('verwaltung.headerWeg')}</Knopf>
+                  <Feld label={t('verwaltung.headerName', { n: i + 1 })} value={h.name} onChange={(e) => aendern(h.id, 'name', e.target.value)} autoComplete="off" spellCheck={false} />
+                  <Feld label={t('verwaltung.headerWert', { n: i + 1 })} type="password" value={h.wert} onChange={(e) => aendern(h.id, 'wert', e.target.value)} autoComplete="off" />
+                  <Knopf onClick={() => setHeader((r) => r.filter((z) => z.id !== h.id))}>{t('verwaltung.headerWeg', { n: i + 1 })}</Knopf>
                 </div>
               ))}
               <div><Knopf onClick={() => { setHeader((r) => [...r, { id: naechste, name: '', wert: '' }]); setNaechste(naechste + 1) }}>{t('verwaltung.headerPlus')}</Knopf></div>

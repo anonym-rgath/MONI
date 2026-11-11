@@ -4,7 +4,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { axe } from 'vitest-axe'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { AgentToken, AuditEintrag, Benutzer, OidcKonfig, Token } from '../../api/typen'
 import { alleServer, serverEins, sitzungAdmin, sitzungBetrachter } from '../../test/fixtures'
 import { zeigeApp } from '../../test/render'
@@ -100,7 +100,9 @@ describe('Server', () => {
     await screen.findByRole('row', { name: /pi/ })
     const lokal = screen.getByRole('row', { name: /^pi / })
     expect(within(lokal).queryByRole('button', { name: /Entfernen/ })).not.toBeInTheDocument()
-    expect(within(lokal).getByRole('button', { name: /Agent-Tokens/ })).toBeInTheDocument()
+    expect(within(lokal).queryByRole('button', { name: /Agent-Tokens/ })).not.toBeInTheDocument() // Backend: nur für mTLS (422 sonst)
+    expect(within(screen.getByRole('row', { name: /vps-backup/ })).queryByRole('button', { name: /Agent-Tokens/ })).not.toBeInTheDocument() // Token-Modus
+    expect(within(screen.getByRole('row', { name: /sau-index/ })).getByRole('button', { name: /Agent-Tokens/ })).toBeInTheDocument()
     expect(within(screen.getByRole('row', { name: /sau-index/ })).getByRole('button', { name: /Entfernen/ })).toBeInTheDocument()
   })
 
@@ -159,6 +161,7 @@ describe('Koppeln', () => {
     aufzeichnen('post', '/servers', () => problem(401, 'Kopplungs-Token ungültig'))
     await user.click(within(dialog).getByRole('button', { name: 'Server koppeln' }))
     await waitFor(() => expect(within(dialog).getByLabelText('Kopplungscode')).toHaveAttribute('aria-invalid', 'true'))
+    await waitFor(() => expect(within(dialog).getByLabelText('Kopplungscode')).toHaveFocus())
     expect(letzter().body).toEqual({ name: 'delta', pairing_code: 'moni-pair-v1:abc' })
     expect(within(dialog).getByLabelText('Kopplungscode')).toHaveAccessibleDescription(/Kopplungs-Token ungültig/)
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument() // nicht zusätzlich oben im Formular
@@ -212,8 +215,9 @@ describe('Koppeln', () => {
     expect(tokenFeld).toHaveAttribute('type', 'password')
     await user.type(tokenFeld, 'geheim')
     await user.click(within(dialog).getByRole('button', { name: 'Header hinzufügen' }))
-    await user.type(within(dialog).getByLabelText('Header-Name'), 'X-Zugang')
-    const wert = within(dialog).getByLabelText('Header-Wert')
+    expect(within(dialog).getByRole('button', { name: 'Header 1 entfernen' })).toBeInTheDocument()
+    await user.type(within(dialog).getByLabelText('Header-Name 1'), 'X-Zugang')
+    const wert = within(dialog).getByLabelText('Header-Wert 1')
     expect(wert).toHaveAttribute('type', 'password')
     await user.type(wert, 'abc')
     aufzeichnen('post', '/servers', () => HttpResponse.json({ ...serverEins, id: 21 }, { status: 201 }))
@@ -434,8 +438,11 @@ describe('Anmeldeanbieter', () => {
     expect(karte).toHaveTextContent('https://moni.example.org/api/v1/auth/oidc/callback/keycloak')
     expect(karte).toHaveTextContent('https://sso.example.org/realms/x')
     expect(screen.getByLabelText('Öffentliche URL')).toHaveValue('https://moni.example.org')
+    const schreiben = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText: schreiben } }) // nach userEvent.setup(), das die Zwischenablage ersetzt
     await user.click(within(karte).getByRole('button', { name: /^Kopieren/ }))
-    expect(await screen.findByText(/Redirect-URI kopiert\.|Kopieren ist hier nicht möglich/)).toBeInTheDocument()
+    expect(schreiben).toHaveBeenCalledWith('https://moni.example.org/api/v1/auth/oidc/callback/keycloak')
+    expect(await screen.findByText('Redirect-URI kopiert.')).toBeInTheDocument()
   })
 
   test('Öffentliche URL speichern (PUT /auth/oidc/public-url)', async () => {

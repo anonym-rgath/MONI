@@ -76,7 +76,7 @@ export function Server() {
                     {s.enabled
                       ? <Knopf onClick={() => { setMeldung(''); setAktion({ art: 'aus', server: s }) }}>{t('server.deaktivieren')}{name}</Knopf>
                       : <Knopf disabled={einschalten.isPending} onClick={() => { setMeldung(''); einschalten.mutate(s) }}>{t('server.aktivieren')}{name}</Knopf>}
-                    <Knopf onClick={() => { setMeldung(''); setTokensVon(s) }}>{t('verwaltung.agentTokens')}{name}</Knopf>
+                    {s.security === 'mtls' && <Knopf onClick={() => { setMeldung(''); setTokensVon(s) }}>{t('verwaltung.agentTokens')}{name}</Knopf>}
                     {!s.is_local && <Knopf onClick={() => { setMeldung(''); setAktion({ art: 'entfernen', server: s }) }}>{t('verwaltung.entfernen')}{name}</Knopf>}
                   </div>
                 </Zelle>
