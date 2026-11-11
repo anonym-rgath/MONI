@@ -34,13 +34,13 @@ export function Serverkarte({ server, zustand, jetzt }: { server: Server; zustan
     : server.last_seen ? t('karte.zuletzt', { vor: vor(sekundenSeit(Date.parse(server.last_seen), jetzt)) })
     : t('karte.nieGesehen')
   return (
-    <Link to={`/server/${server.id}`} aria-labelledby={`s${server.id}-name s${server.id}-status`} className={`flex flex-1 flex-col gap-3.5 rounded-[14px] border border-t-4 border-border bg-surface p-4.5 ${m.rand}`}>
+    <Link to={`/server/${server.id}`} className={`flex flex-1 flex-col gap-3.5 rounded-[14px] border border-t-4 border-border bg-surface p-4.5 ${m.rand}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 id={`s${server.id}-name`} className="m-0 text-[1.0625rem] font-semibold">{server.name}</h3>
+          <h3 className="m-0 text-[1.0625rem] font-semibold">{server.name}</h3>
           <div className="mt-0.5 text-[0.8125rem] text-muted">{t(art(server))}</div>
         </div>
-        <Statusmarke ton={m.ton} id={`s${server.id}-status`}>{t(m.text)}</Statusmarke>
+        <Statusmarke ton={m.ton}>{t(m.text)}</Statusmarke>
       </div>
       <dl className="m-0 flex flex-col gap-2.5">
         <Balken name={t('karte.cpu')} wert={sm?.cpu_percent} einheit="%" grenzen={PROZENT} />

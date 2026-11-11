@@ -102,7 +102,7 @@ describe('Alarmzeilen in Klartext', () => {
   test('Karte hat den Namen und Status als zugänglichen Namen', async () => {
     daten()
     await zeige()
-    expect(await screen.findByRole('link', { name: 'vps-backup Nicht erreichbar' })).toHaveAttribute('href', '/server/13')
+    expect(await screen.findByRole('link', { name: /^vps-backup .*Nicht erreichbar/ })).toHaveAttribute('href', '/server/13')
   })
 })
 
