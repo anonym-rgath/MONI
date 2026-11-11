@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw'
 import { axe } from 'vitest-axe'
 import { describe, expect, test } from 'vitest'
 import type { Alarm, Server } from '../../api/typen'
-import { alarmSau, alleServer, regelDateisystem, serverPi, sitzungAdmin, sitzungBetrachter } from '../../test/fixtures'
+import { alarmSau, alleServer, regelDateisystem, serverPi, serverVps, sitzungAdmin, sitzungBetrachter } from '../../test/fixtures'
 import { mockMatchMedia } from '../../test/matchMedia'
 import { zeigeApp } from '../../test/render'
 import { BASIS, problem, server, sitzungAntwort } from '../../test/server'
@@ -44,6 +44,68 @@ describe('Dringlichkeit', () => {
   })
 })
 
+const regel = (id: number, metric: string, extra = {}) => ({ ...regelDateisystem, id, name: `Regel ${id}`, metric, ...extra })
+const alarm = (id: number, extra: Partial<Alarm>): Alarm => ({ ...alarmSau, rule: { id, name: `Regel ${id}` }, ...extra })
+const MIT_REGELN = (regeln: unknown[]) => server.use(http.get(`${BASIS}/alert-rules`, () => HttpResponse.json(regeln)))
+
+describe('Alarmzeilen in Klartext', () => {
+  const zeigeZeile = async (a: Alarm, regeln: unknown[], s: Server = serverPi) => {
+    daten([{ ...s, id: a.server.id }], [a])
+    MIT_REGELN(regeln)
+    await zeige()
+    const li = (await screen.findAllByRole('listitem')).find((x) => x.textContent?.includes('Kritisch') || x.textContent?.includes('Warnung'))!
+    // Regeln laden nach den Servern; kurz warten, bis die Zeile endgültig steht
+    await waitFor(() => expect(li.textContent).toMatch(/Regel \d|nicht erreichbar|gestoppt|Healthcheck/))
+    return li
+  }
+
+  test('Server-up-Alarm eines unbekannten Servers heißt "nicht erreichbar", nie "0 (Schwelle 1)"', async () => {
+    const li = await zeigeZeile(alarm(2, { severity: 'critical', value: 0, labels: {}, server: { id: 10, name: 'pi' } }),
+      [regel(2, 'moni_server_up', { warning: null, critical: 1, op: '<' })], { ...serverPi, status: 'unknown' })
+    expect(li).toHaveTextContent('Server: nicht erreichbar (Regel Regel 2)')
+    expect(li).not.toHaveTextContent('Schwelle')
+  })
+
+  test('Container-Alarm mit Label name nennt den Container und den Zustand', async () => {
+    const li = await zeigeZeile(alarm(3, { severity: 'critical', value: 0, labels: { name: 'photoprism' } }), [regel(3, 'moni_container_up')])
+    expect(li).toHaveTextContent('Container photoprism: gestoppt')
+  })
+
+  test('Bytes werden mit Einheit gezeigt', async () => {
+    const li = await zeigeZeile(alarm(4, { value: 2147483648, labels: {} }), [regel(4, 'moni_host_memory_used_bytes', { warning: 1073741824 })])
+    expect(li).toHaveTextContent('Regel 4: 2,0 GB (Schwelle 1,0 GB)')
+  })
+
+  test('Wert null und fehlende Regel bleiben lesbar', async () => {
+    const li = await zeigeZeile(alarm(5, { value: null, labels: {} }), [])
+    expect(li).toHaveTextContent('Regel 5: keine Daten')
+    expect(li).not.toHaveTextContent(/NaN|null|Schwelle/)
+  })
+
+  test('stummer Server mit firing-Alarm bleibt in der Liste und zeigt die Stummschaltung', async () => {
+    const stumm = { ...serverPi, id: 11, name: 'sau-index', muted_until: new Date(Date.now() + 3600_000).toISOString() }
+    daten([stumm], [alarmSau])
+    await zeige()
+    await screen.findByRole('heading', { level: 3, name: 'sau-index' })
+    const zeile = screen.getAllByRole('listitem').find((x) => x.textContent?.includes('Schwelle'))
+    expect(zeile).toHaveTextContent(/stummgeschaltet bis /)
+    expect(screen.getByRole('heading', { level: 3, name: 'sau-index' }).closest('a')).toHaveTextContent(/stummgeschaltet bis /)
+    expect(screen.getByRole('heading', { level: 3, name: 'sau-index' }).closest('a')).not.toHaveTextContent('zuletzt gesehen')
+  })
+
+  test('1 fehlgeschlagener Abruf steht im Singular', async () => {
+    daten([{ ...serverVps, failures: 1 }], [])
+    await zeige()
+    expect(await screen.findByText('ist nicht erreichbar (1 Abruf in Folge fehlgeschlagen)')).toBeInTheDocument()
+  })
+
+  test('Karte hat den Namen und Status als zugänglichen Namen', async () => {
+    daten()
+    await zeige()
+    expect(await screen.findByRole('link', { name: 'vps-backup Nicht erreichbar' })).toHaveAttribute('href', '/server/13')
+  })
+})
+
 describe('Übersicht', () => {
   test('Karte ohne summary zeigt "keine Daten" statt NaN', async () => {
     daten()
@@ -70,7 +132,7 @@ describe('Übersicht', () => {
     const nas = screen.getByRole('heading', { level: 3, name: 'nas' }).closest('a')!
     expect(nas).toHaveTextContent('Stummgeschaltet')
     expect(nas).toHaveTextContent('5 von 6 Containern laufen')
-    expect(nas).toHaveTextContent(/stumm bis /)
+    expect(nas).toHaveTextContent(/stummgeschaltet bis /)
     const pi = screen.getByRole('heading', { level: 3, name: 'pi' }).closest('a')!
     expect(pi).toHaveTextContent('Manager · lokal')
   })
@@ -93,7 +155,7 @@ describe('Übersicht', () => {
     expect(zeilen[0]).toHaveTextContent('ist nicht erreichbar (3 Abrufe in Folge fehlgeschlagen)')
     expect(zeilen[1]).toHaveTextContent('Warnung')
     expect(within(zeilen[1]!).getByRole('link', { name: 'sau-index' })).toBeInTheDocument()
-    expect(zeilen[1]).toHaveTextContent('Dateisystem voll (/var): 81 % (Schwelle 75 %)')
+    expect(zeilen[1]).toHaveTextContent('Dateisystem voll (Einhängepunkt /var): 81 % (Schwelle 75 %)')
     expect(zeilen[1]).toHaveTextContent('seit 2 Std.')
     expect(abschnitt).toHaveTextContent('Die übrigen 2 laufen normal, davon 1 stummgeschaltet.')
   })
