@@ -47,7 +47,7 @@ export interface Server {
 export interface Snapshot {
   timestamp: string
   host?: {
-    cpu?: { usage_percent?: number | null }
+    cpu?: { usage_percent?: number | null; cores?: number | null }
     load?: { load1?: number | null; load5?: number | null; load15?: number | null }
     memory?: { total_bytes?: number | null; used_bytes?: number | null; usage_percent?: number | null; swap_used_bytes?: number | null }
     uptime_seconds?: number | null
@@ -57,13 +57,16 @@ export interface Snapshot {
     network?: { interface?: string; rx_bytes?: number | null; tx_bytes?: number | null }[]
   }
   containers?: {
+    id?: string
     name?: string
     image?: string
     status?: string
     health?: string | null
     cpu_percent?: number | null
     memory_usage_bytes?: number | null
+    memory_limit_bytes?: number | null
     restart_count?: number | null
+    uptime_seconds?: number | null
   }[]
   docker?: { reachable?: boolean; container_count?: number }
   warnings?: unknown[]

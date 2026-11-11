@@ -5,11 +5,11 @@ import { formatWert, istZustand, labelText, metrikName } from '../../texte/metri
 import { dauer, lokal, sekundenSeit } from '../../ui/Zeit'
 import { offeneAlarme, zustand } from './dringlichkeit'
 
-interface Zeile { server: Server; schwere: 'kritisch' | 'warnung'; text: string; seit: number | null }
+export interface Zeile { server: Server; schwere: 'kritisch' | 'warnung'; text: string; seit: number | null }
 
 export const stummBis = (s: Server, jetzt: number) => (s.muted_until && Date.parse(s.muted_until) > jetzt ? t('karte.stummBis', { zeit: lokal(Date.parse(s.muted_until), jetzt) }) : null)
 
-function zeile(server: Server, alarme: Alarm[], regeln: Regel[], jetzt: number): Zeile {
+export function zeile(server: Server, alarme: Alarm[], regeln: Regel[], jetzt: number): Zeile {
   const z = zustand(server, alarme, jetzt)
   if (z === 'fehler') {
     const text = server.status === 'error'

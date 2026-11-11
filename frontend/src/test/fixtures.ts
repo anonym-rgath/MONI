@@ -1,4 +1,4 @@
-import type { Alarm, Regel, Server, Session } from '../api/typen'
+import type { Alarm, Regel, Server, Session, Snapshot } from '../api/typen'
 
 const benutzer = { id: 1, email: 'robin@example.test', name: 'Robin', kind: 'local', totp_enabled: true } as const
 
@@ -48,4 +48,32 @@ export const regelDateisystem: Regel = {
 export const alarmSau: Alarm = {
   rule: { id: 1, name: 'Dateisystem voll' }, server: { id: 11, name: 'sau-index' }, labels: { mountpoint: '/var' },
   state: 'firing', severity: 'warning', value: 81, since: vor(2 * 3600), muted: false,
+}
+
+export const regelCpu: Regel = { ...regelDateisystem, id: 2, name: 'CPU hoch', metric: 'moni_host_cpu_usage_percent', warning: 75, critical: 90, key_labels: [] }
+
+export const snapshotSau: Snapshot = {
+  timestamp: '2026-11-11T10:00:00Z',
+  host: {
+    cpu: { usage_percent: 41, cores: 4 },
+    load: { load1: 0.52, load5: 0.4, load15: 0.3 },
+    memory: { total_bytes: 8 * 1024 ** 3, used_bytes: 3 * 1024 ** 3, usage_percent: 37.5 },
+    uptime_seconds: 3 * 86400,
+    temperature: { zones: [{ name: 'cpu', id: 'z0', celsius: 58 }] },
+    filesystems: [
+      { mountpoint: '/', device: '/dev/sda1', fstype: 'ext4', total_bytes: 100 * 1024 ** 3, used_bytes: 40 * 1024 ** 3, usage_percent: 40 },
+      { mountpoint: '/var', device: '/dev/sdb1', fstype: 'xfs', total_bytes: 100 * 1024 ** 3, used_bytes: 81 * 1024 ** 3, usage_percent: 81 },
+    ],
+    network: [
+      { interface: 'lo', rx_bytes: 9e12, tx_bytes: 9e12 },
+      { interface: 'eth0', rx_bytes: 5e9, tx_bytes: 1e9 },
+      { interface: 'wlan0', rx_bytes: 1e6, tx_bytes: 1e6 },
+    ],
+  },
+  containers: [
+    { id: 'abc123', name: 'photoprism', image: 'photoprism/photoprism:latest', status: 'running', health: 'healthy', cpu_percent: 3.5, memory_usage_bytes: 512 * 1024 ** 2, restart_count: 0, uptime_seconds: 7200 },
+    { id: 'def456', name: 'redis', image: 'redis:7', status: 'exited', health: 'none', cpu_percent: null, memory_usage_bytes: null, restart_count: 2, uptime_seconds: null },
+  ],
+  docker: { reachable: true, container_count: 2 },
+  warnings: [],
 }

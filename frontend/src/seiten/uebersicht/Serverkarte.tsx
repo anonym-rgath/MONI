@@ -7,7 +7,7 @@ import { sekundenSeit, vor } from '../../ui/Zeit'
 import { stummBis } from './Aufmerksamkeit'
 import type { Zustand } from './dringlichkeit'
 
-const MARKE: Record<Zustand, { text: TextSchluessel; ton: Ton; rand: string }> = {
+export const MARKE: Record<Zustand, { text: TextSchluessel; ton: Ton; rand: string }> = {
   fehler: { text: 'status.nichtErreichbar', ton: 'crit', rand: 'border-t-crit' },
   kritisch: { text: 'status.kritisch', ton: 'crit', rand: 'border-t-crit' },
   warnung: { text: 'status.warnung', ton: 'warn', rand: 'border-t-warn' },
