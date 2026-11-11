@@ -32,7 +32,7 @@ export function Rahmen({ children }: { children: ReactNode }) {
           </nav>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <DarstellungWahl />
-            <span className="text-sm text-muted">{user && t('rahmen.benutzer', { name: user.name, rolle: t(user.role === 'admin' ? 'rolle.admin' : 'rolle.betrachter') })}</span>
+            {user && <NavLink to="/konto" className="rounded-lg px-2 py-2 text-sm text-muted underline-offset-3 hover:underline aria-[current=page]:font-semibold aria-[current=page]:text-text">{t('rahmen.benutzer', { name: user.name, rolle: t(user.role === 'admin' ? 'rolle.admin' : 'rolle.betrachter') })}</NavLink>}
             <button type="button" onClick={() => void abmelden()} className="min-h-10 cursor-pointer rounded-lg border border-control px-3 text-sm">{t('rahmen.abmelden')}</button>
           </div>
         </div>

@@ -6,7 +6,7 @@ import { Einrichtung } from './seiten/anmeldung/Einrichtung'
 import { Login } from './seiten/anmeldung/Login'
 import { ZweiFaktorRoute } from './seiten/anmeldung/ZweiFaktorEinrichten'
 import { ZweiterFaktor } from './seiten/anmeldung/ZweiterFaktor'
-import { Platzhalter } from './seiten/Platzhalter'
+import { Konto } from './seiten/konto/Konto'
 import { Alarme } from './seiten/alarme/Alarme'
 import { Kanaele } from './seiten/alarme/Kanaele'
 import { Offen } from './seiten/alarme/Offen'
@@ -29,7 +29,7 @@ import { Rahmen } from './ui/Rahmen'
 // Recharts steckt nur hier; die Seite lädt erst bei Bedarf, damit der Hauptteil klein bleibt.
 const Serverdetail = lazy(() => import('./seiten/server/Serverdetail').then((m) => ({ default: m.Serverdetail })))
 
-// Alle Routen aus D9. Seiten sind Platzhalter, bis die jeweiligen Tasks sie ersetzen.
+// Alle Routen aus D9.
 export function Routen() {
   return (
     <Routes>
@@ -52,7 +52,7 @@ export function Routen() {
           <Route path="audit" element={<Verwaltung titel="seiten.audit"><Audit /></Verwaltung>} />
           <Route path="anmeldung" element={<Verwaltung titel="seiten.anmeldung"><Anmeldeanbieter /></Verwaltung>} />
         </Route>
-        <Route path="konto" element={<Platzhalter titel="seiten.konto" />} />
+        <Route path="konto" element={<Konto />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
