@@ -84,7 +84,7 @@ describe('Sitzung', () => {
   })
 
   test('sicheresZiel verwirft Open-Redirect-Ziele', () => {
-    for (const böse of ['//evil.example', '/\\evil.example', '/\t/evil.example', '/\n/evil.example', '/\r/evil', 'https://evil.example', 'javascript:alert(1)', 'alarme', '', null]) {
+    for (const böse of ['//evil.example', '/\\evil.example', '/\t/evil.example', '/\n/evil.example', '/\r/evil', '/.//evil', '/a/..//evil', '/%2e//evil', 'https://evil.example', 'javascript:alert(1)', 'alarme', '', null]) {
       expect(sicheresZiel(böse), String(böse)).toBeNull()
     }
     expect(sicheresZiel('/alarme?x=1')).toBe('/alarme?x=1')

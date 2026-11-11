@@ -26,7 +26,9 @@ export function sicheresZiel(weiter: string | null): string | null {
   if (!weiter || !weiter.startsWith('/') || UNZULAESSIG.test(weiter)) return null
   try {
     const u = new URL(weiter, location.origin)
-    return u.origin === location.origin ? u.pathname + u.search + u.hash : null
+    const ziel = u.pathname + u.search + u.hash
+    // "/.//evil" wird zu "//evil": nach dem Normalisieren darf kein protokollrelatives Ziel übrig sein.
+    return u.origin === location.origin && ziel.startsWith('/') && !/^\/[/\\]/.test(ziel) ? ziel : null
   } catch {
     return null
   }

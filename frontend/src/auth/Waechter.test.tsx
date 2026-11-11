@@ -26,6 +26,11 @@ describe('Routenwächter', () => {
     await waitFor(() => expect(ort()).toBe('/login?weiter=%2Falarme%2Fregeln%3Fx%3D1'))
   })
 
+  test('Tiefenlink ohne Sitzung: /server/3?x=1 wird zum Rücksprungziel', async () => {
+    zeigeApp('/server/3?x=1')
+    await waitFor(() => expect(ort()).toBe('/login?weiter=%2Fserver%2F3%3Fx%3D1'))
+  })
+
   test('mit Stage full führen Anmeldeseiten zur Übersicht', async () => {
     server.use(sitzungAntwort(sitzungAdmin))
     zeigeApp('/login')
