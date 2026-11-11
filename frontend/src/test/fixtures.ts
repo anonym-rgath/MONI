@@ -1,4 +1,4 @@
-import type { Alarm, Regel, Server, Session, Snapshot } from '../api/typen'
+import type { Alarm, Kanal, Regel, Server, Session, Snapshot } from '../api/typen'
 
 const benutzer = { id: 1, email: 'robin@example.test', name: 'Robin', kind: 'local', totp_enabled: true } as const
 
@@ -41,7 +41,7 @@ export const serverVps: Server = {
 export const alleServer = [serverPi, serverSau, serverNas, serverVps]
 
 export const regelDateisystem: Regel = {
-  id: 1, name: 'Dateisystem voll', metric: 'moni_filesystem_usage_percent', func: 'last', window_seconds: null, op: '>=',
+  id: 1, name: 'Dateisystem voll', metric: 'moni_filesystem_usage_percent', func: 'value', window_seconds: null, op: '>=',
   warning: 75, critical: 85, for_seconds: 300, key_labels: ['mountpoint'], label_filter: {}, require_prior_ok: false,
   server_id: null, enabled: true, created_at: null, updated_at: null,
 }
@@ -76,4 +76,12 @@ export const snapshotSau: Snapshot = {
   ],
   docker: { reachable: true, container_count: 2 },
   warnings: [],
+}
+
+export const kanalWebhook: Kanal = {
+  id: 5, name: 'ntfy', kind: 'webhook', config: {}, min_severity: 'warning', enabled: true, created_at: null, secret_set: true, url_hint: 'https://ntfy.sh/…',
+}
+export const kanalEmail: Kanal = {
+  id: 6, name: 'E-Mail Bereitschaft', kind: 'email', min_severity: 'critical', enabled: true, created_at: null, secret_set: true, url_hint: null,
+  config: { host: 'smtp.example.org', port: 587, security: 'starttls', username: 'moni', from_addr: 'moni@example.org', to: ['a@example.org', 'b@example.org'] },
 }

@@ -61,5 +61,6 @@ export function formatWert(metric: string, wert: number | null | undefined): str
 }
 
 const LABEL: Record<string, string> = { mountpoint: 'Einhängepunkt', name: 'Container', zone: 'Zone', interface: 'Schnittstelle' }
+export const labelName = (key: string) => LABEL[key] ?? key
 export const labelText = (labels: Record<string, string>) =>
-  Object.entries(labels).map(([k, v]) => `${LABEL[k] ?? k} ${v}`).join(', ')
+  Object.entries(labels).map(([k, v]) => `${labelName(k)} ${v}`).join(', ')

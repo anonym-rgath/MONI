@@ -7,6 +7,11 @@ import { Login } from './seiten/anmeldung/Login'
 import { ZweiFaktorRoute } from './seiten/anmeldung/ZweiFaktorEinrichten'
 import { ZweiterFaktor } from './seiten/anmeldung/ZweiterFaktor'
 import { Platzhalter } from './seiten/Platzhalter'
+import { Alarme } from './seiten/alarme/Alarme'
+import { Kanaele } from './seiten/alarme/Kanaele'
+import { Offen } from './seiten/alarme/Offen'
+import { Regeln } from './seiten/alarme/Regeln'
+import { Verlauf } from './seiten/alarme/Verlauf'
 import { Uebersicht } from './seiten/uebersicht/Uebersicht'
 import { DarstellungProvider } from './ui/Darstellung'
 import { FokusNachWechsel } from './ui/FokusNachWechsel'
@@ -29,10 +34,10 @@ export function Routen() {
       <Route element={<Geschuetzt stage="full"><Rahmen><Outlet /></Rahmen></Geschuetzt>}>
         <Route index element={<Uebersicht />} />
         <Route path="server/:id" element={<Fehlergrenze><Suspense fallback={<Ladezustand text={t('server.laden')} />}><Serverdetail /></Suspense></Fehlergrenze>} />
-        <Route path="alarme" element={<Platzhalter titel="rahmen.alarme" />} />
-        <Route path="alarme/verlauf" element={<Platzhalter titel="seiten.alarmVerlauf" />} />
-        <Route path="alarme/regeln" element={<Platzhalter titel="seiten.alarmRegeln" />} />
-        <Route path="alarme/kanaele" element={<Platzhalter titel="seiten.alarmKanaele" />} />
+        <Route path="alarme" element={<Alarme><Offen /></Alarme>} />
+        <Route path="alarme/verlauf" element={<Alarme><Verlauf /></Alarme>} />
+        <Route path="alarme/regeln" element={<Alarme><Regeln /></Alarme>} />
+        <Route path="alarme/kanaele" element={<Geschuetzt stage="full" rolle="admin"><Alarme><Kanaele /></Alarme></Geschuetzt>} />
         <Route path="verwaltung" element={<Geschuetzt stage="full" rolle="admin"><Outlet /></Geschuetzt>}>
           <Route path="server" element={<Platzhalter titel="seiten.verwaltungServer" />} />
           <Route path="benutzer" element={<Platzhalter titel="seiten.benutzer" />} />

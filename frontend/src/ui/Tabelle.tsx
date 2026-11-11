@@ -1,10 +1,13 @@
 import type { ReactNode } from 'react'
 
 // Überschrift plus scrollbarer, per Tastatur erreichbarer Bereich (role="region", benannt über die Überschrift).
-export function Tabelle({ id, titel, kopf, children }: { id: string; titel: string; kopf: string[]; children: ReactNode }) {
+export function Tabelle({ id, titel, kopf, aktion, children }: { id: string; titel: string; kopf: string[]; aktion?: ReactNode; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-3">
-      <h2 id={id} className="m-0 text-[1.0625rem] font-semibold">{titel}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 id={id} className="m-0 text-[1.0625rem] font-semibold">{titel}</h2>
+        {aktion}
+      </div>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrollbarer Bereich muss per Tastatur erreichbar sein (WCAG 2.1.1) */}
       <div role="region" aria-labelledby={id} tabIndex={0} className="overflow-x-auto rounded-[14px] border border-border bg-surface">
         <table className="w-full border-collapse text-left text-sm">

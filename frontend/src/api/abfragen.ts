@@ -1,6 +1,6 @@
-import { MutationCache, QueryCache, QueryClient, useQuery } from '@tanstack/react-query'
+import { MutationCache, QueryCache, QueryClient, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { ApiFehler, api } from './client'
-import type { Alarm, Regel, Server, Snapshot, Verlauf } from './typen'
+import type { Alarm, Kanal, Regel, Seite, Server, Snapshot, Verlauf, Verlaufseintrag } from './typen'
 
 export const schluessel = {
   sitzung: ['sitzung'] as const,
@@ -11,6 +11,9 @@ export const schluessel = {
   snapshot: (id: number) => ['server', id, 'snapshot'] as const,
   alarme: ['alarme'] as const,
   regeln: ['regeln'] as const,
+  kanaele: ['kanaele'] as const,
+  erinnerung: ['erinnerung'] as const,
+  alarmVerlauf: (serverId: number | null) => ['alarme', 'verlauf', serverId] as const, // unter ['alarme']: Regeländerungen laden ihn mit neu
   verlauf: (id: number, metric: string, label: string, bereichMs: number) => ['server', id, 'verlauf', metric, label, bereichMs] as const,
 }
 
@@ -51,3 +54,16 @@ export const verlaufOptionen = (id: number, metric: string, label: string | unde
   },
   refetchInterval: VERLAUF_MS,
 })
+
+export const HISTORIE_SEITE = 50
+// Blättern mit before=next_before; der Serverfilter steckt im Schlüssel, ein Wechsel beginnt also wieder bei der ersten Seite.
+export const useAlarmVerlauf = (serverId: number | null) =>
+  useInfiniteQuery({
+    queryKey: schluessel.alarmVerlauf(serverId),
+    initialPageParam: undefined as number | undefined,
+    queryFn: ({ pageParam }) => api.get<Seite<Verlaufseintrag>>('/alerts/history', { limit: HISTORIE_SEITE, before: pageParam, server_id: serverId ?? undefined }),
+    getNextPageParam: (letzte) => letzte.next_before ?? undefined,
+  })
+// Nur Admins; die Kanäle-Seite ist geschützt, GET liefert nie Geheimnisse (nur secret_set und url_hint).
+export const useKanaele = () => useQuery({ queryKey: schluessel.kanaele, queryFn: () => api.get<Kanal[]>('/alert-channels') })
+export const useErinnerung = () => useQuery({ queryKey: schluessel.erinnerung, queryFn: () => api.get<{ remind_minutes: number }>('/alert-settings') })
