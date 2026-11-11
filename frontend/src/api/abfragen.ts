@@ -4,6 +4,8 @@ import type { Alarm, Server, Snapshot } from './typen'
 
 export const schluessel = {
   sitzung: ['sitzung'] as const,
+  setup: ['setup'] as const,
+  oidcAnbieter: ['oidc-anbieter'] as const,
   server: ['server'] as const,
   serverEinzeln: (id: number) => ['server', id] as const,
   snapshot: (id: number) => ['server', id, 'snapshot'] as const,

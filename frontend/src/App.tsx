@@ -1,6 +1,10 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router'
 import { Geschuetzt } from './auth/Waechter'
 import { SitzungProvider } from './auth/Sitzung'
+import { Einrichtung } from './seiten/anmeldung/Einrichtung'
+import { Login } from './seiten/anmeldung/Login'
+import { ZweiFaktorEinrichten } from './seiten/anmeldung/ZweiFaktorEinrichten'
+import { ZweiterFaktor } from './seiten/anmeldung/ZweiterFaktor'
 import { Platzhalter } from './seiten/Platzhalter'
 import { DarstellungProvider } from './ui/Darstellung'
 import { FokusNachWechsel } from './ui/FokusNachWechsel'
@@ -10,10 +14,10 @@ import { Rahmen } from './ui/Rahmen'
 export function Routen() {
   return (
     <Routes>
-      <Route path="login" element={<Geschuetzt stage="none"><Platzhalter titel="seiten.login" /></Geschuetzt>} />
-      <Route path="einrichtung" element={<Geschuetzt stage="none"><Platzhalter titel="seiten.einrichtung" /></Geschuetzt>} />
-      <Route path="login/zweiter-faktor" element={<Geschuetzt stage="mfa"><Platzhalter titel="seiten.zweiterFaktor" /></Geschuetzt>} />
-      <Route path="einrichtung/zwei-faktor" element={<Geschuetzt stage="enroll"><Platzhalter titel="seiten.zweiFaktorEinrichten" /></Geschuetzt>} />
+      <Route path="login" element={<Geschuetzt stage="none"><Login /></Geschuetzt>} />
+      <Route path="einrichtung" element={<Geschuetzt stage="none"><Einrichtung /></Geschuetzt>} />
+      <Route path="login/zweiter-faktor" element={<Geschuetzt stage="mfa"><ZweiterFaktor /></Geschuetzt>} />
+      <Route path="einrichtung/zwei-faktor" element={<Geschuetzt stage="enroll"><ZweiFaktorEinrichten /></Geschuetzt>} />
       <Route element={<Geschuetzt stage="full"><Rahmen><Outlet /></Rahmen></Geschuetzt>}>
         <Route index element={<Platzhalter titel="rahmen.uebersicht" />} />
         <Route path="server/:id" element={<Platzhalter titel="seiten.server" />} />

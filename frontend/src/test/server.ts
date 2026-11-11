@@ -11,4 +11,8 @@ export const sitzungAntwort = (s: Session | null) =>
   http.get(`${BASIS}/auth/session`, () => (s ? HttpResponse.json(s) : problem(401, 'Nicht angemeldet')))
 
 // Standard: nicht angemeldet. Tests überschreiben mit server.use(...).
-export const server = setupServer(sitzungAntwort(null))
+export const server = setupServer(
+  sitzungAntwort(null),
+  http.get(`${BASIS}/setup`, () => HttpResponse.json({ required: false })),
+  http.get(`${BASIS}/auth/oidc`, () => HttpResponse.json({ providers: [] })),
+)

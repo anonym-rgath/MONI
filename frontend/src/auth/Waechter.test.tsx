@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { Link } from 'react-router'
 import { axe } from 'vitest-axe'
 import { describe, expect, test } from 'vitest'
@@ -77,12 +78,13 @@ describe('Routenwächter', () => {
     expect(document.title).toBe('Alarme – Moni')
   })
 
-  test('der Fokus geht auch auf eine H1 außerhalb von main', async () => {
+  test('der Fokus geht auch auf die H1 einer Seite ohne App-Rahmen', async () => {
+    server.use(http.get('/api/v1/setup', () => HttpResponse.json({ required: true })))
     zeigeApp('/einrichtung', <Link to="/login">Zum Login</Link>)
     await h1('Einrichtung')
-    expect(screen.queryByRole('main')).not.toBeInTheDocument()
     await userEvent.setup().click(screen.getByRole('link', { name: 'Zum Login' }))
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Anmelden' })).toHaveFocus())
+    // /login leitet bei nötigem Setup zurück; der Fokus liegt danach auf der H1 der Zielseite
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Einrichtung' })).toHaveFocus())
   })
 
   test('Seitenrahmen mit Platzhalter hat keine axe-Verstöße', async () => {

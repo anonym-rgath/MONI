@@ -2,19 +2,12 @@ import type { ReactNode } from 'react'
 import { NavLink } from 'react-router'
 import { useSitzung } from '../auth/Sitzung'
 import { t } from '../texte/de'
-import { useDarstellung, type Wahl } from './Darstellung'
-
-const WAHLEN: { wahl: Wahl; text: 'rahmen.auto' | 'rahmen.hell' | 'rahmen.dunkel' }[] = [
-  { wahl: 'auto', text: 'rahmen.auto' },
-  { wahl: 'hell', text: 'rahmen.hell' },
-  { wahl: 'dunkel', text: 'rahmen.dunkel' },
-]
+import { DarstellungWahl } from './DarstellungWahl'
 
 const navLink = 'flex items-center gap-2 rounded-lg px-3.5 py-2.5 text-muted aria-[current=page]:bg-surface-2 aria-[current=page]:font-semibold aria-[current=page]:text-text'
 
 // offeneAlarme: Platzhalter, Task 5 verdrahtet /alerts.
 export function Rahmen({ offeneAlarme = 0, children }: { offeneAlarme?: number; children: ReactNode }) {
-  const { wahl, setzen } = useDarstellung()
   const { user, abmelden } = useSitzung()
   return (
     <>
@@ -37,19 +30,7 @@ export function Rahmen({ offeneAlarme = 0, children }: { offeneAlarme?: number; 
             {user?.role === 'admin' && <NavLink to="/verwaltung/server" className={navLink}>{t('rahmen.verwaltung')}</NavLink>}
           </nav>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <div role="group" aria-label={t('rahmen.darstellung')} className="flex gap-0.5 rounded-[9px] border border-control p-[3px]">
-              {WAHLEN.map((o) => (
-                <button
-                  key={o.wahl}
-                  type="button"
-                  aria-pressed={wahl === o.wahl}
-                  onClick={() => setzen(o.wahl)}
-                  className="min-h-8.5 cursor-pointer rounded-md px-2.5 text-[0.8125rem] font-medium text-muted aria-pressed:bg-surface-2 aria-pressed:text-text"
-                >
-                  {t(o.text)}
-                </button>
-              ))}
-            </div>
+            <DarstellungWahl />
             <span className="text-sm text-muted">{user && t('rahmen.benutzer', { name: user.name, rolle: t(user.role === 'admin' ? 'rolle.admin' : 'rolle.betrachter') })}</span>
             <button type="button" onClick={() => void abmelden()} className="min-h-10 cursor-pointer rounded-lg border border-control px-3 text-sm">{t('rahmen.abmelden')}</button>
           </div>

@@ -25,8 +25,11 @@ export function Geschuetzt({ stage, rolle, children }: { stage: Stage; rolle?: '
     )
   }
   if (s.stage !== stage) {
-    const weiter = s.stage === 'none' ? sicheresZiel(pathname + search) : null // Tiefenlink merken
-    return <Navigate to={weiter ? `${START.none}?weiter=${encodeURIComponent(weiter)}` : START[s.stage]} replace />
+    const weiter = sicheresZiel(new URLSearchParams(search).get('weiter')) // Rücksprungziel der Anmeldeseiten überlebt jeden Stage-Wechsel
+    if (s.stage === 'full' && weiter) return <Navigate to={weiter} replace />
+    const tiefenlink = s.stage === 'none' ? sicheresZiel(pathname + search) : null // Tiefenlink merken
+    const behalten = tiefenlink ?? (s.stage === 'none' || s.stage === 'full' ? null : weiter)
+    return <Navigate to={behalten ? `${s.stage === 'none' ? START.none : START[s.stage]}?weiter=${encodeURIComponent(behalten)}` : START[s.stage]} replace />
   }
   if (rolle && s.user?.role !== rolle) return <h1 tabIndex={-1} className="text-[1.625rem] leading-tight font-semibold">{t('waechter.keineBerechtigung')}</h1>
   return children
