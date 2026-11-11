@@ -596,3 +596,62 @@ Nicht durch Subagents.
 2. Hell und dunkel ansehen, auf dem Handy und am Rechner. Was optisch nicht gefällt, notieren; Anpassungen gehen über `src/stil/tokens.css` und die Bausteine in `src/ui/`.
 3. Mit 200 % Browser-Zoom und nur mit der Tastatur einmal durch Übersicht, Serverdetail und Alarme.
 4. Falls ein zweiter Agent existiert: über „Server koppeln“ mit Kopplungscode koppeln.
+
+## Nachlauf aus dem Abschlussreview (2026-11-12)
+
+Paket 6 ist umgesetzt (Commits `cb19939..04bd191`). Stand der Prüfungen:
+- Frontend: 229 Tests grün, mehrfach hintereinander.
+- Backend: 1023 Tests grün.
+- Der Browser-Smoke lief lokal im echten Chromium gegen den Manager-Container: 0 CSP-Verstöße, 0 axe-Verstöße auf allen Seiten in hell und dunkel. Auf GitHub Actions laufen der Frontend-Job und der Browser-Smoke mit diesem Push zum ersten Mal.
+
+### Rulings während der Umsetzung
+
+- **P6-R1:** Tests dürfen deutsche Texte als Literale prüfen; im Produktionscode kommen sie nur aus `de.ts`.
+- **P6-R2:** TypeScript 6 und ESLint 9 statt der neuesten Hauptversionen, weil typescript-eslint und jsx-a11y sie noch nicht tragen.
+- **P6-R3:** Für die CSP gilt:
+  - Keine `data:`-Schriften (`assetsInlineLimit: 0`).
+  - Der `noscript`-Text steht direkt in `index.html`.
+  - Die Darstellung läuft über einen eigenen Kontext.
+- **P6-R4:** Die Rolle heißt in der API `viewer`, angezeigt wird „Betrachter“. Verlaufs-Labels haben die Form `label=key:value`.
+- **P6-R5:** Abmelden leert alle Daten gezielt statt über `queryClient.clear()`, das die Stage hängen ließ.
+- **P6-R6:** Fokus auf die H1 überall im Dokument; die Weiterleitung zum Login trägt das Rücksprungziel.
+- **P6-R7:** Fokus nach „Bestätigen“, dauerhafte Live-Region, Leerzeichen beim Einfügen von Codes und verzögertes `revokeObjectURL`.
+- **P6-R8:** Klartext, Einheiten und Ja/Nein-Zustände aller Metriken stehen zentral in `src/texte/metriken.ts`.
+- **P6-R9:** Das Serverdetail wird nachgeladen. Ports fehlen, weil der Snapshot keine enthält.
+- **P6-R10:** Präzisierungen im Serverdetail:
+  - Schwellenlinien beachten `label_filter`.
+  - Beim Rückfall auf die kritische Schwelle heißt sie „Kritische Schwelle“.
+  - „Bis morgen 8 Uhr“ meint vor 8 Uhr den heutigen Tag.
+  - Eine ungültige ID ergibt „Server nicht gefunden“.
+- **P6-R11:** „Zuletzt benutzt“ entfällt bei Tokens, weil die API kein Feld dafür hat. Neue Benutzer sind standardmäßig Betrachter.
+- **P6-R12:** Fokus auf das Codefeld bei einem Kopplungsfehler, nummerierte Header-Zeilen und ein echter Clipboard-Test.
+- **P6-R13:** Eine einzige 401-Regel in `api/client.ts`: Jede 401 außer „Kopplungs-Token ungültig“ und „Anmeldung fehlgeschlagen“ meldet ab. Für Ablauf und Abmelden gibt es nur eine Navigationsquelle, den Wächter.
+- **P6-R14:** `resolution=auto` fällt auch auf feinere Stufen zurück, damit Diagramme direkt nach der Installation nicht leer sind.
+- **P6-R15:** Die CSP enthält zusätzlich `trusted-types 'none'`.
+- **P6-R16:** Kleine Punkte aus dem Abschlussreview:
+  - README und Dependabot-Gruppen.
+  - „Schlüssel=Wert“ mit Umlaut.
+  - Doppelklick-Sperre bei Rückfragen.
+  - Geblätterte Listen laden beim Fensterfokus nicht neu.
+  - Hinweis im Serverdetail, wenn der Manager ausfällt.
+  - Ändert man die eigene Rolle, wird die Sitzung neu geladen.
+  - Der Smoke-Test besucht auch Konto und Verwaltung.
+
+### Geparkte Punkte
+
+- **Paket 7 (Härtung und Aufräumen):**
+  - Abmelden während einer laufenden Abfrage kann als „Sitzung abgelaufen“ enden (nur Kosmetik). Es fehlt ein Test für eine 401 auf den Logout-Aufruf selbst. `Innen` ist über `useLocation` an den Ablauf nach dem Login gekoppelt.
+  - Die Helfer für Rückfragen, Fehlertexte und Statusmeldungen gibt es mehrfach (Alarme, Serverdetail, Verwaltung); sie sollten zusammengeführt werden.
+  - Kein `AbortSignal` an `fetch`. Abmelden hat kein Timeout. Der Seitentitel „Keine Berechtigung“ fehlt.
+  - Agent-Token-404 wird über den Fehlertext des Pollers erkannt; besser wäre `AgentError.status`.
+  - Kanal-PATCH sendet alle Felder, deshalb nennt das Audit auch unveränderte. Ein Fehler beim Laden der Erinnerungs-Einstellung bleibt still.
+  - Kleinigkeiten im Serverdetail:
+    - Die Spitze kommt aus dem Bucket-Maximum, die Linie zeigt den Mittelwert.
+    - Fällt eine Reihe aus, fehlt auch die Zusammenfassung der anderen.
+    - `last_error` erscheint doppelt.
+    - Die Legende zeigt kein Strichmuster.
+  - npm-audit-Meldungen in der Dev-Lint-Kette (minimatch); CI läuft mit Node 24, das Dockerfile mit Node 26.
+- **Später:**
+  - Server umbenennen: Die API kann es noch nicht.
+  - „Zuletzt benutzt“ für Tokens.
+  - Ports der Container im Snapshot.
