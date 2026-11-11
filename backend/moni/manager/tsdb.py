@@ -130,9 +130,12 @@ def query(conn: sqlite3.Connection, server_id: int, metric: str, start: int, end
     if resolution != "auto":
         return _query(conn, server_id, metric, start, end, resolution, labels)
     order = list(_TABLES)
-    first = _query(conn, server_id, metric, start, end, pick_resolution(start, end), labels)
-    for res in order[order.index(first["resolution"]):]:  # leer -> nächst gröbere Auflösung (Rohdaten sind evtl. verdichtet)
-        r = first if res == first["resolution"] else _query(conn, server_id, metric, start, end, res, labels)
+    i = order.index(pick_resolution(start, end))
+    first = None
+    # leer -> erst gröber (Rohdaten sind evtl. schon verdichtet), dann feiner (kurz nach Installation noch nicht verdichtet)
+    for res in [order[i], *order[i + 1:], *reversed(order[:i])]:
+        r = _query(conn, server_id, metric, start, end, res, labels)
+        first = first or r
         if any(s["points"] for s in r["series"]):
             return r
     return first

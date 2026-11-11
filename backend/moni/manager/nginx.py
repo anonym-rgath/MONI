@@ -23,7 +23,7 @@ _BODY = """\
     client_max_body_size 1m;
     add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; \
 img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; \
-form-action 'self'; require-trusted-types-for 'script'" always;
+form-action 'self'; require-trusted-types-for 'script'; trusted-types 'none'" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer" always;
     add_header X-Frame-Options "DENY" always;

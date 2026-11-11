@@ -149,6 +149,20 @@ def test_auto_falls_back_to_coarser_resolution(conn, sid, settings):
     assert r["resolution"] == "1m" and r["series"][0]["points"] == [["2026-11-04T12:00:00Z", 5.0, 5.0, 5.0]]
 
 
+def test_auto_falls_back_to_finer_resolution_right_after_install(conn, sid):
+    tsdb.write_snapshots(conn, sid, [snap(T + 60 * i, float(i)) for i in range(3)])  # nur Rohdaten, noch nicht verdichtet
+    r = tsdb.query(conn, sid, M, T - 86400 + 200, T + 200, "auto")  # 24 Std. -> 1m ist leer
+    assert r["resolution"] == "raw" and len(r["series"][0]["points"]) == 3
+    tsdb.rollup(conn, now=T + 300)  # Minutenwerte da, Stundenwerte noch nicht
+    r = tsdb.query(conn, sid, M, T - 30 * 86400 + 200, T + 200, "auto")  # 30 Tage -> 1h leer, nächst feinere zuerst
+    assert r["resolution"] == "1m"
+
+
+def test_auto_without_any_data_keeps_picked_resolution(conn, sid):
+    r = tsdb.query(conn, sid, M, T - 86400, T, "auto")
+    assert r == {"resolution": "1m", "series": []}
+
+
 def test_prune_removes_orphan_series(conn, sid, settings):
     a = snap(T, 1.0)
     a["containers"] = [{"name": "alt", "cpu_percent": 3.0}]

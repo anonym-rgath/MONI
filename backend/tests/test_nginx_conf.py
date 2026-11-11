@@ -88,7 +88,7 @@ _KEPT = [
     "scgi_temp_path /tmp/nginx-scgi;",
     """add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; """
     """img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; """
-    """form-action 'self'; require-trusted-types-for 'script'" always;""",
+    """form-action 'self'; require-trusted-types-for 'script'; trusted-types 'none'" always;""",
     'add_header X-Content-Type-Options "nosniff" always;',
     'add_header Referrer-Policy "no-referrer" always;',
     'add_header X-Frame-Options "DENY" always;',
@@ -140,5 +140,5 @@ def test_render_rejects_non_int_port():
 def test_csp_has_no_external_sources_and_no_unsafe_inline():
     conf = nginx.render(_s(MONI_TLS="off"))
     assert "googleapis" not in conf and "gstatic" not in conf and "'unsafe-inline'" not in conf
-    assert "require-trusted-types-for 'script'" in conf and "object-src 'none'" in conf
+    assert "require-trusted-types-for 'script'" in conf and "trusted-types 'none'" in conf and "object-src 'none'" in conf
     assert "root /app/frontend/dist;" in conf
