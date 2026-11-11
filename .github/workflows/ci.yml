@@ -1,8 +1,8 @@
 # CI-Pipeline fuer MONI
 # ---------------------
 # Validiert jeden Push auf main und jeden Pull Request (inkl. Dependabot):
-#   1. Backend-Unit-Tests.
-#   2. Baut beide Image-Targets (agent, manager). Damit laufen `yarn build`
+#   1. Backend-Unit-Tests und Frontend (npm ci, Lint, Typen, Tests, Build).
+#   2. Baut beide Image-Targets (agent, manager). Damit laufen `npm run build`
 #      und `pip install` durch.
 #   3. Startet compose.agent.yaml (Agent + Socket-Proxy) auf dem Runner und
 #      (TLS an) und prueft per HTTPS Health, Auth, Snapshot, Metriken und die
@@ -40,6 +40,38 @@ jobs:
       - name: Run pytest
         run: python -m pytest tests/ -v
         working-directory: backend
+
+  frontend:
+    name: Frontend (Lint, Typen, Tests, Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
 
   build:
     name: Build images & smoke tests

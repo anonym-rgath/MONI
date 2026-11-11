@@ -86,9 +86,9 @@ _KEPT = [
     "fastcgi_temp_path /tmp/nginx-fastcgi;",
     "uwsgi_temp_path /tmp/nginx-uwsgi;",
     "scgi_temp_path /tmp/nginx-scgi;",
-    """add_header Content-Security-Policy "default-src 'self'; font-src 'self' https://fonts.gstatic.com; """
-    """style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; connect-src 'self'; """
-    """img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;""",
+    """add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; """
+    """img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; """
+    """form-action 'self'; require-trusted-types-for 'script'" always;""",
     'add_header X-Content-Type-Options "nosniff" always;',
     'add_header Referrer-Policy "no-referrer" always;',
     'add_header X-Frame-Options "DENY" always;',
@@ -96,7 +96,7 @@ _KEPT = [
     'microphone=(), payment=(), usb=()" always;',
 ]
 _HTTP_LEVEL = ("client_body_temp_path", "proxy_temp_path", "fastcgi_temp_path", "uwsgi_temp_path", "scgi_temp_path")
-_KEPT_ROOT = ["root /app/frontend/build;", "try_files $uri $uri/ /index.html;"]
+_KEPT_ROOT = ["root /app/frontend/dist;", "try_files $uri $uri/ /index.html;"]
 _KEPT_API = ["proxy_pass http://127.0.0.1:8001;", "proxy_set_header Host $host;",
              "proxy_set_header X-Real-IP $remote_addr;", "proxy_set_header X-Forwarded-For $remote_addr;",
              "proxy_set_header X-Forwarded-Proto $scheme;", "proxy_read_timeout 30s;"]
@@ -135,3 +135,10 @@ def test_render_rejects_non_int_port():
     s = dataclasses.replace(_s(MONI_TLS="on"), https_port="443;\n    return 200")
     with pytest.raises(AssertionError):
         nginx.render(s)
+
+
+def test_csp_has_no_external_sources_and_no_unsafe_inline():
+    conf = nginx.render(_s(MONI_TLS="off"))
+    assert "googleapis" not in conf and "gstatic" not in conf and "'unsafe-inline'" not in conf
+    assert "require-trusted-types-for 'script'" in conf and "object-src 'none'" in conf
+    assert "root /app/frontend/dist;" in conf

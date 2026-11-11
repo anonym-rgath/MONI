@@ -2,15 +2,11 @@
 FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS frontend-builder
 
 WORKDIR /app/frontend
-# node:26-alpine bundelt weder Yarn noch corepack mehr - corepack via npm
-# nachinstallieren und aktivieren; Yarn-Version kommt aus dem
-# "packageManager"-Feld in package.json.
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN npm install -g corepack && corepack enable
-COPY frontend/package.json frontend/yarn.lock* ./
-RUN yarn install --frozen-lockfile --non-interactive
+# --ignore-scripts: keine Install-Skripte der Abhängigkeiten im Build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --ignore-scripts
 COPY frontend/ .
-RUN yarn build
+RUN npm run build
 
 # Agent-Image: nur der Messdienst (kein nginx, kein Frontend)
 FROM python:3.14-slim@sha256:c845af9399020c7e562969a13689e929074a10fd057acd1b1fad06a2fb068e97 AS agent
@@ -63,7 +59,7 @@ RUN pip install --no-cache-dir -r backend/requirements-docker.txt
 
 COPY backend/moni ./moni
 
-COPY --from=frontend-builder /app/frontend/build ./frontend/build
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 RUN addgroup --system app \
     && adduser --system --ingroup app --home /app app \

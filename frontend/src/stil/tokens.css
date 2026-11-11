@@ -1,0 +1,67 @@
+/* Design-Werte (Plan D3). Einzige Stelle mit Farbwerten; alles andere nutzt die Variablen. */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #07090b;
+  --surface: #0e1215;
+  --surface-2: #161c21;
+  --border: #242c34;
+  --control: #6e7a86;
+  --text: #e8ecef;
+  --muted: #a0aab4;
+  --accent: #5ab4ff;
+  --on-accent: #06121d;
+  --focus: #5ab4ff;
+  --ok: #3ddc84;
+  --ok-bg: rgba(61, 220, 132, 0.13);
+  --warn: #f5b83d;
+  --warn-bg: rgba(245, 184, 61, 0.15);
+  --crit: #ff6b85;
+  --crit-bg: rgba(255, 107, 133, 0.15);
+  --track: #1d252c;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #eaeff3;
+  --border: #d6dde3;
+  --control: #7b8794;
+  --text: #10171e;
+  --muted: #56626e;
+  --accent: #0b6bcb;
+  --on-accent: #ffffff;
+  --focus: #0b6bcb;
+  --ok: #137a47;
+  --ok-bg: #e3f5eb;
+  --warn: #8f5a00;
+  --warn-bg: #fbf0dc;
+  --crit: #c21f43;
+  --crit-bg: #fbe4e9;
+  --track: #e2e8ed;
+}
+
+/* Ohne data-theme (vor dem ersten Render, ohne JavaScript) folgt die Seite dem System. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #f4f6f8;
+    --surface: #ffffff;
+    --surface-2: #eaeff3;
+    --border: #d6dde3;
+    --control: #7b8794;
+    --text: #10171e;
+    --muted: #56626e;
+    --accent: #0b6bcb;
+    --on-accent: #ffffff;
+    --focus: #0b6bcb;
+    --ok: #137a47;
+    --ok-bg: #e3f5eb;
+    --warn: #8f5a00;
+    --warn-bg: #fbf0dc;
+    --crit: #c21f43;
+    --crit-bg: #fbe4e9;
+    --track: #e2e8ed;
+  }
+}

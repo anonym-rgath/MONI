@@ -1,0 +1,76 @@
+@import '@fontsource/ibm-plex-sans/latin-400.css';
+@import '@fontsource/ibm-plex-sans/latin-500.css';
+@import '@fontsource/ibm-plex-sans/latin-600.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
+@import '@fontsource/jetbrains-mono/latin-500.css';
+@import 'tailwindcss';
+@import './tokens.css';
+
+/* Das Theme bildet nur die Tokens ab; Tailwinds Standardfarben entfallen. */
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-control: var(--control);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-focus: var(--focus);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-crit: var(--crit);
+  --color-crit-bg: var(--crit-bg);
+  --color-track: var(--track);
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+@layer base {
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+  button {
+    color: inherit;
+    font: inherit;
+    background: transparent;
+  }
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.skip {
+  position: absolute;
+  left: 12px;
+  top: -60px;
+  z-index: 10;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--focus);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.skip:focus {
+  top: 12px;
+}

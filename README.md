@@ -211,7 +211,7 @@ Die **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) laeuft bei
 jedem Push und Pull Request:
 
 1. **Backend-Tests** mit pytest
-2. **Image-Build** (deckt `yarn build` inkl. ESLint und `pip install` ab)
+2. **Image-Build** (deckt `npm run build` und `pip install` ab)
 3. **Boot-Smoke**: Container starten und `/api/` pruefen
 
 Damit erhalten auch die woechentlichen **Dependabot**-PRs

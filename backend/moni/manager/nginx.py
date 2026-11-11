@@ -21,9 +21,9 @@ _BODY = """\
     access_log /dev/stdout moni;
     error_log /dev/stderr warn;
     client_max_body_size 1m;
-    add_header Content-Security-Policy "default-src 'self'; font-src 'self' https://fonts.gstatic.com; \
-style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; connect-src 'self'; img-src 'self' data:; \
-frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; \
+img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; \
+form-action 'self'; require-trusted-types-for 'script'" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "no-referrer" always;
     add_header X-Frame-Options "DENY" always;
@@ -31,7 +31,7 @@ frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
 microphone=(), payment=(), usb=()" always;
 
     location / {
-        root /app/frontend/build;
+        root /app/frontend/dist;
         try_files $uri $uri/ /index.html;
     }
 
