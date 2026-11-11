@@ -1,9 +1,8 @@
 import type { ReactNode } from 'react'
+import { NavLink } from 'react-router'
+import { useSitzung } from '../auth/Sitzung'
 import { t } from '../texte/de'
 import { useDarstellung, type Wahl } from './Darstellung'
-
-export type Rolle = 'admin' | 'betrachter'
-export interface Benutzer { name: string; rolle: Rolle }
 
 const WAHLEN: { wahl: Wahl; text: 'rahmen.auto' | 'rahmen.hell' | 'rahmen.dunkel' }[] = [
   { wahl: 'auto', text: 'rahmen.auto' },
@@ -13,9 +12,10 @@ const WAHLEN: { wahl: Wahl; text: 'rahmen.auto' | 'rahmen.hell' | 'rahmen.dunkel
 
 const navLink = 'flex items-center gap-2 rounded-lg px-3.5 py-2.5 text-muted aria-[current=page]:bg-surface-2 aria-[current=page]:font-semibold aria-[current=page]:text-text'
 
-// Bis Task 2 (Router, Sitzung) gibt es nur die Übersicht; der Pfad steht fest.
-export function Rahmen({ benutzer, offeneAlarme, children }: { benutzer: Benutzer; offeneAlarme: number; children: ReactNode }) {
+// offeneAlarme: Platzhalter, Task 5 verdrahtet /alerts.
+export function Rahmen({ offeneAlarme = 0, children }: { offeneAlarme?: number; children: ReactNode }) {
   const { wahl, setzen } = useDarstellung()
+  const { user, abmelden } = useSitzung()
   return (
     <>
       <a className="skip" href="#inhalt">{t('rahmen.zumInhalt')}</a>
@@ -26,15 +26,15 @@ export function Rahmen({ benutzer, offeneAlarme, children }: { benutzer: Benutze
             <span>{t('app.name')}</span>
           </div>
           <nav aria-label={t('rahmen.hauptnavigation')} className="flex flex-1 flex-wrap gap-1">
-            <a href="/" aria-current="page" className={navLink}>{t('rahmen.uebersicht')}</a>
-            <a href="/alarme" className={navLink}>
+            <NavLink to="/" end className={navLink}>{t('rahmen.uebersicht')}</NavLink>
+            <NavLink to="/alarme" className={navLink}>
               {t('rahmen.alarme')}{' '}
               <span className="num rounded-full bg-crit-bg px-2 text-[0.8125rem] font-semibold text-crit">
                 {offeneAlarme}{' '}
                 <span className="sr-only">{t('rahmen.alarmeOffen')}</span>
               </span>
-            </a>
-            {benutzer.rolle === 'admin' && <a href="/verwaltung/server" className={navLink}>{t('rahmen.verwaltung')}</a>}
+            </NavLink>
+            {user?.role === 'admin' && <NavLink to="/verwaltung/server" className={navLink}>{t('rahmen.verwaltung')}</NavLink>}
           </nav>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <div role="group" aria-label={t('rahmen.darstellung')} className="flex gap-0.5 rounded-[9px] border border-control p-[3px]">
@@ -50,12 +50,12 @@ export function Rahmen({ benutzer, offeneAlarme, children }: { benutzer: Benutze
                 </button>
               ))}
             </div>
-            <span className="text-sm text-muted">{t('rahmen.benutzer', { name: benutzer.name, rolle: t(`rolle.${benutzer.rolle}`) })}</span>
-            <button type="button" className="min-h-10 cursor-pointer rounded-lg border border-control px-3 text-sm">{t('rahmen.abmelden')}</button>
+            <span className="text-sm text-muted">{user && t('rahmen.benutzer', { name: user.name, rolle: t(user.role === 'admin' ? 'rolle.admin' : 'rolle.betrachter') })}</span>
+            <button type="button" onClick={() => void abmelden()} className="min-h-10 cursor-pointer rounded-lg border border-control px-3 text-sm">{t('rahmen.abmelden')}</button>
           </div>
         </div>
       </header>
-      <main id="inhalt" className="mx-auto flex max-w-310 flex-col gap-6 px-5 pt-7 pb-12">{children}</main>
+      <main id="inhalt" tabIndex={-1} className="mx-auto flex max-w-310 flex-col gap-6 px-5 pt-7 pb-12">{children}</main>
     </>
   )
 }
