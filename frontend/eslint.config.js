@@ -21,5 +21,5 @@ export default tseslint.config(
       'react/prop-types': 'off',
     },
   },
-  { files: ['*.config.{js,ts}'], languageOptions: { globals: globals.node } },
+  { files: ['*.config.{js,ts}', 'e2e/**'], languageOptions: { globals: globals.node } },
 )

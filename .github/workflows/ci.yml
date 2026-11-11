@@ -10,6 +10,7 @@
 #   4. Startet compose.manager.yaml (HTTPS) und prueft Health, Admin-Token, lokalen
 #      Server mit Verlauf, Geheimnis-freie Logs und die Container-Haertung.
 #   5. Koppelt den Agent per mTLS mit dem Manager (beide Netze verbunden).
+#   6. Laedt die Oberflaeche per Playwright im echten Browser (CSP, Tastatur, axe).
 
 name: CI
 
@@ -210,6 +211,30 @@ jobs:
           # Erst in eine Datei schreiben (R7); das HMAC-Secret darf nie im Log stehen
           manager logs > manager.log
           if grep -qF "ci-hmac-geheim-5f2c" manager.log; then echo "FAIL: HMAC-Secret im Manager-Log"; exit 1; fi
+
+      - name: Oberfläche im Browser
+        run: |
+          set -euo pipefail
+          manager() { MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml "$@"; }
+          # Zugangsdaten nur über Umgebungsvariablen, vorher maskieren; nie ausgeben
+          MONI_EMAIL=$(python3 -c "import sys; sys.path.insert(0,'scripts/ci'); import _moni; print(_moni.EMAIL)")
+          MONI_PASSWORD=$(python3 -c "import sys; sys.path.insert(0,'scripts/ci'); import _moni; print(_moni.PASSWORD)")
+          MONI_RECOVERY=$(python3 -c "import sys; sys.path.insert(0,'scripts/ci'); import _moni; print(_moni.take_recovery('$RUNNER_TEMP/ci-recovery'))")
+          echo "::add-mask::$MONI_PASSWORD"
+          echo "::add-mask::$MONI_RECOVERY"
+          export MONI_EMAIL MONI_PASSWORD MONI_RECOVERY
+          cd frontend
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+          # Ausgabe zuerst in eine Datei (R7), dann ausgeben; Fehler des Tests bleiben maßgeblich
+          rc=0
+          npm run test:e2e > "$RUNNER_TEMP/e2e.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/e2e.log"
+          [ "$rc" = 0 ] || exit "$rc"
+          cd ..
+          manager logs > manager.log
+          if grep -qF "$MONI_PASSWORD" manager.log; then echo "FAIL: Passwort im Manager-Log"; exit 1; fi
+          if grep -qF "$MONI_RECOVERY" manager.log; then echo "FAIL: Wiederherstellungscode im Manager-Log"; exit 1; fi
 
       - name: Logs
         if: always()
