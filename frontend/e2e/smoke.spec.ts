@@ -5,28 +5,42 @@ import { expect, test, type Page } from '@playwright/test'
 const { MONI_EMAIL, MONI_PASSWORD, MONI_RECOVERY } = process.env
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 
-declare global {
-  interface Window {
-    __cspVerstoesse: string[]
-  }
-}
-
 async function axe(page: Page, wo: string) {
   const { violations } = await new AxeBuilder({ page }).withTags(TAGS).analyze()
   expect(violations.map((v) => `${wo}: ${v.id} (${v.nodes.length}) ${v.nodes[0]?.target.join(' ')}`)).toEqual([])
 }
 
-test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', async ({ page }) => {
-  test.skip(!MONI_EMAIL || !MONI_PASSWORD || !MONI_RECOVERY, 'MONI_EMAIL, MONI_PASSWORD und MONI_RECOVERY nötig')
-  const konsole: string[] = []
-  page.on('console', (m) => m.type() === 'error' && konsole.push(m.text()))
-  page.on('pageerror', (e) => konsole.push(e.message))
+// CSP-Verstöße gehen sofort an Node und überstehen so Neuladen und Seitenwechsel.
+async function csp(page: Page): Promise<string[]> {
+  const verstoesse: string[] = []
+  await page.exposeBinding('__meldeCsp', (_, v: string) => void verstoesse.push(v))
   await page.addInitScript(() => {
-    window.__cspVerstoesse = []
     document.addEventListener('securitypolicyviolation', (e) => {
-      window.__cspVerstoesse.push(`${e.violatedDirective} ${e.blockedURI} ${e.sourceFile}:${e.lineNumber}`)
+      ;(window as unknown as { __meldeCsp: (v: string) => void }).__meldeCsp(`${e.violatedDirective} ${e.blockedURI} ${e.sourceFile}:${e.lineNumber}`)
     })
   })
+  return verstoesse
+}
+
+test('Die Erfassung meldet einen absichtlichen CSP-Verstoß', async ({ page }) => {
+  const verstoesse = await csp(page)
+  await page.route('https://csp-probe.invalid/', (r) =>
+    r.fulfill({ contentType: 'text/html', headers: { 'Content-Security-Policy': "script-src 'none'" }, body: '<script>1</script>' }),
+  )
+  await page.goto('https://csp-probe.invalid/')
+  await expect.poll(() => verstoesse.length).toBeGreaterThan(0)
+})
+
+test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', async ({ page }) => {
+  if (!MONI_EMAIL || !MONI_PASSWORD || !MONI_RECOVERY) throw new Error('MONI_EMAIL, MONI_PASSWORD und MONI_RECOVERY fehlen')
+  const konsole: string[] = []
+  page.on('console', (m) => {
+    // einzig erwartet: das 401 der ersten Sitzungsabfrage vor der Anmeldung
+    const erwartet401 = m.text().includes('401') && m.location().url.endsWith('/api/v1/auth/session')
+    if (m.type() === 'error' && !erwartet401) konsole.push(m.text())
+  })
+  page.on('pageerror', (e) => konsole.push(e.message))
+  const verstoesse = await csp(page)
 
   // Anmeldung
   await page.goto('/')
@@ -40,7 +54,6 @@ test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', a
   // Übersicht mit dem lokalen Server
   await expect(page.getByRole('heading', { level: 1, name: 'Übersicht' })).toBeVisible()
   await expect(page.getByText('Manager · lokal')).toBeVisible()
-  konsole.length = 0 // vor der Anmeldung meldet der Browser das erwartete 401 der Sitzungsabfrage
 
   // Tastatur: erster Tab-Stopp ist der Sprunglink, Enter springt in main
   await page.reload() // frischer Fokus-Startpunkt (nach dem Routenwechsel steht der Fokus auf der H1)
@@ -59,6 +72,8 @@ test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', a
       oeffnen: async () => {
         await page.getByText('Manager · lokal').click()
         await expect(page).toHaveURL(/\/server\/\d+$/)
+        // Frische Installation: "auto" nimmt für 24 Std. die Minutenstufe, die erst später gefüllt ist; 1 Std. liefert Rohpunkte
+        await page.getByRole('button', { name: '1 Std.' }).click()
         const bilder = page.locator('figure [role="img"]')
         await expect(bilder.first()).toBeVisible()
         await expect(bilder.first().locator('svg').first()).toBeVisible()
@@ -76,11 +91,12 @@ test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', a
     }
   }
 
-  expect(await page.evaluate(() => window.__cspVerstoesse)).toEqual([])
   expect(konsole).toEqual([])
 
   // Abmelden
   await page.getByRole('button', { name: 'Abmelden' }).click()
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
   await expect(page).toHaveURL(/\/login/)
+
+  expect(verstoesse).toEqual([]) // über alle Seitenladungen, auch Anmeldeseite und Neuladen
 })
