@@ -19,9 +19,14 @@ function ziel(wahl: Wahl, eigen: string, jetzt: number): number {
   if (wahl === '1') return jetzt + 3_600_000
   if (wahl === '4') return jetzt + 4 * 3_600_000
   if (wahl === 'eigen') return eigen ? new Date(eigen).getTime() : NaN
+  return morgenAcht(jetzt)
+}
+
+// Nächster 8-Uhr-Zeitpunkt in Ortszeit: vor 8 Uhr heute, sonst morgen.
+export function morgenAcht(jetzt: number): number {
   const d = new Date(jetzt)
-  d.setDate(d.getDate() + 1)
   d.setHours(8, 0, 0, 0)
+  if (d.getTime() <= jetzt) d.setDate(d.getDate() + 1)
   return d.getTime()
 }
 

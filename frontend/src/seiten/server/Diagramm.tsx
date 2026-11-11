@@ -20,12 +20,18 @@ export interface Reihe {
 const FARBEN = ['var(--accent)', 'var(--muted)', 'var(--warn)', 'var(--ok)']
 const HOEHE = 220
 
-// Schwelle aus der aktiven Regel, die für diesen Server gilt (Server-Regel vor globaler); nur obere Schwellen ergeben eine Linie.
-function schwelle(regeln: Regel[] | undefined, metric: string, serverId: number): number | null {
-  const passend = (regeln ?? []).filter((r) => r.enabled && r.metric === metric && (r.server_id === null || r.server_id === serverId) && (r.op === '>' || r.op === '>='))
+// Schwelle aus der aktiven Regel (nur func "value", obere Schwelle), die für diesen Server und diese Reihe gilt:
+// label_filter muss zu den Labels der Reihe passen. Server-Regel vor globaler; Warnung vor kritisch.
+function schwelle(regeln: Regel[] | undefined, metric: string, serverId: number, labels: Record<string, string>): { wert: number; art: 'server.schwelleWarn' | 'server.schwelleKrit' } | null {
+  const passend = (regeln ?? []).filter((r) => r.enabled && r.func === 'value' && r.metric === metric && (r.server_id === null || r.server_id === serverId)
+    && (r.op === '>' || r.op === '>=') && Object.entries(r.label_filter).every(([k, v]) => labels[k] === v))
   const r = passend.find((x) => x.server_id === serverId) ?? passend[0]
-  return r ? (r.warning ?? r.critical) : null
+  if (!r) return null
+  if (r.warning !== null) return { wert: r.warning, art: 'server.schwelleWarn' }
+  return r.critical !== null ? { wert: r.critical, art: 'server.schwelleKrit' } : null
 }
+
+const parseLabel = (l: string | undefined): Record<string, string> => { const [k, ...v] = (l ?? '').split(':'); return k ? { [k]: v.join(':') } : {} }
 
 export function Diagramm({ serverId, titel, reihen, bereichMs }: { serverId: number; titel: string; reihen: Reihe[]; bereichMs: number }) {
   const regeln = useRegeln()
@@ -33,20 +39,21 @@ export function Diagramm({ serverId, titel, reihen, bereichMs }: { serverId: num
   const fehler = abfragen.find((q) => q.error)?.error
   const laedt = abfragen.some((q) => q.isPending) && !fehler
 
-  const linien: (Linie & { format: Reihe['format'] })[] = abfragen.flatMap((q, i) => {
+  const linien: (Linie & { format: Reihe['format']; labels: Record<string, string> })[] = abfragen.flatMap((q, i) => {
     const r = reihen[i]!
     const serien = q.data?.series ?? []
     return serien.map((s) => {
       const punkte = punkteDerSerie(s.points)
-      return { name: serien.length > 1 ? (s.labels.zone ?? labelText(s.labels)) : r.name, punkte: r.zaehler ? rateDerSerie(punkte) : punkte, format: r.format }
+      return { name: serien.length > 1 ? (s.labels.zone ?? labelText(s.labels)) : r.name, punkte: r.zaehler ? rateDerSerie(punkte) : punkte, format: r.format, labels: { ...parseLabel(r.label), ...s.labels } }
     })
   }).filter((l) => l.punkte.length > 0)
-  const grenze = schwelle(regeln.data, reihen[0]!.metric, serverId)
+  const regel = linien[0] ? schwelle(regeln.data, reihen[0]!.metric, serverId, linien[0].labels) : null
+  const grenze = regel?.wert ?? null
   const fmt = reihen[0]!.format
 
   const teile = linien.map((l) => t(linien.length > 1 ? 'server.dsName' : 'server.ds', { name: l.name, avg: l.format(mittel(l.punkte)), max: l.format(spitze(l.punkte)) }))
   if (grenze !== null && linien.length > 0) {
-    teile.push(t(Math.max(...linien.map((l) => spitze(l.punkte))) >= grenze ? 'server.schwelleUeber' : 'server.schwelleUnter', { wert: fmt(grenze) }))
+    teile.push(t(Math.max(...linien.map((l) => spitze(l.punkte))) >= grenze ? 'server.schwelleUeber' : 'server.schwelleUnter', { art: t(regel!.art), wert: fmt(grenze) }))
   }
   const zusammenfassung = teile.join('; ')
   const lang = bereichMs > 86_400_000
@@ -70,7 +77,7 @@ export function Diagramm({ serverId, titel, reihen, bereichMs }: { serverId: num
               <Tooltip formatter={(v) => fmt(Number(v))} labelFormatter={(v) => new Intl.DateTimeFormat('de-DE', { dateStyle: 'short', timeStyle: 'medium' }).format(Number(v))} contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }} />
               {linien.length > 1 && <Legend />}
               {grenze !== null && (
-                <ReferenceLine y={grenze} stroke="var(--warn)" strokeDasharray="2 4" strokeWidth={2} label={{ value: t('server.schwelleLinie', { wert: fmt(grenze) }), position: 'insideTopRight', fill: 'var(--warn)', fontSize: 12 }} />
+                <ReferenceLine y={grenze} stroke="var(--warn)" strokeDasharray="2 4" strokeWidth={2} label={{ value: t('server.schwelleLinie', { art: t(regel!.art), wert: fmt(grenze) }), position: 'insideTopRight', fill: 'var(--warn)', fontSize: 12 }} />
               )}
               {linien.map((l, i) => (
                 <Line key={i} dataKey={`l${i}`} name={l.name} type="monotone" dot={false} connectNulls isAnimationActive={false}

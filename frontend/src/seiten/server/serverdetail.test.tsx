@@ -7,6 +7,7 @@ import type { Alarm, Regel, Server, Snapshot, Verlaufspunkt } from '../../api/ty
 import { alarmSau, regelCpu, serverEins, serverSau, sitzungAdmin, sitzungBetrachter, snapshotSau } from '../../test/fixtures'
 import { zeigeApp } from '../../test/render'
 import { BASIS, problem, server, sitzungAntwort } from '../../test/server'
+import { morgenAcht } from './StummDialog'
 import { rate } from './verlaufsdaten'
 
 const punkte = (...werte: number[]): Verlaufspunkt[] => werte.map((w, i) => [new Date(Date.UTC(2026, 10, 11, 9, i)).toISOString(), w])
@@ -86,6 +87,49 @@ describe('Verlauf', () => {
     await waitFor(() => expect(anfragen.some((u) => u.searchParams.get('metric') === 'moni_network_receive_bytes' && u.searchParams.get('label') === 'interface:eth0')).toBe(true))
     expect(anfragen.some((u) => u.searchParams.get('label') === 'interface:lo')).toBe(false)
     expect(anfragen.some((u) => u.searchParams.get('metric') === 'moni_network_transmit_bytes' && u.searchParams.get('label') === 'interface:eth0')).toBe(true)
+  })
+})
+
+describe('Schwellenlinie (P6-R10)', () => {
+  const regel = (extra: Partial<Regel>): Regel => ({ ...regelCpu, ...extra })
+  const zusammenfassung = () => screen.findByText(/^Ø 60 %/)
+
+  test('label_filter, der nicht zur Reihe passt, überspringt die Regel', async () => {
+    await zeige({ regeln: [regel({ label_filter: { mountpoint: '/' } })] })
+    expect((await zusammenfassung()).textContent).toBe('Ø 60 %, Spitze 100 %')
+  })
+
+  test('nur func "value": increase-Regeln ergeben keine Linie', async () => {
+    await zeige({ regeln: [regel({ func: 'increase', window_seconds: 60 })] })
+    expect((await zusammenfassung()).textContent).toBe('Ø 60 %, Spitze 100 %')
+  })
+
+  test('ohne Warnschwelle heißt die Linie "Kritische Schwelle"', async () => {
+    await zeige({ regeln: [regel({ warning: null, critical: 90 })] })
+    expect((await zusammenfassung()).textContent).toBe('Ø 60 %, Spitze 100 %; Kritische Schwelle 90 %, überschritten')
+  })
+})
+
+describe('morgenAcht', () => {
+  const lokalZeit = (h: number, m: number) => new Date(2026, 10, 11, h, m).getTime()
+  test.each([
+    ['kurz nach Mitternacht: heute 08:00', lokalZeit(0, 30), new Date(2026, 10, 11, 8).getTime()],
+    ['07:59: heute 08:00', lokalZeit(7, 59), new Date(2026, 10, 11, 8).getTime()],
+    ['genau 08:00: morgen 08:00', lokalZeit(8, 0), new Date(2026, 10, 12, 8).getTime()],
+    ['23:59: morgen 08:00', lokalZeit(23, 59), new Date(2026, 10, 12, 8).getTime()],
+  ])('%s', (_n, jetzt, erwartet) => { expect(morgenAcht(jetzt)).toBe(erwartet) })
+})
+
+describe('ungültige id', () => {
+  test('zeigt "Server nicht gefunden" ohne Anfrage an /servers/…', async () => {
+    const urls: string[] = []
+    const merke = ({ request }: { request: Request }) => { urls.push(new URL(request.url).pathname) }
+    server.events.on('request:start', merke)
+    server.use(sitzungAntwort(sitzungAdmin))
+    zeigeApp('/server/abc')
+    expect(await screen.findByText('Server nicht gefunden.')).toBeInTheDocument()
+    server.events.removeListener('request:start', merke)
+    expect(urls.filter((u) => u.includes('/servers/'))).toEqual([])
   })
 })
 

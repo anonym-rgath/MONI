@@ -50,7 +50,7 @@ export const alarmSau: Alarm = {
   state: 'firing', severity: 'warning', value: 81, since: vor(2 * 3600), muted: false,
 }
 
-export const regelCpu: Regel = { ...regelDateisystem, id: 2, name: 'CPU hoch', metric: 'moni_host_cpu_usage_percent', warning: 75, critical: 90, key_labels: [] }
+export const regelCpu: Regel = { ...regelDateisystem, id: 2, name: 'CPU hoch', metric: 'moni_host_cpu_usage_percent', func: 'value', warning: 75, critical: 90, key_labels: [] }
 
 export const snapshotSau: Snapshot = {
   timestamp: '2026-11-11T10:00:00Z',

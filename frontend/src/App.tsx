@@ -11,6 +11,7 @@ import { Uebersicht } from './seiten/uebersicht/Uebersicht'
 import { DarstellungProvider } from './ui/Darstellung'
 import { FokusNachWechsel } from './ui/FokusNachWechsel'
 import { t } from './texte/de'
+import { Fehlergrenze } from './ui/Fehlergrenze'
 import { Ladezustand } from './ui/Ladezustand'
 import { Rahmen } from './ui/Rahmen'
 
@@ -27,7 +28,7 @@ export function Routen() {
       <Route path="einrichtung/zwei-faktor" element={<ZweiFaktorRoute />} />
       <Route element={<Geschuetzt stage="full"><Rahmen><Outlet /></Rahmen></Geschuetzt>}>
         <Route index element={<Uebersicht />} />
-        <Route path="server/:id" element={<Suspense fallback={<Ladezustand text={t('server.laden')} />}><Serverdetail /></Suspense>} />
+        <Route path="server/:id" element={<Fehlergrenze><Suspense fallback={<Ladezustand text={t('server.laden')} />}><Serverdetail /></Suspense></Fehlergrenze>} />
         <Route path="alarme" element={<Platzhalter titel="rahmen.alarme" />} />
         <Route path="alarme/verlauf" element={<Platzhalter titel="seiten.alarmVerlauf" />} />
         <Route path="alarme/regeln" element={<Platzhalter titel="seiten.alarmRegeln" />} />

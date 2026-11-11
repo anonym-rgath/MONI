@@ -22,8 +22,23 @@ import { BEREICHE, Verlauf, type BereichId } from './Verlauf'
 
 const FARBE = { kritisch: 'text-crit', warnung: 'text-warn' } as const
 
+function Unbekannt() {
+  useTitel(t('server.nichtGefunden'))
+  return (
+    <>
+      <h1 tabIndex={-1} className="m-0 text-[1.625rem] leading-tight font-semibold">{t('seiten.server')}</h1>
+      <Leerzustand text={t('server.nichtGefunden')}><Link to="/" className="text-accent underline underline-offset-3">{t('server.zurUebersicht')}</Link></Leerzustand>
+    </>
+  )
+}
+
+// Ungültige ids (nicht rein numerisch) lösen keine Anfrage aus.
 export function Serverdetail() {
-  const id = Number(useParams().id)
+  const param = useParams().id ?? ''
+  return /^\d{1,9}$/.test(param) ? <Detail id={Number(param)} /> : <Unbekannt />
+}
+
+function Detail({ id }: { id: number }) {
   const { user } = useSitzung()
   const jetzt = useJetzt()
   const server = useServerEinzeln(id)
