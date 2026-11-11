@@ -14,6 +14,7 @@ from moni.auth import audit
 from moni.auth.deps import Principal, client_ip, require_scope
 from moni.collect.host import read_hostname
 from moni.manager import db, pairing, tsdb
+from moni.metrics_model import flatten
 from moni.manager.pairing import PairingError
 from moni.manager.poller import AgentClient, AgentError
 from moni.manager.servers import Server, ServerStore
@@ -73,6 +74,34 @@ def _clean_info(info) -> dict | None:
     return out
 
 
+def _round(v) -> float | None:
+    return round(v, 1) if isinstance(v, (int, float)) else None
+
+
+def _summary(snap) -> dict | None:
+    """Kennzahlen für die Übersicht (D10); ein unbrauchbarer Snapshot ergibt null, nie einen Fehler."""
+    if not isinstance(snap, dict):
+        return None
+    try:
+        samples = flatten(snap)
+    except (AttributeError, TypeError, ValueError, KeyError, OverflowError):
+        log.warning("Snapshot für die Kennzahlen nicht lesbar")
+        return None
+
+    def vals(name):
+        return [x for x in samples if x.name == name]
+    one = lambda name: next((x.value for x in vals(name)), None)  # noqa: E731
+    temps = [x.value for x in vals("moni_host_temperature_celsius")]
+    fs = max(vals("moni_filesystem_usage_percent"), key=lambda x: x.value, default=None)
+    up = vals("moni_container_up")
+    return {"cpu_percent": _round(one("moni_host_cpu_usage_percent")),
+            "memory_percent": _round(one("moni_host_memory_usage_percent")),
+            "temperature_max_c": _round(max(temps)) if temps else None,
+            "filesystem_max": {"mountpoint": dict(fs.labels).get("mountpoint"), "percent": _round(fs.value)} if fs else None,
+            "containers_running": sum(x.value == 1 for x in up) if up else None,
+            "containers_total": len(up) if up else None}
+
+
 def _out(conn, s: Server, detail: bool = False) -> dict:
     r = conn.execute("SELECT last_snapshot, agent_info FROM servers WHERE id=?", (s.id,)).fetchone()
     snap, info = _json(r["last_snapshot"]), _clean_info(_json(r["agent_info"]))
@@ -82,7 +111,8 @@ def _out(conn, s: Server, detail: bool = False) -> dict:
            "header_names": s.header_names, "warnings": len(w) if isinstance(w := (snap.get("warnings") if isinstance(snap, dict) else None), list) else 0,
            "agent_version": (info or {}).get("version"), "security": s.security,
            "cert_not_after": iso(datetime.fromtimestamp(s.cert_not_after, timezone.utc)) if s.cert_not_after is not None else None,
-           "muted_until": iso(datetime.fromtimestamp(s.muted_until, timezone.utc)) if s.muted_until is not None else None}
+           "muted_until": iso(datetime.fromtimestamp(s.muted_until, timezone.utc)) if s.muted_until is not None else None,
+           "summary": _summary(snap)}
     if detail:
         out["agent_info"] = info
     return out
@@ -270,7 +300,15 @@ def create_agent_token(request: Request, server_id: ServerId, body: NewAgentToke
 @router.delete("/servers/{server_id}/agent-tokens/{token_id}", status_code=204)
 def revoke_agent_token(request: Request, server_id: ServerId, token_id: AgentTokenId, p: Principal = admin):
     s, client = _agent(request, server_id)
-    _call(lambda: client.delete(f"/api/v1/tokens/{token_id}"))
+    failed = None
+    try:
+        client.delete(f"/api/v1/tokens/{token_id}")
+    except AgentError as e:  # Text des Agents bleibt intern
+        failed = e.message
+    if failed == "Agent antwortet mit HTTP 404":
+        raise HTTPException(404, "Agent-Token nicht gefunden")
+    if failed:
+        raise HTTPException(502, _UNREACHABLE)
     with _store(request) as (conn, _):
         audit.record(conn, p.actor, "agent_token.revoked", target=s.name, ip=client_ip(request),
                      details={"token_id": token_id})

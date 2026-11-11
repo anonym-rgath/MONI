@@ -306,3 +306,21 @@ def test_rule_patch_server_id_drops_instances(admin_client, conn, server_id):  #
     assert admin_client.patch(f"{P}/alert-rules/{rid}", json={"server_id": server_id}).status_code == 200
     assert _rule_events(conn, rid) == [("resolved", "regel geändert")]
     assert _rule_outbox(conn, rid) == 0 and _instances(conn, rid) == []
+
+
+@pytest.mark.parametrize("damage", ["key", "json"])
+def test_test_send_with_broken_secret_returns_fixed_text(admin_client, conn, mgr_app, caplog, damage):
+    cid = admin_client.post(f"{P}/alert-channels", json={"name": "w", "kind": "webhook",
+                                                           "url": "https://example.org/h"}).json()["id"]
+    if damage == "key":
+        enc = "kein-gueltiger-umschlag"
+    else:  # entschlüsselbar, aber kein JSON
+        enc = mgr_app.state.box.encrypt("kein json")
+    conn.execute("UPDATE alert_channels SET secret_enc=? WHERE id=?", (enc, cid))
+    conn.commit()
+    with caplog.at_level(logging.ERROR):
+        r = admin_client.post(f"{P}/alert-channels/{cid}/test")
+    assert (r.status_code, r.json()) == (200, {"ok": False, "error": "Kanal-Geheimnis nicht entschlüsselbar"})
+    assert "SecretError" in caplog.text or "JSONDecodeError" in caplog.text
+    last = admin_client.get(f"{P}/audit").json()["entries"][0]
+    assert (last["action"], last["details"]) == ("channel.tested", {"ok": False})

@@ -272,16 +272,22 @@ def _throttled(channel_id: int) -> bool:
 def test_channel(request: Request, channel_id: Id, p: Principal = admin):
     with db.request_conn(request) as conn:
         store = _channels(request, conn)
-        c = store.get(channel_id)
-        if c is None:
+        try:
+            c = store.get(channel_id)
+            broken = None
+        except (SecretError, json.JSONDecodeError) as e:  # Geheimnis lässt sich nicht laden: Kanal gibt es trotzdem
+            log.error("Kanal-Geheimnis nicht lesbar (%s)", type(e).__name__)
+            c, broken = None, conn.execute("SELECT name FROM alert_channels WHERE id=?", (channel_id,)).fetchone()
+        if c is None and broken is None:
             raise HTTPException(404, "Kanal nicht gefunden")
+        cname = c.name if c else broken["name"]
         if _throttled(channel_id):
             raise HTTPException(429, "Zu viele Testversuche, bitte eine Minute warten",
                                 headers={"Retry-After": str(TEST_WINDOW)})
         name = (conn.execute("SELECT name FROM servers WHERE is_local=1").fetchone() or ["moni"])[0]
         try:
-            secrets = store.secrets(channel_id)
-        except SecretError:
+            secrets = store.secrets(channel_id) if c else None
+        except (SecretError, json.JSONDecodeError):
             secrets = None
         if conn.in_transaction:
             conn.commit()  # kein Netzwerk unter offener Transaktion
@@ -298,7 +304,7 @@ def test_channel(request: Request, channel_id: Id, p: Principal = admin):
             except Exception as e:
                 log.error("Test-Versand fehlgeschlagen (%s)", type(e).__name__)
                 error = "Versand fehlgeschlagen"
-        audit.record(conn, p.actor, "channel.tested", target=c.name, ip=client_ip(request), details={"ok": error is None})
+        audit.record(conn, p.actor, "channel.tested", target=cname, ip=client_ip(request), details={"ok": error is None})
     return {"ok": error is None, "error": error}
 
 

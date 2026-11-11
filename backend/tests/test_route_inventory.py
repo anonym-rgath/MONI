@@ -82,8 +82,10 @@ def test_every_write_route_checks_role_csrf_and_login(mgr_app, make_user, login_
 
 
 @pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/tokens", "/api/v1/audit", "/api/v1/auth/oidc/providers",
-                                  "/api/v1/alert-channels", "/api/v1/alert-settings"])
+                                  "/api/v1/alert-channels", "/api/v1/alert-settings",
+                                  "/api/v1/servers/{id}/agent-tokens"])
 def test_viewer_cannot_read_admin_lists(mgr_client, make_user, login_cookie, path):
+    path = path.replace("{id}", "999999")
     mgr_client.cookies.set(COOKIE, login_cookie(make_user("viewer"))[0])
     r = mgr_client.get(path)
     assert (r.status_code, r.json()["detail"]) == (403, NO_ROLE)

@@ -231,3 +231,40 @@ def test_token_server_output_and_strict_body(client, admin_auth, local_id):
     assert [(i["name"], i["security"]) for i in items] == [("lokal", "token"), ("a", "token")]
     r = client.post("/api/v1/servers", json={"name": "b", "url": "https://b", "token": "geheim-t", "x": 1}, headers=admin_auth)
     assert r.status_code == 422 and "geheim" not in r.text
+
+
+def _snap(**kw):
+    return {"timestamp": "2025-11-04T12:00:00Z", **kw}
+
+
+def _set_snapshot(conn, app, sid, snap):
+    from moni.manager.servers import ServerStore
+    ServerStore(conn, app.state.box).record_success(sid, 1762257600, 1762257600, json.dumps(snap), json.dumps({}))
+    conn.commit()
+
+
+def test_server_list_has_summary_from_snapshot(client, read_auth, local_id, conn, app):
+    snap = _snap(host={"cpu": {"usage_percent": 12.34}, "memory": {"usage_percent": 55.57},
+                       "temperature": {"zones": [{"name": "a", "id": "1", "celsius": 41.0},
+                                                 {"name": "b", "id": "2", "celsius": 63.26}]},
+                       "filesystems": [{"mountpoint": "/", "device": "d1", "fstype": "ext4", "usage_percent": 40.0},
+                                       {"mountpoint": "/data", "device": "d2", "fstype": "ext4", "usage_percent": 81.04}]},
+                 containers=[{"name": f"c{i}", "status": "running" if i < 5 else "exited"} for i in range(6)])
+    _set_snapshot(conn, app, local_id, snap)
+    expect = {"cpu_percent": 12.3, "memory_percent": 55.6, "temperature_max_c": 63.3,
+              "filesystem_max": {"mountpoint": "/data", "percent": 81.0},
+              "containers_running": 5, "containers_total": 6}
+    assert client.get("/api/v1/servers", headers=read_auth).json()[0]["summary"] == expect
+    assert client.get(f"/api/v1/servers/{local_id}", headers=read_auth).json()["summary"] == expect
+
+
+def test_summary_null_without_snapshot_and_null_fields_for_missing_metrics(client, read_auth, admin_auth, local_id, conn, app):
+    assert client.get("/api/v1/servers", headers=read_auth).json()[0]["summary"] is None
+    _set_snapshot(conn, app, local_id, _snap(host={"cpu": {"usage_percent": 7}}))
+    assert client.get("/api/v1/servers", headers=read_auth).json()[0]["summary"] == {
+        "cpu_percent": 7.0, "memory_percent": None, "temperature_max_c": None, "filesystem_max": None,
+        "containers_running": None, "containers_total": None}
+    for bad in ([1, 2], {"host": [1]}, {"timestamp": "kaputt"}):  # nie ein 500
+        _set_snapshot(conn, app, local_id, bad)
+        r = client.get("/api/v1/servers", headers=read_auth)
+        assert (r.status_code, r.json()[0]["summary"]) == (200, None)

@@ -342,7 +342,7 @@ def test_agent_token_routes_validate_and_map_agent_errors(api, agent_tls_server,
         assert api.delete(f"{base}/{bad_id}").status_code == 422, bad_id
     assert api.get("/api/v1/servers/999/agent-tokens").status_code == 404
     r = api.delete(f"{base}/0000abcd")  # am Agent unbekannt
-    assert (r.status_code, r.json()["detail"]) == (502, "Agent nicht erreichbar")
+    assert (r.status_code, r.json()["detail"]) == (404, "Agent-Token nicht gefunden")
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         closed_port = s.getsockname()[1]  # nach dem Schließen: Verbindung wird sofort abgelehnt
