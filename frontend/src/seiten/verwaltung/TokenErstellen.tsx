@@ -10,8 +10,9 @@ import { Auswahl } from '../alarme/felder'
 
 // Formular für API-Token (mit Bereich) und Agent-Token (ohne). Das Klartext-Token lebt nur im Zustand dieser Komponente (D5):
 // gcTime 0, kein setQueryData; die Liste wird nur ungültig gemacht. Beim Schließen verschwindet die Komponente samt Wert.
-export function TokenErstellen({ pfad, mitBereich, titelNeu, onErstellt, onFertig, onAbbrechen }:
-  { pfad: string; mitBereich: boolean; titelNeu: string; onErstellt: () => Promise<unknown>; onFertig: () => void; onAbbrechen: () => void }) {
+// onAngezeigt: ab jetzt ist ein Einmalwert sichtbar; der Dialog sperrt sich, bis onFertig (nach der Bestätigung) kommt.
+export function TokenErstellen({ pfad, mitBereich, titelNeu, onErstellt, onAngezeigt, onFertig, onAbbrechen }:
+  { pfad: string; mitBereich: boolean; titelNeu: string; onErstellt: () => Promise<unknown>; onAngezeigt: () => void; onFertig: () => void; onAbbrechen: () => void }) {
   const [name, setName] = useState('')
   const [bereich, setBereich] = useState('read')
   const [tage, setTage] = useState('')
@@ -21,6 +22,7 @@ export function TokenErstellen({ pfad, mitBereich, titelNeu, onErstellt, onFerti
   async function senden() {
     const res = await erstellen.mutateAsync({ name: name.trim(), ...(mitBereich && { scope: bereich }), ...(tage && { expires_days: Number(tage) }) })
     setWert(res.token)
+    onAngezeigt()
     await onErstellt()
   }
 

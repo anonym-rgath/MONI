@@ -9,8 +9,7 @@ import { QrSecret } from '../../ui/QrSecret'
 import { Feld } from '../../ui/Feld'
 import { CodeFormular } from './CodeFormular'
 
-// Einmalwerte (Secret, URI, Codes) liegen nur in diesem Zustand (D5). Die Aufrufe laufen bewusst ohne useMutation:
-// dessen globaler Fehlerhandler meldet bei jedem 401 ab, ein falscher Code antwortet aber mit 401 (Anmeldung fehlgeschlagen).
+// Einmalwerte (Secret, URI, Codes) liegen nur in diesem Zustand (D5).
 type Schritt =
   | { art: 'uebersicht' }
   | { art: 'wechselnCode' }

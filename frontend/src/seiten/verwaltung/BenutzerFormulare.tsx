@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { schluessel } from '../../api/abfragen'
 import { api } from '../../api/client'
+import { useSitzung } from '../../auth/Sitzung'
 import type { ApiRolle, Benutzer } from '../../api/typen'
 import { t } from '../../texte/de'
 import { Feld } from '../../ui/Feld'
@@ -50,11 +51,13 @@ export function BenutzerAnlegen({ onFertig, onAbbrechen }: { onFertig: () => voi
 
 export function RolleAendern({ benutzer, onFertig, onAbbrechen }: { benutzer: Benutzer; onFertig: () => void; onAbbrechen: () => void }) {
   const qc = useQueryClient()
+  const { user } = useSitzung()
   const [rolle, setRolle] = useState<ApiRolle>(benutzer.role)
   async function senden() {
     if (rolle !== benutzer.role) {
       await api.patch(`/users/${benutzer.id}`, { role: rolle })
       await qc.invalidateQueries({ queryKey: schluessel.benutzer })
+      if (benutzer.id === user?.id) await qc.invalidateQueries({ queryKey: schluessel.sitzung }) // eigene Rolle: Navigation und Rechte sofort anpassen
     }
     onFertig()
   }

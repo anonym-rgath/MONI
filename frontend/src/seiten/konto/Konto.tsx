@@ -58,7 +58,6 @@ function Passwort() {
         absenden={t('konto.passwortTitel')}
         onSubmit={async () => {
           setFertig(false)
-          // kein useMutation: ein falsches aktuelles Passwort antwortet mit 401, der globale Handler würde abmelden
           await api.post('/account/password', { current_password: aktuell, new_password: neu })
           setAktuell('')
           setNeu('')

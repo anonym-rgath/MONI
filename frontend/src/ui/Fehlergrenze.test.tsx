@@ -3,8 +3,15 @@ import userEvent from '@testing-library/user-event'
 import { lazy, Suspense } from 'react'
 import { MemoryRouter, Link, Route, Routes } from 'react-router'
 import { expect, test, vi } from 'vitest'
+import { sitzungAdmin, sitzungMfa } from '../test/fixtures'
+import { zeigeApp } from '../test/render'
+import { server, sitzungAntwort } from '../test/server'
 import { FokusNachWechsel } from './FokusNachWechsel'
 import { Fehlergrenze } from './Fehlergrenze'
+
+// Je eine Seite im Rahmen und eine Anmeldeseite werfen beim Rendern.
+vi.mock('../seiten/konto/Konto', () => ({ Konto: () => { throw new Error('kaputt') } }))
+vi.mock('../seiten/anmeldung/ZweiterFaktor', () => ({ ZweiterFaktor: () => { throw new Error('kaputt') } }))
 
 test('fehlgeschlagenes Nachladen zeigt Hinweis mit Neu laden, die Navigation bleibt', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {}) // React meldet den gefangenen Fehler
@@ -40,4 +47,24 @@ test('Fokus geht auf die H1 einer nachladenden Seite', async () => {
   await userEvent.setup().click(screen.getByRole('link', { name: 'hin' }))
   const h1 = await screen.findByRole('heading', { name: 'Spät da' })
   await vi.waitFor(() => expect(h1).toHaveFocus())
+})
+
+test('Renderfehler einer Seite: Hinweis im Rahmen, Navigation bleibt, Seitenwechsel erholt sich', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  server.use(sitzungAntwort(sitzungAdmin))
+  zeigeApp('/konto')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Diese Seite konnte nicht geladen werden.')
+  expect(screen.getByRole('navigation', { name: 'Hauptnavigation' })).toBeInTheDocument()
+  await userEvent.setup().click(screen.getByRole('link', { name: 'Übersicht' }))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Übersicht' })).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  vi.mocked(console.error).mockRestore()
+})
+
+test('Renderfehler einer Anmeldeseite zeigt den Hinweis statt einer leeren App', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  server.use(sitzungAntwort(sitzungMfa))
+  zeigeApp('/login/zweiter-faktor')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Diese Seite konnte nicht geladen werden.')
+  vi.mocked(console.error).mockRestore()
 })

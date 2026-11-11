@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Dialog } from '../../ui/Dialog'
 import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
@@ -9,7 +9,10 @@ import { fehlertext } from './hilfen'
 export function RueckfrageInhalt({ text, aktion, onClose, onBestaetigen }: { text: string; aktion: string; onClose: () => void; onBestaetigen: () => Promise<void> }) {
   const [fehler, setFehler] = useState<string | null>(null)
   const [laeuft, setLaeuft] = useState(false)
+  const sperre = useRef(false) // wie im Formular: fängt auch zwei Klicks im selben Tick
   async function los() {
+    if (sperre.current) return
+    sperre.current = true
     setLaeuft(true)
     setFehler(null)
     try {
@@ -18,6 +21,7 @@ export function RueckfrageInhalt({ text, aktion, onClose, onBestaetigen }: { tex
     } catch (e) {
       setFehler(fehlertext(e))
       setLaeuft(false)
+      sperre.current = false
     }
   }
   return (

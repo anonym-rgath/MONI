@@ -1,11 +1,13 @@
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createContext, use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
+import { useLocation } from 'react-router'
 import { erzeugeQueryClient, schluessel } from '../api/abfragen'
-import { ApiFehler, api, setzeCsrf } from '../api/client'
+import { ApiFehler, api, setzeAblauf, setzeCsrf } from '../api/client'
 import type { Session, SitzungBenutzer, Stage } from '../api/typen'
 
-const KOPPLUNG = 'Kopplungs-Token ungültig' // Kopplungsfehler, keine abgelaufene Sitzung (D8)
+// Warum die Sitzung hier endete: abgelaufen führt mit Hinweis und Rücksprungziel zur Anmeldung, abgemeldet ohne.
+type Ende = 'abgelaufen' | 'abgemeldet'
 
 interface SitzungWert {
   stage: Stage
@@ -13,6 +15,7 @@ interface SitzungWert {
   csrf: string
   laden: boolean
   fehler: ApiFehler | null // erster Abruf der Sitzung scheiterte anders als mit 401
+  ende: Ende | null
   erneutVersuchen: () => void
   abmelden: () => Promise<void>
 }
@@ -34,32 +37,20 @@ export function sicheresZiel(weiter: string | null): string | null {
   }
 }
 
-type Behandler = (fehler: unknown) => void
-
-// Veränderlicher Stand außerhalb des Renderns: QueryCache-Handler und queryFn brauchen immer den aktuellen Wert.
-class Zustand {
-  stage: Stage = 'none'
-  ort = ''
-  private behandler: Behandler = () => {}
-  merke(stage: Stage, ort: string) { this.stage = stage; this.ort = ort }
-  setzeBehandler(b: Behandler) { this.behandler = b }
-  behandeln = (e: unknown) => this.behandler(e)
-}
-
 export function SitzungProvider({ children }: { children: ReactNode }) {
-  const [zustand] = useState(() => new Zustand())
-  const [qc] = useState(() => erzeugeQueryClient(zustand.behandeln))
+  const [qc] = useState(() => erzeugeQueryClient())
   return (
     <QueryClientProvider client={qc}>
-      <Innen zustand={zustand}>{children}</Innen>
+      <Innen>{children}</Innen>
     </QueryClientProvider>
   )
 }
 
-function Innen({ zustand, children }: { zustand: Zustand; children: ReactNode }) {
+function Innen({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
-  const navigate = useNavigate()
-  const { pathname, search } = useLocation()
+  // Bei jedem Ortswechsel neu rendern: so trägt der Kontext schon die frische Sitzung, wenn nach einem Anmeldeschritt
+  // navigiert wird (die Benachrichtigung der Abfrage käme erst einen Takt später, der Wächter sähe sonst die alte Stage).
+  useLocation()
 
   const q = useQuery({
     queryKey: schluessel.sitzung,
@@ -72,33 +63,37 @@ function Innen({ zustand, children }: { zustand: Zustand; children: ReactNode })
       } catch (e) {
         if (!(e instanceof ApiFehler) || e.status !== 401) throw e
         setzeCsrf('')
-        if (zustand.stage === 'full') zustand.behandeln(e) // Sitzung ist serverseitig abgelaufen
-        return null // 401 auf /auth/session heißt: keine Sitzung (Stage none)
+        return null // 401 auf /auth/session heißt: keine Sitzung (Stage none); einen Ablauf meldet der Client selbst
       }
     },
   })
 
   const laden = q.isPending
   const stage: Stage = q.data?.stage ?? 'none'
-  useEffect(() => { zustand.merke(stage, pathname + search) })
+  const [ende, setEnde] = useState<Ende | null>(null)
+  const [vorher, setVorher] = useState(stage)
+  if (stage !== vorher) { // Zustand aus dem vorigen Render: der Grund gilt bis zur nächsten Anmeldung
+    setVorher(stage)
+    if (stage !== 'none') setEnde(null)
+  }
+  const aktiv = useRef(stage) // für den Ablauf-Rückruf außerhalb des Renderns
+  useEffect(() => { aktiv.current = stage })
 
-  const leeren = useCallback(() => {
+  // Einzige Navigationsquelle ist der Wächter: erst den Grund festschreiben, dann Stage none; so baut er das Ziel in einem Schritt.
+  const beenden = useCallback((grund: Ende) => {
+    flushSync(() => setEnde(grund))
     setzeCsrf('')
     // Alles verwerfen. Die Sitzungsabfrage bleibt als Hülle stehen (Wert null = Stage none), weil ihr Beobachter sonst an einer gelöschten Abfrage hängt.
     qc.setQueryData(schluessel.sitzung, null)
     qc.removeQueries({ predicate: (q) => q.queryKey[0] !== schluessel.sitzung[0] })
     qc.getMutationCache().clear()
-    zustand.merke('none', zustand.ort)
-  }, [qc, zustand])
+    aktiv.current = 'none'
+  }, [qc])
 
   useEffect(() => {
-    zustand.setzeBehandler((e) => {
-      if (!(e instanceof ApiFehler) || e.status !== 401 || e.detail === KOPPLUNG || zustand.stage !== 'full') return
-      const weiter = sicheresZiel(zustand.ort)
-      leeren()
-      void navigate(`/login?abgelaufen=1${weiter ? `&weiter=${encodeURIComponent(weiter)}` : ''}`, { replace: true })
-    })
-  }, [zustand, leeren, navigate])
+    setzeAblauf(() => { if (aktiv.current !== 'none') beenden('abgelaufen') })
+    return () => setzeAblauf(() => {})
+  }, [beenden])
 
   const abmelden = useCallback(async () => {
     try {
@@ -106,9 +101,8 @@ function Innen({ zustand, children }: { zustand: Zustand; children: ReactNode })
     } catch {
       /* die Sitzung wird lokal in jedem Fall verworfen */
     }
-    leeren()
-    void navigate('/login')
-  }, [leeren, navigate])
+    beenden('abgemeldet')
+  }, [beenden])
 
   const wert = useMemo<SitzungWert>(
     () => ({
@@ -117,11 +111,12 @@ function Innen({ zustand, children }: { zustand: Zustand; children: ReactNode })
       csrf: q.data?.csrf_token ?? '',
       laden,
       fehler: q.data === undefined && q.error instanceof ApiFehler ? q.error : null,
+      ende,
       erneutVersuchen: () => void q.refetch(),
       abmelden,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- q.refetch ist stabil, q selbst wechselt bei jedem Render
-    [stage, q.data, q.error, laden, abmelden],
+    [stage, q.data, q.error, laden, ende, abmelden],
   )
   return <Kontext value={wert}>{children}</Kontext>
 }

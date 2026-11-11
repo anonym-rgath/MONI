@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Snapshot } from '../../api/typen'
 import { t, type TextSchluessel } from '../../texte/de'
 import { formatWert } from '../../texte/metriken'
@@ -23,7 +24,8 @@ export function hauptInterface(s: Snapshot | undefined): string | null {
 const je = (metric: string) => (w: number) => `${formatWert(metric, w)}/s`
 const fmt = (metric: string) => (w: number) => formatWert(metric, w)
 
-export function Verlauf({ serverId, snapshot, bereich, onBereich }: { serverId: number; snapshot: Snapshot | undefined; bereich: BereichId; onBereich: (b: BereichId) => void }) {
+// memo: der Sekundentakt der Seite (Altersangaben) soll die Diagramme nicht neu zeichnen; die Props sind stabil.
+export const Verlauf = memo(function Verlauf({ serverId, snapshot, bereich, onBereich }: { serverId: number; snapshot: Snapshot | undefined; bereich: BereichId; onBereich: (b: BereichId) => void }) {
   const ms = BEREICHE.find((b) => b.id === bereich)!.ms
   const netz = hauptInterface(snapshot)
   return (
@@ -50,4 +52,4 @@ export function Verlauf({ serverId, snapshot, bereich, onBereich }: { serverId: 
       </div>
     </section>
   )
-}
+})

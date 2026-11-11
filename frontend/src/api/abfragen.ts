@@ -1,4 +1,4 @@
-import { MutationCache, QueryCache, QueryClient, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { QueryClient, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { ApiFehler, api } from './client'
 import type { AgentToken, Alarm, AuditEintrag, Benutzer, Kanal, OidcKonfig, Regel, Seite, Server, Snapshot, Token, Verlauf, Verlaufseintrag } from './typen'
 
@@ -25,10 +25,8 @@ export const schluessel = {
 // D7: Live-Daten alle 15 s, nie bei verborgenem Tab; nur Netzwerkfehler werden (höchstens 2-mal) wiederholt.
 export const LIVE_MS = 15_000
 
-export function erzeugeQueryClient(bei: (fehler: unknown) => void) {
+export function erzeugeQueryClient() {
   return new QueryClient({
-    queryCache: new QueryCache({ onError: bei }),
-    mutationCache: new MutationCache({ onError: bei }),
     defaultOptions: {
       queries: {
         retry: (n, e) => e instanceof ApiFehler && e.status === 0 && n < 2,
@@ -68,6 +66,7 @@ export const useAlarmVerlauf = (serverId: number | null) =>
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam }) => api.get<Seite<Verlaufseintrag>>('/alerts/history', { limit: HISTORIE_SEITE, before: pageParam, server_id: serverId ?? undefined }),
     getNextPageParam: (letzte) => letzte.next_before ?? undefined,
+    refetchOnWindowFocus: false, // ein Fokuswechsel lüde sonst alle geblätterten Seiten neu
   })
 // Nur Admins; die Kanäle-Seite ist geschützt, GET liefert nie Geheimnisse (nur secret_set und url_hint).
 export const useKanaele = () => useQuery({ queryKey: schluessel.kanaele, queryFn: () => api.get<Kanal[]>('/alert-channels') })
@@ -85,4 +84,5 @@ export const useAudit = () =>
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam }) => api.get<Seite<AuditEintrag>>('/audit', { limit: AUDIT_SEITE, before: pageParam }),
     getNextPageParam: (letzte) => letzte.next_before ?? undefined,
+    refetchOnWindowFocus: false, // wie beim Alarmverlauf
   })

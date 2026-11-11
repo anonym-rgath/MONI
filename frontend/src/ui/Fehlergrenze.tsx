@@ -2,7 +2,7 @@ import { Component, type ReactNode } from 'react'
 import { t } from '../texte/de'
 import { Knopf } from './Knopf'
 
-// Fängt Ladefehler (z. B. React.lazy nach einem Deploy oder bei Netzabbruch), damit nicht die ganze App verschwindet.
+// Fängt Lade- und Renderfehler (z. B. React.lazy nach einem Deploy oder bei Netzabbruch), damit nicht die ganze App verschwindet.
 export class Fehlergrenze extends Component<{ children: ReactNode }, { fehler: boolean }> {
   state = { fehler: false }
   static getDerivedStateFromError() { return { fehler: true } }

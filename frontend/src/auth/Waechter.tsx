@@ -29,9 +29,12 @@ export function Geschuetzt({ stage, rolle, offen = false, children }: { stage: S
   if (s.stage !== stage) {
     const weiter = sicheresZiel(new URLSearchParams(search).get('weiter')) // Rücksprungziel der Anmeldeseiten überlebt jeden Stage-Wechsel
     if (s.stage === 'full' && weiter) return <Navigate to={weiter} replace />
-    const tiefenlink = s.stage === 'none' ? sicheresZiel(pathname + search) : null // Tiefenlink merken
+    if (s.stage === 'none' && s.ende === 'abgemeldet') return <Navigate to={START.none} replace />
+    // Tiefenlink merken; auf einer Anmeldeseite ist das ihr eigenes weiter, nicht die Seite selbst
+    const tiefenlink = s.stage === 'none' ? (stage === 'full' ? sicheresZiel(pathname + search) : weiter) : null
     const behalten = tiefenlink ?? (s.stage === 'none' || s.stage === 'full' ? null : weiter)
-    return <Navigate to={behalten ? `${s.stage === 'none' ? START.none : START[s.stage]}?weiter=${encodeURIComponent(behalten)}` : START[s.stage]} replace />
+    const abfrage = [s.stage === 'none' && s.ende === 'abgelaufen' ? 'abgelaufen=1' : '', behalten ? `weiter=${encodeURIComponent(behalten)}` : ''].filter(Boolean).join('&')
+    return <Navigate to={abfrage ? `${START[s.stage]}?${abfrage}` : START[s.stage]} replace />
   }
   if (rolle && s.user?.role !== rolle) return <h1 tabIndex={-1} className="text-[1.625rem] leading-tight font-semibold">{t('waechter.keineBerechtigung')}</h1>
   return children

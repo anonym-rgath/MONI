@@ -180,14 +180,14 @@ describe('Zweiter Faktor', () => {
     let gesendet: unknown
     server.use(http.post(`${B}/auth/login/mfa`, async ({ request }) => {
       gesendet = await request.json()
-      return problem(401, 'Code ungültig.')
+      return problem(401, 'Anmeldung fehlgeschlagen') // fester Backend-Text für falsche Faktoren; meldet nicht ab (P6-R13)
     }))
     zeigeApp('/login/zweiter-faktor')
     await user.click(await screen.findByRole('button', { name: 'Stattdessen Wiederherstellungscode verwenden' }))
     expect(screen.queryByLabelText('Code aus der Authenticator-App')).not.toBeInTheDocument()
     await user.type(screen.getByLabelText('Wiederherstellungscode'), 'abcd-1234')
     await user.click(screen.getByRole('button', { name: 'Anmelden' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Code ungültig.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Anmeldung fehlgeschlagen')
     expect(gesendet).toEqual({ code: 'abcd-1234' })
     expect(screen.getByLabelText('Wiederherstellungscode')).toHaveValue('abcd-1234')
     await user.click(screen.getByRole('button', { name: 'Stattdessen Code aus der App verwenden' }))

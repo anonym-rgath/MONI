@@ -1,4 +1,4 @@
-import { Fragment, useId, useState } from 'react'
+import { Fragment, memo, useId, useState } from 'react'
 import type { Snapshot } from '../../api/typen'
 import { t, type TextSchluessel } from '../../texte/de'
 import { formatWert } from '../../texte/metriken'
@@ -40,7 +40,8 @@ function Verlaufszeile({ id, c, serverId, bereichMs }: { id: string; c: Dock; se
   )
 }
 
-export function Container({ serverId, snapshot, bereichMs }: { serverId: number; snapshot: Snapshot | undefined; bereichMs: number }) {
+// memo: der Sekundentakt der Seite (Altersangaben) soll die Diagramme nicht neu zeichnen; die Props sind stabil.
+export const Container = memo(function Container({ serverId, snapshot, bereichMs }: { serverId: number; snapshot: Snapshot | undefined; bereichMs: number }) {
   const basis = useId()
   const [offen, setOffen] = useState<ReadonlySet<string>>(new Set())
   const liste = snapshot?.containers ?? []
@@ -76,4 +77,4 @@ export function Container({ serverId, snapshot, bereichMs }: { serverId: number;
       })}
     </Tabelle>
   )
-}
+})

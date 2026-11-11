@@ -48,6 +48,7 @@ export function AgentTokens({ server, onClose }: { server: Server | null; onClos
   const [ansicht, setAnsicht] = useState<'liste' | 'neu'>('liste')
   const [widerruf, setWiderruf] = useState<AgentToken | null>(null)
   const [meldung, setMeldung] = useState('')
+  const [gesperrt, setGesperrt] = useState(false)
   const schliessen = () => { setAnsicht('liste'); setWiderruf(null); setMeldung(''); onClose() }
   const neuLaden = () => (server ? qc.invalidateQueries({ queryKey: schluessel.agentTokens(server.id) }) : Promise.resolve())
 
@@ -64,7 +65,7 @@ export function AgentTokens({ server, onClose }: { server: Server | null; onClos
   }
 
   return (
-    <Dialog breit titel={t('verwaltung.agentTitel', { name: server?.name ?? '' })} offen={server !== null} onClose={schliessen}>
+    <Dialog breit titel={t('verwaltung.agentTitel', { name: server?.name ?? '' })} offen={server !== null} gesperrt={gesperrt} onClose={schliessen}>
       {server && widerruf === null && (ansicht === 'liste'
         ? (
           <>
@@ -74,7 +75,7 @@ export function AgentTokens({ server, onClose }: { server: Server | null; onClos
           </>
         )
         : <TokenErstellen pfad={`/servers/${server.id}/agent-tokens`} mitBereich={false} titelNeu={t('verwaltung.agentNeuTitel')} onErstellt={neuLaden}
-            onFertig={() => setAnsicht('liste')} onAbbrechen={() => setAnsicht('liste')} />)}
+            onAngezeigt={() => setGesperrt(true)} onFertig={() => { setGesperrt(false); setAnsicht('liste') }} onAbbrechen={() => setAnsicht('liste')} />)}
       {server && widerruf !== null && (
         <RueckfrageInhalt text={t('verwaltung.widerrufenText', { name: widerruf.name ?? widerruf.id })} aktion={t('verwaltung.widerrufen')}
           onClose={() => setWiderruf(null)} onBestaetigen={zuruecknehmen} />

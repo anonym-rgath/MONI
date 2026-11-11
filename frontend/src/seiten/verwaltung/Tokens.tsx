@@ -19,6 +19,7 @@ export function Tokens() {
   const qc = useQueryClient()
   const tokens = useTokens()
   const [neu, setNeu] = useState(false)
+  const [gesperrt, setGesperrt] = useState(false)
   const [widerruf, setWiderruf] = useState<Token | null>(null)
   const [meldung, setMeldung] = useState('')
   const neuLaden = () => qc.invalidateQueries({ queryKey: schluessel.tokens })
@@ -46,8 +47,9 @@ export function Tokens() {
         </Tabelle>
       )}
 
-      <Dialog titel={t('verwaltung.tokenErstellen')} offen={neu} onClose={() => setNeu(false)}>
-        <TokenErstellen pfad="/tokens" mitBereich titelNeu={t('verwaltung.tokenNeuTitel')} onErstellt={neuLaden} onFertig={() => setNeu(false)} onAbbrechen={() => setNeu(false)} />
+      <Dialog titel={t('verwaltung.tokenErstellen')} offen={neu} gesperrt={gesperrt} onClose={() => setNeu(false)}>
+        <TokenErstellen pfad="/tokens" mitBereich titelNeu={t('verwaltung.tokenNeuTitel')} onErstellt={neuLaden} onAngezeigt={() => setGesperrt(true)}
+          onFertig={() => { setGesperrt(false); setNeu(false) }} onAbbrechen={() => setNeu(false)} />
       </Dialog>
       <Rueckfrage titel={t('verwaltung.widerrufenTitel')} text={widerruf ? t('verwaltung.widerrufenText', { name: widerruf.name }) : ''} aktion={t('verwaltung.widerrufen')}
         offen={widerruf !== null} onClose={() => setWiderruf(null)}

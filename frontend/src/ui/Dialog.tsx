@@ -2,7 +2,9 @@ import { useEffect, useId, useRef, type ReactNode } from 'react'
 
 // Natives <dialog> mit showModal(): Fokus bleibt im Dialog, Esc schließt. Der Fokus kehrt zum Auslöser zurück.
 // Der Inhalt steht nur im DOM, solange der Dialog offen ist; so beginnt jedes Öffnen mit leeren Eingaben.
-export function Dialog({ titel, offen, onClose, breit = false, children }: { titel: string; offen: boolean; onClose: () => void; breit?: boolean; children: ReactNode }) {
+// gesperrt: zeigt unbestätigte Einmalwerte, Esc darf ihn nicht schließen (der Inhalt verschwände samt Wert).
+export function Dialog({ titel, offen, onClose, breit = false, gesperrt = false, children }:
+  { titel: string; offen: boolean; onClose: () => void; breit?: boolean; gesperrt?: boolean; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null)
   const ausloeser = useRef<Element | null>(null)
   const titelId = useId()
@@ -20,7 +22,10 @@ export function Dialog({ titel, offen, onClose, breit = false, children }: { tit
     <dialog
       ref={ref}
       aria-labelledby={titelId}
+      onCancel={(e) => { if (gesperrt) e.preventDefault() }}
       onClose={() => {
+        // Chrome schließt beim zweiten Esc ohne Nutzeraktion trotz preventDefault; dann sofort wieder öffnen
+        if (gesperrt && offen) { ref.current?.showModal(); return }
         onClose()
         if (ausloeser.current instanceof HTMLElement) ausloeser.current.focus()
       }}

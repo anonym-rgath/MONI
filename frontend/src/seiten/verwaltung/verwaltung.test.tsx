@@ -1,6 +1,6 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { axe } from 'vitest-axe'
@@ -79,7 +79,8 @@ describe('Bereichsnavigation', () => {
     await user.click(within(nav).getByRole('link', { name: 'Audit-Protokoll' }))
     await screen.findByRole('heading', { level: 1, name: 'Audit-Protokoll' })
     expect(document.title).toBe('Audit-Protokoll – Moni')
-    expect(within(nav).getByRole('link', { name: 'Audit-Protokoll' })).toHaveAttribute('aria-current', 'page')
+    // die Seite ist neu aufgebaut (Fehlergrenze je Pfad), also die Navigation neu suchen
+    expect(within(screen.getByRole('navigation', { name: 'Bereiche der Verwaltung' })).getByRole('link', { name: 'Audit-Protokoll' })).toHaveAttribute('aria-current', 'page')
   })
 })
 
@@ -243,9 +244,14 @@ describe('Agent-Tokens', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Token erstellen' }))
     expect(await within(dialog).findByText('agent-geheim-123')).toBeInTheDocument()
     expect(letzter().body).toEqual({ name: 'Grafana', expires_days: 30 })
+    await user.keyboard('{Escape}') // ein angezeigtes Token lässt sich nicht wegdrücken
+    expect(within(dialog).getByText('agent-geheim-123')).toBeInTheDocument()
     await user.click(within(dialog).getByRole('checkbox'))
     await user.click(within(dialog).getByRole('button', { name: 'Weiter' }))
     expect(screen.queryByText('agent-geheim-123')).not.toBeInTheDocument()
+    await user.keyboard('{Escape}') // nach dem Bestätigen schließt Esc wieder
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await user.click(await screen.findByRole('button', { name: /Agent-Tokens sau-index/ }))
     expect(await within(dialog).findByRole('row', { name: /Prometheus/ })).toBeInTheDocument()
 
     aufzeichnen('delete', '/servers/11/agent-tokens/a1', () => problem(404, 'Agent-Token nicht gefunden'))
@@ -286,6 +292,32 @@ describe('API-Tokens', () => {
     expect(document.body.textContent).not.toContain('moni_SEHR_GEHEIM_42')
   })
 
+  test('Esc verwirft ein angezeigtes Token nicht; nach dem Bestätigen schließt der Dialog wieder', async () => {
+    daten()
+    const user = userEvent.setup()
+    await zeige('/verwaltung/tokens', 'API-Tokens')
+    aufzeichnen('post', '/tokens', () => HttpResponse.json({ ...token('t3'), token: 'moni_ESC_GEHEIM' }, { status: 201 }))
+    await user.click(await screen.findByRole('button', { name: 'Token erstellen' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('Name'), 'Skript')
+    await user.click(within(dialog).getByRole('button', { name: 'Token erstellen' }))
+    expect(await within(dialog).findByText('moni_ESC_GEHEIM')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Abbrechen' })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(within(dialog).getByText('moni_ESC_GEHEIM')).toBeInTheDocument()
+    ;(dialog as HTMLDialogElement).close() // Browser schließen ohne cancel (zweites Esc ohne Nutzeraktion)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(within(dialog).getByText('moni_ESC_GEHEIM')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Ich habe das Token sicher gespeichert' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Weiter' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'Token erstellen' }))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
   test('Widerrufen fragt vorher nach', async () => {
     daten()
     const user = userEvent.setup()
@@ -299,6 +331,18 @@ describe('API-Tokens', () => {
     await waitFor(() => expect(mit('DELETE')).toHaveLength(1))
     expect(letzter().pfad).toBe('/tokens/t1')
     expect(await screen.findByText('Token widerrufen.')).toBeInTheDocument()
+  })
+
+  test('Doppelklick auf Widerrufen sendet nur eine Anfrage', async () => {
+    daten()
+    const user = userEvent.setup()
+    await zeige('/verwaltung/tokens', 'API-Tokens')
+    aufzeichnen('delete', '/tokens/t1')
+    await user.click(await screen.findByRole('button', { name: /Widerrufen Token t1/ }))
+    const knopf = within(await screen.findByRole('dialog')).getByRole('button', { name: 'Widerrufen' })
+    act(() => { knopf.click(); knopf.click() }) // im selben Tick, bevor der gesperrte Zustand gerendert ist
+    expect(await screen.findByText('Token widerrufen.')).toBeInTheDocument()
+    expect(mit('DELETE')).toHaveLength(1)
   })
 })
 
@@ -400,6 +444,19 @@ describe('Benutzer', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Löschen' }))
     await waitFor(() => expect(mit('DELETE')).toHaveLength(1))
   })
+
+  test('eigene Rolle ändern lädt die Sitzung neu', async () => {
+    daten()
+    const user = userEvent.setup()
+    await zeige('/verwaltung/benutzer', 'Benutzer')
+    aufzeichnen('patch', '/users/1', () => HttpResponse.json(benutzer(1, { name: 'Robin' })))
+    await user.click(await screen.findByRole('button', { name: /Rolle ändern Robin/ }))
+    const dialog = await screen.findByRole('dialog')
+    await user.selectOptions(within(dialog).getByLabelText('Rolle'), 'Betrachter')
+    server.use(sitzungAntwort({ ...sitzungAdmin, user: { ...sitzungAdmin.user!, role: 'viewer' } }))
+    await user.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Keine Berechtigung' })).toBeInTheDocument()
+  })
 })
 
 describe('Audit', () => {
@@ -426,6 +483,11 @@ describe('Audit', () => {
     expect(await screen.findByRole('row', { name: /login\.ok/ })).toBeInTheDocument()
     expect(screen.getAllByRole('row', { name: /user\.created/ })).toHaveLength(2) // angehängt
     expect(screen.queryByRole('button', { name: 'Ältere laden' })).not.toBeInTheDocument()
+    // Rückkehr zum Tab lädt die geblätterten Seiten nicht alle neu
+    const n = aufrufe.length
+    act(() => { window.dispatchEvent(new Event('visibilitychange')) })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(aufrufe).toHaveLength(n)
   })
 })
 

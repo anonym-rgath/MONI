@@ -57,7 +57,8 @@ describe('Bereichsnavigation', () => {
     expect(within(nav).queryByRole('tab')).not.toBeInTheDocument()
     await user.click(within(nav).getByRole('link', { name: 'Regeln' }))
     await screen.findByRole('heading', { level: 2, name: 'Regeln' })
-    expect(within(nav).getByRole('link', { name: 'Regeln' })).toHaveAttribute('aria-current', 'page')
+    // die Seite ist neu aufgebaut (Fehlergrenze je Pfad), also die Navigation neu suchen
+    expect(within(screen.getByRole('navigation', { name: 'Bereiche der Alarme' })).getByRole('link', { name: 'Regeln' })).toHaveAttribute('aria-current', 'page')
     expect(document.title).toBe('Alarmregeln – Moni')
   })
 })

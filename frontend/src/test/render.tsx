@@ -21,7 +21,7 @@ export function Sonde() {
   return (
     <div>
       <button type="button" onClick={() => void q.refetch()}>Anfrage auslösen</button>
-      <button type="button" onClick={() => void api.post('/sonde', {})}>Schreiben</button>
+      <button type="button" onClick={() => void api.post('/sonde', {}).catch(() => {})}>Schreiben</button>
       <button type="button" onClick={() => qc.setQueryData(['x'], 'da')}>Wert setzen</button>
       <button type="button" onClick={() => setWert(String(qc.getQueryData(['x'])))}>Wert lesen</button>
       <output data-testid="wert">{wert}</output>

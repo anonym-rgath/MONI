@@ -64,6 +64,11 @@ test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', a
   await page.keyboard.press('Enter')
   await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('main'))).toBe(true)
 
+  const verwaltung = (link: string, h1: string) => ({ wo: `Verwaltung: ${h1}`, oeffnen: async () => {
+    await page.getByRole('navigation', { name: 'Bereiche der Verwaltung' }).getByRole('link', { name: link, exact: true }).click()
+    await expect(page.getByRole('heading', { level: 1, name: h1 })).toBeVisible()
+  } })
+
   // Serverdetail mit Diagrammen
   const seiten = [
     { wo: 'Übersicht', oeffnen: async () => { await page.getByRole('link', { name: 'Übersicht', exact: true }).first().click(); await expect(page.getByText('Manager · lokal')).toBeVisible() } },
@@ -72,8 +77,8 @@ test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', a
       oeffnen: async () => {
         await page.getByText('Manager · lokal').click()
         await expect(page).toHaveURL(/\/server\/\d+$/)
-        // Frische Installation: "auto" nimmt für 24 Std. die Minutenstufe, die erst später gefüllt ist; 1 Std. liefert Rohpunkte
-        await page.getByRole('button', { name: '1 Std.' }).click()
+        // Standardansicht 24 Std.: "auto" fällt auf frischer Installation auf Rohpunkte zurück (P6-R14)
+        await expect(page.getByRole('button', { name: '24 Std.' })).toHaveAttribute('aria-pressed', 'true')
         const bilder = page.locator('figure [role="img"]')
         await expect(bilder.first()).toBeVisible()
         await expect(bilder.first().locator('svg').first()).toBeVisible()
@@ -81,6 +86,26 @@ test('Oberfläche läuft unter der CSP, per Tastatur und ohne axe-Verstöße', a
       },
     },
     { wo: 'Alarme', oeffnen: async () => { await page.getByRole('link', { name: 'Alarme' }).first().click(); await expect(page.getByRole('heading', { level: 1, name: 'Alarme' })).toBeVisible() } },
+    // nur lesen: Konto (samt erstem Schritt von "Authenticator wechseln", der noch keinen Code verbraucht) und die Verwaltung
+    {
+      wo: 'Konto',
+      oeffnen: async () => {
+        await page.locator('header a[href="/konto"]').click()
+        await expect(page.getByRole('heading', { level: 1, name: 'Konto' })).toBeVisible()
+      },
+    },
+    {
+      wo: 'Konto: Authenticator wechseln',
+      oeffnen: async () => {
+        await page.getByRole('button', { name: 'Authenticator wechseln' }).click()
+        await expect(page.getByLabel('Aktueller Code')).toBeVisible()
+      },
+    },
+    { wo: 'Verwaltung: Server', oeffnen: async () => { await page.getByRole('link', { name: 'Verwaltung', exact: true }).click(); await expect(page.getByRole('heading', { level: 1, name: 'Server verwalten' })).toBeVisible() } },
+    verwaltung('Benutzer', 'Benutzer'),
+    verwaltung('API-Tokens', 'API-Tokens'),
+    verwaltung('Audit-Protokoll', 'Audit-Protokoll'),
+    verwaltung('Anmeldung', 'Anmeldung'),
   ]
   for (const theme of ['Hell', 'Dunkel']) {
     await page.getByRole('button', { name: theme, exact: true }).click()

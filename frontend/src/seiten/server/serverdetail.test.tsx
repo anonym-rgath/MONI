@@ -1,14 +1,21 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { axe } from 'vitest-axe'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { Alarm, Regel, Server, Snapshot, Verlaufspunkt } from '../../api/typen'
 import { alarmSau, regelCpu, serverEins, serverSau, sitzungAdmin, sitzungBetrachter, snapshotSau } from '../../test/fixtures'
 import { zeigeApp } from '../../test/render'
 import { BASIS, problem, server, sitzungAntwort } from '../../test/server'
 import { morgenAcht } from './StummDialog'
 import { rate } from './verlaufsdaten'
+
+// Zählt, wie oft ein Diagramm rendert (echtes Diagramm, nur umhüllt).
+const renders = vi.hoisted(() => ({ n: 0 }))
+vi.mock('./Diagramm', async (original) => {
+  const m = await original<typeof import('./Diagramm')>()
+  return { ...m, Diagramm: (p: Parameters<typeof m.Diagramm>[0]) => { renders.n++; return m.Diagramm(p) } }
+})
 
 const punkte = (...werte: number[]): Verlaufspunkt[] => werte.map((w, i) => [new Date(Date.UTC(2026, 10, 11, 9, i)).toISOString(), w])
 
@@ -142,6 +149,32 @@ describe('Serverdetail', () => {
     expect(screen.getByText('Warnung')).toBeInTheDocument()
     expect(screen.getByText(/Agent 2\.0\.0/)).toBeInTheDocument()
     expect(screen.getByText(/Zertifikat gültig bis/)).toBeInTheDocument()
+  })
+
+  test('Sekundentakt aktualisiert die Altersangabe, Diagramme rendern dabei nicht neu', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      await zeige()
+      await screen.findAllByText('Ø 60 %, Spitze 100 %; Warnschwelle 75 %, überschritten')
+      const alter = () => screen.getByText(/zuletzt gesehen vor/).textContent
+      const vorher = alter()
+      const n = renders.n
+      for (let i = 0; i < 3; i++) act(() => vi.advanceTimersByTime(1000))
+      expect(alter()).not.toBe(vorher)
+      expect(renders.n).toBe(n)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('Fehler des Managers bei vorhandenen Daten zeigt den Hinweis der Übersicht und behält die Seite', async () => {
+    await zeige()
+    const s = serverSau
+    expect(screen.queryByText('Manager nicht erreichbar, neuer Versuch in 15 s')).not.toBeInTheDocument()
+    server.use(http.get(`${BASIS}/servers/${s.id}`, () => problem(502, 'weg')))
+    act(() => { window.dispatchEvent(new Event('visibilitychange')) }) // Rückkehr zum Tab löst den Abruf aus
+    expect(await screen.findByText('Manager nicht erreichbar, neuer Versuch in 15 s')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: s.name })).toBeInTheDocument()
   })
 
   test('Kennzahlen als dl, Tabellen mit Zeilenkopf und scrollbarem Bereich', async () => {

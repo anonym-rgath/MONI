@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react'
-import { NavLink } from 'react-router'
+import { NavLink, useLocation } from 'react-router'
 import { useAlarme } from '../api/abfragen'
 import { useSitzung } from '../auth/Sitzung'
 import { t } from '../texte/de'
 import { DarstellungWahl } from './DarstellungWahl'
+import { Fehlergrenze } from './Fehlergrenze'
 
 const navLink = 'flex items-center gap-2 rounded-lg px-3.5 py-2.5 text-muted aria-[current=page]:bg-surface-2 aria-[current=page]:font-semibold aria-[current=page]:text-text'
 
 export function Rahmen({ children }: { children: ReactNode }) {
   const { user, abmelden } = useSitzung()
+  const { pathname } = useLocation()
   const offeneAlarme = (useAlarme().data ?? []).filter((a) => a.state === 'firing').length
   return (
     <>
@@ -37,7 +39,10 @@ export function Rahmen({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <main id="inhalt" tabIndex={-1} className="mx-auto flex max-w-310 flex-col gap-6 px-5 pt-7 pb-12">{children}</main>
+      <main id="inhalt" tabIndex={-1} className="mx-auto flex max-w-310 flex-col gap-6 px-5 pt-7 pb-12">
+        {/* Renderfehler einer Seite lassen Kopf und Navigation stehen; ein Seitenwechsel setzt die Grenze zurück */}
+        <Fehlergrenze key={pathname}>{children}</Fehlergrenze>
+      </main>
     </>
   )
 }

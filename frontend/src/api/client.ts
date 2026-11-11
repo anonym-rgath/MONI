@@ -17,6 +17,11 @@ export class ApiFehler extends Error {
 let csrf = ''
 export const setzeCsrf = (wert: string) => { csrf = wert }
 
+// P6-R13: eine Regel für alle Anfragen. Jede 401 heißt „Sitzung abgelaufen“, außer falschem Faktor/Passwort und Kopplungsfehler (feste Backend-Texte).
+const KEIN_ABLAUF = new Set(['Kopplungs-Token ungültig', 'Anmeldung fehlgeschlagen'])
+let beiAblauf = () => {}
+export const setzeAblauf = (f: () => void) => { beiAblauf = f }
+
 type Param = string | number | boolean | undefined | readonly string[]
 
 const unerwartet = (status: number) => new ApiFehler(status, t('fehler.unerwartet', { status }))
@@ -40,12 +45,14 @@ async function anfrage<T>(methode: string, pfad: string, body?: unknown, params?
   }
 
   if (!res.ok) {
+    let fehler = unerwartet(res.status)
     if (res.headers.get('content-type')?.includes('application/problem+json')) {
       const p: unknown = await res.json().catch(() => null)
       const detail = (p as { detail?: unknown } | null)?.detail
-      if (typeof detail === 'string') throw new ApiFehler(res.status, detail)
+      if (typeof detail === 'string') fehler = new ApiFehler(res.status, detail)
     }
-    throw unerwartet(res.status)
+    if (fehler.status === 401 && !KEIN_ABLAUF.has(fehler.detail)) beiAblauf()
+    throw fehler
   }
   if (res.status === 204) return undefined as T
   try {

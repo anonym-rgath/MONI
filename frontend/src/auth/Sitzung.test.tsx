@@ -1,14 +1,25 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { defaultScheduler, notifyManager } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
+import { useEffect } from 'react'
+import { useLocation } from 'react-router'
 import { describe, expect, test } from 'vitest'
-import { sitzungAdmin } from '../test/fixtures'
+import { sitzungAdmin, sitzungEnroll, sitzungMfa } from '../test/fixtures'
 import { Sonde, zeigeApp } from '../test/render'
 import { problem, server, sitzungAntwort } from '../test/server'
 import { sicheresZiel } from './Sitzung'
 
 const ort = () => screen.getByTestId('ort').textContent
 const h1 = (name: string) => screen.findByRole('heading', { level: 1, name })
+
+// Merkt jeden Ort, den der Router annimmt (auch kurze Zwischenstationen).
+const orte: string[] = []
+function Spur() {
+  const { pathname, search } = useLocation()
+  useEffect(() => { orte.push(pathname + search) }, [pathname, search])
+  return null
+}
 
 describe('Sitzung', () => {
   test('ohne Sitzung (401) gilt Stage none und /login', async () => {
@@ -35,6 +46,76 @@ describe('Sitzung', () => {
     await h1('Alarme')
     await userEvent.setup().click(screen.getByRole('button', { name: 'Anfrage auslösen' }))
     await waitFor(() => expect(ort()).toBe('/login?abgelaufen=1&weiter=%2Falarme%3Fx%3D1'))
+    expect(await h1('Anmelden')).toBeInTheDocument()
+  })
+
+  // Früher: zwei Navigationen (Handler und Wächter), je nach Reihenfolge gewann /login?weiter=… ohne abgelaufen.
+  // Ein synchroner Scheduler der Abfragen erzwingt die frühere Verliererreihenfolge; beide Reihenfolgen müssen gleich enden.
+  test('Ablauf navigiert genau einmal: direkt zu /login mit abgelaufen, ohne Zwischenstation', async () => {
+    for (const takt of [(cb: () => void) => cb(), defaultScheduler]) {
+      notifyManager.setScheduler(takt)
+      try {
+        server.use(sitzungAntwort(sitzungAdmin), http.get('/api/v1/alerts', () => problem(401, 'Nicht angemeldet')))
+        orte.length = 0
+        const { unmount } = zeigeApp('/alarme?x=1', <><Sonde /><Spur /></>)
+        await h1('Alarme')
+        await userEvent.setup().click(screen.getByRole('button', { name: 'Anfrage auslösen' }))
+        await h1('Anmelden')
+        await new Promise((r) => setTimeout(r, 50)) // späte Umleitungen hätten jetzt stattgefunden
+        expect(orte).toEqual(['/alarme?x=1', '/login?abgelaufen=1&weiter=%2Falarme%3Fx%3D1'])
+        unmount()
+      } finally {
+        notifyManager.setScheduler(defaultScheduler)
+      }
+    }
+  })
+
+  test('direktes api.post mit 401 "Nicht angemeldet" meldet ab (abgelaufen)', async () => {
+    server.use(sitzungAntwort(sitzungAdmin), http.post('/api/v1/sonde', () => problem(401, 'Nicht angemeldet')))
+    zeigeApp('/alarme', <Sonde />)
+    await h1('Alarme')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Schreiben' }))
+    await waitFor(() => expect(ort()).toBe('/login?abgelaufen=1&weiter=%2Falarme'))
+  })
+
+  test('direktes api.post mit 401 "Anmeldung fehlgeschlagen" meldet nicht ab', async () => {
+    let gesendet = false
+    server.use(sitzungAntwort(sitzungAdmin), http.post('/api/v1/sonde', () => { gesendet = true; return problem(401, 'Anmeldung fehlgeschlagen') }))
+    zeigeApp('/alarme', <Sonde />)
+    await h1('Alarme')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Schreiben' }))
+    await waitFor(() => expect(gesendet).toBe(true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(ort()).toBe('/alarme')
+    expect(screen.getByRole('heading', { level: 1, name: 'Alarme' })).toBeInTheDocument()
+  })
+
+  test('Ablauf in Stage mfa meldet ab (abgelaufen)', async () => {
+    server.use(sitzungAntwort(sitzungMfa), http.post('/api/v1/auth/login/mfa', () => problem(401, 'Nicht angemeldet')))
+    const user = userEvent.setup()
+    zeigeApp('/login/zweiter-faktor')
+    await h1('Zweiter Faktor')
+    await user.type(screen.getByLabelText('Code aus der Authenticator-App'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Anmelden' }))
+    await waitFor(() => expect(ort()).toBe('/login?abgelaufen=1'))
+    expect(await h1('Anmelden')).toBeInTheDocument()
+  })
+
+  test('falscher Code in Stage mfa (401 "Anmeldung fehlgeschlagen") bleibt am Formular', async () => {
+    server.use(sitzungAntwort(sitzungMfa), http.post('/api/v1/auth/login/mfa', () => problem(401, 'Anmeldung fehlgeschlagen')))
+    const user = userEvent.setup()
+    zeigeApp('/login/zweiter-faktor')
+    await h1('Zweiter Faktor')
+    await user.type(screen.getByLabelText('Code aus der Authenticator-App'), '123456')
+    await user.click(screen.getByRole('button', { name: 'Anmelden' }))
+    expect(await screen.findByText('Anmeldung fehlgeschlagen')).toBeInTheDocument()
+    expect(ort()).toBe('/login/zweiter-faktor')
+  })
+
+  test('Ablauf in Stage enroll meldet ab (abgelaufen)', async () => {
+    server.use(sitzungAntwort(sitzungEnroll), http.post('/api/v1/auth/totp/setup', () => problem(401, 'Nicht angemeldet')))
+    zeigeApp('/einrichtung/zwei-faktor')
+    await waitFor(() => expect(ort()).toBe('/login?abgelaufen=1'))
     expect(await h1('Anmelden')).toBeInTheDocument()
   })
 

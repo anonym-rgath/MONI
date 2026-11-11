@@ -99,6 +99,7 @@ function Detail({ id }: { id: number }) {
         </p>
         <p className="m-0 text-sm text-muted">{meta}</p>
         <div role="status">{meldung && <p className="m-0 rounded-lg bg-surface-2 px-3 py-2.5 text-sm">{meldung}</p>}</div>
+        {server.isError && <Hinweis art="fehler">{t('uebersicht.managerFehler')}</Hinweis>}{/* alte Daten bleiben stehen, wie in der Übersicht */}
         {s.last_error && <Hinweis art="fehler">{s.last_error}</Hinweis>}
         {s.last_error && s.security === 'mtls' && (
           <Hinweis>{t('server.pairVor')}<code className="num">{t('server.pairBefehl')}</code>{t('server.pairNach')}</Hinweis>
