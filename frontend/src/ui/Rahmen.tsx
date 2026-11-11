@@ -1,14 +1,15 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router'
+import { useAlarme } from '../api/abfragen'
 import { useSitzung } from '../auth/Sitzung'
 import { t } from '../texte/de'
 import { DarstellungWahl } from './DarstellungWahl'
 
 const navLink = 'flex items-center gap-2 rounded-lg px-3.5 py-2.5 text-muted aria-[current=page]:bg-surface-2 aria-[current=page]:font-semibold aria-[current=page]:text-text'
 
-// offeneAlarme: Platzhalter, Task 5 verdrahtet /alerts.
-export function Rahmen({ offeneAlarme = 0, children }: { offeneAlarme?: number; children: ReactNode }) {
+export function Rahmen({ children }: { children: ReactNode }) {
   const { user, abmelden } = useSitzung()
+  const offeneAlarme = (useAlarme().data ?? []).filter((a) => a.state === 'firing').length
   return (
     <>
       <a className="skip" href="#inhalt">{t('rahmen.zumInhalt')}</a>

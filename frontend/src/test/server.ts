@@ -14,5 +14,8 @@ export const sitzungAntwort = (s: Session | null) =>
 export const server = setupServer(
   sitzungAntwort(null),
   http.get(`${BASIS}/setup`, () => HttpResponse.json({ required: false })),
+  http.get(`${BASIS}/servers`, () => HttpResponse.json([])),
+  http.get(`${BASIS}/alerts`, () => HttpResponse.json([])),
+  http.get(`${BASIS}/alert-rules`, () => HttpResponse.json([])),
   http.get(`${BASIS}/auth/oidc`, () => HttpResponse.json({ providers: [] })),
 )

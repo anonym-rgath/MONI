@@ -6,6 +6,7 @@ import { Login } from './seiten/anmeldung/Login'
 import { ZweiFaktorRoute } from './seiten/anmeldung/ZweiFaktorEinrichten'
 import { ZweiterFaktor } from './seiten/anmeldung/ZweiterFaktor'
 import { Platzhalter } from './seiten/Platzhalter'
+import { Uebersicht } from './seiten/uebersicht/Uebersicht'
 import { DarstellungProvider } from './ui/Darstellung'
 import { FokusNachWechsel } from './ui/FokusNachWechsel'
 import { Rahmen } from './ui/Rahmen'
@@ -19,7 +20,7 @@ export function Routen() {
       <Route path="login/zweiter-faktor" element={<Geschuetzt stage="mfa"><ZweiterFaktor /></Geschuetzt>} />
       <Route path="einrichtung/zwei-faktor" element={<ZweiFaktorRoute />} />
       <Route element={<Geschuetzt stage="full"><Rahmen><Outlet /></Rahmen></Geschuetzt>}>
-        <Route index element={<Platzhalter titel="rahmen.uebersicht" />} />
+        <Route index element={<Uebersicht />} />
         <Route path="server/:id" element={<Platzhalter titel="seiten.server" />} />
         <Route path="alarme" element={<Platzhalter titel="rahmen.alarme" />} />
         <Route path="alarme/verlauf" element={<Platzhalter titel="seiten.alarmVerlauf" />} />
