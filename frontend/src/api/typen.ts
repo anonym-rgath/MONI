@@ -183,3 +183,4 @@ export interface OidcAnbieter {
   client_id?: string
   client_secret_set?: boolean
 }
+export interface OidcKonfig { public_url: string | null; providers: OidcAnbieter[] }

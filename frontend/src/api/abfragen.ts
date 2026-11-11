@@ -1,11 +1,16 @@
 import { MutationCache, QueryCache, QueryClient, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { ApiFehler, api } from './client'
-import type { Alarm, Kanal, Regel, Seite, Server, Snapshot, Verlauf, Verlaufseintrag } from './typen'
+import type { AgentToken, Alarm, AuditEintrag, Benutzer, Kanal, OidcKonfig, Regel, Seite, Server, Snapshot, Token, Verlauf, Verlaufseintrag } from './typen'
 
 export const schluessel = {
   sitzung: ['sitzung'] as const,
   setup: ['setup'] as const,
   oidcAnbieter: ['oidc-anbieter'] as const,
+  oidcKonfig: ['oidc-konfig'] as const, // Verwaltung; oidcAnbieter gehört der Anmeldeseite (andere Antwort)
+  benutzer: ['benutzer'] as const,
+  tokens: ['tokens'] as const,
+  audit: ['audit'] as const,
+  agentTokens: (id: number) => ['agent-tokens', id] as const,
   server: ['server'] as const,
   serverEinzeln: (id: number) => ['server', id] as const,
   snapshot: (id: number) => ['server', id, 'snapshot'] as const,
@@ -67,3 +72,17 @@ export const useAlarmVerlauf = (serverId: number | null) =>
 // Nur Admins; die Kanäle-Seite ist geschützt, GET liefert nie Geheimnisse (nur secret_set und url_hint).
 export const useKanaele = () => useQuery({ queryKey: schluessel.kanaele, queryFn: () => api.get<Kanal[]>('/alert-channels') })
 export const useErinnerung = () => useQuery({ queryKey: schluessel.erinnerung, queryFn: () => api.get<{ remind_minutes: number }>('/alert-settings') })
+
+// Verwaltung (nur Admins; die Routen sind geschützt). Keine der Listen enthält Geheimnisse.
+export const useBenutzer = () => useQuery({ queryKey: schluessel.benutzer, queryFn: () => api.get<Benutzer[]>('/users') })
+export const useTokens = () => useQuery({ queryKey: schluessel.tokens, queryFn: () => api.get<Token[]>('/tokens') })
+export const useAgentTokens = (id: number) => useQuery({ queryKey: schluessel.agentTokens(id), queryFn: () => api.get<AgentToken[]>(`/servers/${id}/agent-tokens`) })
+export const useOidcKonfig = () => useQuery({ queryKey: schluessel.oidcKonfig, queryFn: () => api.get<OidcKonfig>('/auth/oidc/providers') })
+export const AUDIT_SEITE = 50
+export const useAudit = () =>
+  useInfiniteQuery({
+    queryKey: schluessel.audit,
+    initialPageParam: undefined as number | undefined,
+    queryFn: ({ pageParam }) => api.get<Seite<AuditEintrag>>('/audit', { limit: AUDIT_SEITE, before: pageParam }),
+    getNextPageParam: (letzte) => letzte.next_before ?? undefined,
+  })

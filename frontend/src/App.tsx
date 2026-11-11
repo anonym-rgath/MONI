@@ -13,6 +13,12 @@ import { Offen } from './seiten/alarme/Offen'
 import { Regeln } from './seiten/alarme/Regeln'
 import { Verlauf } from './seiten/alarme/Verlauf'
 import { Uebersicht } from './seiten/uebersicht/Uebersicht'
+import { Anmeldeanbieter } from './seiten/verwaltung/Anmeldeanbieter'
+import { Audit } from './seiten/verwaltung/Audit'
+import { Benutzer } from './seiten/verwaltung/Benutzer'
+import { Server } from './seiten/verwaltung/Server'
+import { Tokens } from './seiten/verwaltung/Tokens'
+import { Verwaltung } from './seiten/verwaltung/Verwaltung'
 import { DarstellungProvider } from './ui/Darstellung'
 import { FokusNachWechsel } from './ui/FokusNachWechsel'
 import { t } from './texte/de'
@@ -39,11 +45,12 @@ export function Routen() {
         <Route path="alarme/regeln" element={<Alarme><Regeln /></Alarme>} />
         <Route path="alarme/kanaele" element={<Geschuetzt stage="full" rolle="admin"><Alarme><Kanaele /></Alarme></Geschuetzt>} />
         <Route path="verwaltung" element={<Geschuetzt stage="full" rolle="admin"><Outlet /></Geschuetzt>}>
-          <Route path="server" element={<Platzhalter titel="seiten.verwaltungServer" />} />
-          <Route path="benutzer" element={<Platzhalter titel="seiten.benutzer" />} />
-          <Route path="tokens" element={<Platzhalter titel="seiten.tokens" />} />
-          <Route path="audit" element={<Platzhalter titel="seiten.audit" />} />
-          <Route path="anmeldung" element={<Platzhalter titel="seiten.anmeldung" />} />
+          <Route index element={<Navigate to="server" replace />} />
+          <Route path="server" element={<Verwaltung titel="seiten.verwaltungServer"><Server /></Verwaltung>} />
+          <Route path="benutzer" element={<Verwaltung titel="seiten.benutzer"><Benutzer /></Verwaltung>} />
+          <Route path="tokens" element={<Verwaltung titel="seiten.tokens"><Tokens /></Verwaltung>} />
+          <Route path="audit" element={<Verwaltung titel="seiten.audit"><Audit /></Verwaltung>} />
+          <Route path="anmeldung" element={<Verwaltung titel="seiten.anmeldung"><Anmeldeanbieter /></Verwaltung>} />
         </Route>
         <Route path="konto" element={<Platzhalter titel="seiten.konto" />} />
       </Route>

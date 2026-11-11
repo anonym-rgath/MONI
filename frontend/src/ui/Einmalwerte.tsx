@@ -3,7 +3,9 @@ import { t } from '../texte/de'
 import { Knopf } from './Knopf'
 
 // Einmalwerte liegen nur in den Props/im Zustand dieses Baums (D5): kein Cache, kein Speicher, keine Logs.
-export function Einmalwerte({ titel, werte, onFertig }: { titel: string; werte: string[]; onFertig: () => void }) {
+// bestaetigung und dateiname passen den Text an andere Werte als Wiederherstellungscodes an (etwa Tokens).
+export function Einmalwerte({ titel, werte, onFertig, bestaetigung = t('einmalwerte.bestaetigung'), dateiname = t('einmalwerte.dateiname') }:
+  { titel: string; werte: string[]; onFertig: () => void; bestaetigung?: string; dateiname?: string }) {
   const [bestaetigt, setBestaetigt] = useState(false)
   const [meldung, setMeldung] = useState('')
   const box = useId()
@@ -29,7 +31,7 @@ export function Einmalwerte({ titel, werte, onFertig }: { titel: string; werte: 
     const url = URL.createObjectURL(new Blob([werte.join('\n') + '\n'], { type: 'text/plain' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = t('einmalwerte.dateiname')
+    a.download = dateiname
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 0) // nach dem Klick, sonst kann der Download abbrechen
   }
@@ -47,7 +49,7 @@ export function Einmalwerte({ titel, werte, onFertig }: { titel: string; werte: 
       <p role="status" className="min-h-5 text-sm">{meldung}</p>
       <div className="flex items-center gap-2.5">
         <input id={box} type="checkbox" checked={bestaetigt} onChange={(e) => setBestaetigt(e.target.checked)} className="size-5 accent-accent" />
-        <label htmlFor={box}>{t('einmalwerte.bestaetigung')}</label>
+        <label htmlFor={box}>{bestaetigung}</label>
       </div>
       <Knopf art="haupt" disabled={!bestaetigt} onClick={onFertig}>{t('einmalwerte.weiter')}</Knopf>
     </section>
