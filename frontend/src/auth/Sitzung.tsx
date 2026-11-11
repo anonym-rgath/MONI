@@ -12,13 +12,24 @@ interface SitzungWert {
   user: SitzungBenutzer | null
   csrf: string
   laden: boolean
+  fehler: ApiFehler | null // erster Abruf der Sitzung scheiterte anders als mit 401
+  erneutVersuchen: () => void
   abmelden: () => Promise<void>
 }
 const Kontext = createContext<SitzungWert | null>(null)
 
 // Open-Redirect-Schutz: nur Pfade innerhalb dieser Anwendung.
+// Steuerzeichen (Tab, CR, LF) entfernt der URL-Parser still; so würde aus "/\t/evil" ein fremdes Ziel.
+// eslint-disable-next-line no-control-regex
+const UNZULAESSIG = /[\u0000-\u001F\u007F\\]/
 export function sicheresZiel(weiter: string | null): string | null {
-  return weiter && weiter.startsWith('/') && !weiter.startsWith('//') && !weiter.includes('\\') ? weiter : null
+  if (!weiter || !weiter.startsWith('/') || UNZULAESSIG.test(weiter)) return null
+  try {
+    const u = new URL(weiter, location.origin)
+    return u.origin === location.origin ? u.pathname + u.search + u.hash : null
+  } catch {
+    return null
+  }
 }
 
 type Behandler = (fehler: unknown) => void
@@ -50,6 +61,7 @@ function Innen({ zustand, children }: { zustand: Zustand; children: ReactNode })
 
   const q = useQuery({
     queryKey: schluessel.sitzung,
+    retry: false, // Fehler sofort zeigen, Wiederholen übernimmt der Knopf
     queryFn: async (): Promise<Session | null> => {
       try {
         const s = await api.get<Session>('/auth/session')
@@ -97,8 +109,17 @@ function Innen({ zustand, children }: { zustand: Zustand; children: ReactNode })
   }, [leeren, navigate])
 
   const wert = useMemo<SitzungWert>(
-    () => ({ stage, user: q.data?.user ?? null, csrf: q.data?.csrf_token ?? '', laden, abmelden }),
-    [stage, q.data, laden, abmelden],
+    () => ({
+      stage,
+      user: q.data?.user ?? null,
+      csrf: q.data?.csrf_token ?? '',
+      laden,
+      fehler: q.data === undefined && q.error instanceof ApiFehler ? q.error : null,
+      erneutVersuchen: () => void q.refetch(),
+      abmelden,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- q.refetch ist stabil, q selbst wechselt bei jedem Render
+    [stage, q.data, q.error, laden, abmelden],
   )
   return <Kontext value={wert}>{children}</Kontext>
 }

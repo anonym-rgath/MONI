@@ -13,7 +13,7 @@ const h1 = (name: string) => screen.findByRole('heading', { level: 1, name })
 describe('Sitzung', () => {
   test('ohne Sitzung (401) gilt Stage none und /login', async () => {
     zeigeApp('/')
-    await waitFor(() => expect(ort()).toBe('/login'))
+    await waitFor(() => expect(ort()).toBe('/login?weiter=%2F'))
     expect(await h1('Anmelden')).toBeInTheDocument()
   })
 
@@ -84,11 +84,27 @@ describe('Sitzung', () => {
   })
 
   test('sicheresZiel verwirft Open-Redirect-Ziele', () => {
+    for (const böse of ['//evil.example', '/\\evil.example', '/\t/evil.example', '/\n/evil.example', '/\r/evil', 'https://evil.example', 'javascript:alert(1)', 'alarme', '', null]) {
+      expect(sicheresZiel(böse), String(böse)).toBeNull()
+    }
     expect(sicheresZiel('/alarme?x=1')).toBe('/alarme?x=1')
-    expect(sicheresZiel('//evil.example')).toBeNull()
-    expect(sicheresZiel('/\\evil.example')).toBeNull()
-    expect(sicheresZiel('https://evil.example')).toBeNull()
-    expect(sicheresZiel('alarme')).toBeNull()
-    expect(sicheresZiel(null)).toBeNull()
+    expect(sicheresZiel('/server/3?x=1#a')).toBe('/server/3?x=1#a')
+    expect(sicheresZiel('/%2F%2Fevil')).toBe('/%2F%2Fevil')
+  })
+
+  test('Fehler beim ersten Laden der Sitzung: Hinweis statt Weiterleitung, Wiederholen funktioniert', async () => {
+    const user = userEvent.setup()
+    for (const antwort of [() => HttpResponse.error(), () => problem(500, 'Interner Fehler')]) {
+      server.use(http.get('/api/v1/auth/session', antwort))
+      const { unmount } = zeigeApp('/konto')
+      const hinweis = await screen.findByRole('alert')
+      expect(hinweis).toHaveTextContent(/Manager nicht erreichbar\.|Interner Fehler/)
+      expect(ort()).toBe('/konto')
+      server.use(sitzungAntwort(sitzungAdmin))
+      await user.click(screen.getByRole('button', { name: 'Erneut versuchen' }))
+      await h1('Konto')
+      expect(ort()).toBe('/konto')
+      unmount()
+    }
   })
 })

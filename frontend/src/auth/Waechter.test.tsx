@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Link } from 'react-router'
 import { axe } from 'vitest-axe'
 import { describe, expect, test } from 'vitest'
 import { sitzungAdmin, sitzungBetrachter, sitzungEnroll, sitzungMfa } from '../test/fixtures'
@@ -18,6 +19,11 @@ describe('Routenwächter', () => {
     server.use(sitzungAntwort(sitzungEnroll))
     zeigeApp('/')
     await waitFor(() => expect(ort()).toBe('/einrichtung/zwei-faktor'))
+  })
+
+  test('ohne Sitzung führt eine geschützte Seite zu /login mit Rücksprungziel', async () => {
+    zeigeApp('/alarme/regeln?x=1')
+    await waitFor(() => expect(ort()).toBe('/login?weiter=%2Falarme%2Fregeln%3Fx%3D1'))
   })
 
   test('mit Stage full führen Anmeldeseiten zur Übersicht', async () => {
@@ -64,6 +70,14 @@ describe('Routenwächter', () => {
     expect(screen.getByRole('link', { name: /^Alarme/ })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('link', { name: 'Übersicht' })).not.toHaveAttribute('aria-current')
     expect(document.title).toBe('Alarme – Moni')
+  })
+
+  test('der Fokus geht auch auf eine H1 außerhalb von main', async () => {
+    zeigeApp('/einrichtung', <Link to="/login">Zum Login</Link>)
+    await h1('Einrichtung')
+    expect(screen.queryByRole('main')).not.toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Zum Login' }))
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Anmelden' })).toHaveFocus())
   })
 
   test('Seitenrahmen mit Platzhalter hat keine axe-Verstöße', async () => {

@@ -21,6 +21,7 @@ export const de = {
   },
   waechter: {
     laden: 'Wird geladen …',
+    erneutVersuchen: 'Erneut versuchen',
     keineBerechtigung: 'Keine Berechtigung',
   },
   seiten: {

@@ -8,7 +8,7 @@ export function FokusNachWechsel() {
   useEffect(() => {
     if (vorher.current === pathname) return
     vorher.current = pathname
-    document.querySelector<HTMLElement>('main h1[tabindex="-1"]')?.focus()
+    document.querySelector<HTMLElement>('h1[tabindex="-1"]')?.focus()
   }, [pathname])
   return null
 }
