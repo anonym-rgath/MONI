@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { Einmalwerte } from './Einmalwerte'
@@ -29,7 +29,26 @@ describe('Einmalwerte', () => {
     vi.stubGlobal('navigator', { clipboard: { writeText: schreiben } })
     await user.click(screen.getByRole('button', { name: 'Kopieren' }))
     expect(schreiben).toHaveBeenCalledWith('aaaa-1111\nbbbb-2222')
-    expect(await screen.findByRole('status')).toHaveTextContent('In die Zwischenablage kopiert.')
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('In die Zwischenablage kopiert.'))
+  })
+
+  test('Statusbereich steht dauerhaft; ein zweites Kopieren leert und setzt den Text neu', async () => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
+    render(<Einmalwerte titel="Codes" werte={werte} onFertig={() => {}} />)
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('')
+    const kopieren = () => screen.getByRole('button', { name: 'Kopieren' }).click()
+    kopieren()
+    await waitFor(() => expect(status).toHaveTextContent('In die Zwischenablage kopiert.'))
+    kopieren()
+    await waitFor(() => expect(status).toHaveTextContent(/^$/))
+    await waitFor(() => expect(status).toHaveTextContent('In die Zwischenablage kopiert.'))
+    expect(screen.getByRole('status')).toBe(status)
+  })
+
+  test('der Fokus liegt beim Erscheinen auf der Überschrift', () => {
+    render(<Einmalwerte titel="Codes" werte={werte} onFertig={() => {}} />)
+    expect(screen.getByRole('heading', { name: 'Codes' })).toHaveFocus()
   })
 
   test('ohne Zwischenablage erscheint ein Hinweis statt eines Fehlers', async () => {
@@ -37,7 +56,7 @@ describe('Einmalwerte', () => {
     render(<Einmalwerte titel="Codes" werte={werte} onFertig={() => {}} />)
     vi.stubGlobal('navigator', {})
     await user.click(screen.getByRole('button', { name: 'Kopieren' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('Kopieren ist hier nicht möglich')
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Kopieren ist hier nicht möglich'))
   })
 
   test('Als Datei speichern: Blob, Dateiname, Object-URL wird wieder freigegeben', async () => {
@@ -52,6 +71,6 @@ describe('Einmalwerte', () => {
     const blob = (erzeugen.mock.calls[0] as unknown as [Blob])[0]
     expect(await blob.text()).toBe('aaaa-1111\nbbbb-2222\n')
     expect(dateiname).toBe('moni-wiederherstellungscodes.txt')
-    expect(freigeben).toHaveBeenCalledWith('blob:moni-test')
+    await waitFor(() => expect(freigeben).toHaveBeenCalledWith('blob:moni-test'))
   })
 })

@@ -34,7 +34,7 @@ export function ZweiterFaktor() {
             required
             className="num"
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            onChange={(e) => setCode(e.target.value.replace(/\s/g, ''))}
           />
         ) : (
           <Feld
@@ -44,11 +44,10 @@ export function ZweiterFaktor() {
             inputMode="numeric"
             autoComplete="one-time-code"
             pattern="[0-9]*"
-            maxLength={6}
             required
             className="num text-[1.375rem] tracking-[0.2em]"
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            onChange={(e) => setCode(e.target.value.replace(/\s/g, '').slice(0, 6))}
           />
         )}
         <Knopf art="link" onClick={() => { setWiederherstellung(!wiederherstellung); setCode('') }}>

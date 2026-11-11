@@ -12,9 +12,11 @@ const START: Record<Stage, string> = {
 }
 
 // Lässt nur durch, wenn die Sitzung genau in der verlangten Stage ist; sonst geht es zur passenden Seite der echten Stage.
-export function Geschuetzt({ stage, rolle, children }: { stage: Stage; rolle?: 'admin'; children: ReactNode }) {
+// offen: die Seite hält ungespeicherte Einmalwerte und bleibt trotz Stage-Wechsel stehen (verlassen nur über ihren eigenen Weg).
+export function Geschuetzt({ stage, rolle, offen = false, children }: { stage: Stage; rolle?: 'admin'; offen?: boolean; children: ReactNode }) {
   const s = useSitzung()
   const { pathname, search } = useLocation()
+  if (offen) return children
   if (s.laden) return <p role="status">{t('waechter.laden')}</p>
   if (s.fehler) {
     return (

@@ -1,5 +1,5 @@
-import { useQueryClient } from '@tanstack/react-query'
-import { screen, waitFor } from '@testing-library/react'
+import { focusManager, useQueryClient } from '@tanstack/react-query'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { axe } from 'vitest-axe'
@@ -166,6 +166,15 @@ describe('Zweiter Faktor', () => {
     await waitFor(() => expect(ort()).toBe('/'))
   })
 
+  test('eingefügter Code mit Leerzeichen wird bereinigt', async () => {
+    const user = userEvent.setup()
+    zeigeApp('/login/zweiter-faktor')
+    const feld = await screen.findByLabelText('Code aus der Authenticator-App')
+    await user.click(feld)
+    await user.paste('123 456')
+    expect(feld).toHaveValue('123456')
+  })
+
   test('Umschalter wechselt auf den Wiederherstellungscode und zurück', async () => {
     const user = userEvent.setup()
     let gesendet: unknown
@@ -302,6 +311,31 @@ describe('Zwei-Faktor einrichten', () => {
     })
     for (const speicher of [localStorage, sessionStorage]) expect(JSON.stringify({ ...speicher })).not.toContain(CODES[0])
     for (const l of logs) expect(JSON.stringify(l.mock.calls)).not.toContain(CODES[0])
+  })
+
+  test('Codes bleiben nach Fokuswechsel sichtbar, auch wenn die Sitzung full meldet; fokussiert die Überschrift', async () => {
+    const user = userEvent.setup()
+    zeigeApp('/einrichtung/zwei-faktor')
+    await user.click(await screen.findByLabelText('Code aus der App'))
+    await user.paste('654 321')
+    expect(screen.getByLabelText('Code aus der App')).toHaveValue('654321')
+    await user.click(screen.getByRole('button', { name: 'Bestätigen' }))
+    expect(await screen.findByText(CODES[0]!)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Wiederherstellungscodes' })).toHaveFocus()
+    aktuelle = sitzungAdmin
+    act(() => { focusManager.setFocused(false); focusManager.setFocused(true) })
+    await new Promise((r) => setTimeout(r, 150)) // Refetch der Sitzung abwarten
+    expect(ort()).toBe('/einrichtung/zwei-faktor')
+    expect(screen.getByText(CODES[0]!)).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: 'Ich habe die Codes sicher gespeichert' }))
+    await user.click(screen.getByRole('button', { name: 'Weiter' }))
+    await waitFor(() => expect(ort()).toBe('/'))
+  })
+
+  test('ein Benutzer mit Stage full ohne offene Codes wird weggeleitet', async () => {
+    aktuelle = sitzungAdmin
+    zeigeApp('/einrichtung/zwei-faktor')
+    await waitFor(() => expect(ort()).toBe('/'))
   })
 
   test('falscher Code zeigt detail der API; die Einrichtung bleibt stehen', async () => {

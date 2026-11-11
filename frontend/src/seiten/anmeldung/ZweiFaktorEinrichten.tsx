@@ -10,9 +10,20 @@ import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
 import { useTitel } from '../../ui/useTitel'
 import { AnmeldeRahmen, Ueberschrift } from './AnmeldeRahmen'
+import { Geschuetzt } from '../../auth/Waechter'
 import { useNachSchritt } from './weiter'
 
-export function ZweiFaktorEinrichten() {
+// Sobald Codes angezeigt werden, hält die Route die Seite offen: confirm setzt die Sitzung auf full, ein Refetch (Fokuswechsel zur Passwort-App) würde sonst zu / umleiten.
+export function ZweiFaktorRoute() {
+  const [codesOffen, setCodesOffen] = useState(false)
+  return (
+    <Geschuetzt stage="enroll" offen={codesOffen}>
+      <ZweiFaktorEinrichten onCodes={() => setCodesOffen(true)} />
+    </Geschuetzt>
+  )
+}
+
+function ZweiFaktorEinrichten({ onCodes }: { onCodes: () => void }) {
   useTitel(t('seiten.zweiFaktorEinrichten'))
   const nachSchritt = useNachSchritt()
   const [code, setCode] = useState('')
@@ -20,7 +31,7 @@ export function ZweiFaktorEinrichten() {
   const [qrFehler, setQrFehler] = useState(false)
   // gcTime 0: Secret, URI und Codes bleiben nur im Zustand dieser Seite (D5)
   const setup = useMutation({ gcTime: 0, mutationFn: () => api.post<{ secret: string; otpauth_uri: string }>('/auth/totp/setup', {}) })
-  const bestaetigen = useMutation({ gcTime: 0, mutationFn: (c: string) => api.post<{ recovery_codes: string[] }>('/auth/totp/confirm', { code: c }) })
+  const bestaetigen = useMutation({ gcTime: 0, onSuccess: onCodes, mutationFn: (c: string) => api.post<{ recovery_codes: string[] }>('/auth/totp/confirm', { code: c }) })
   const gestartet = useRef(false) // StrictMode ruft Effekte doppelt auf; ein zweites Setup würde das erste Secret ungültig machen
   const { mutate } = setup
   const uri = setup.data?.otpauth_uri
@@ -64,7 +75,7 @@ export function ZweiFaktorEinrichten() {
             <code className="num rounded-lg bg-bg p-3 break-all">{setup.data.secret}</code>
           </div>
           <Formular absenden={t('zweiFaktor.bestaetigen')} onSubmit={async () => { await bestaetigen.mutateAsync(code.trim()) }}>
-            <Feld label={t('zweiFaktor.code')} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*" maxLength={6} required className="num" value={code} onChange={(e) => setCode(e.target.value)} />
+            <Feld label={t('zweiFaktor.code')} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*" required className="num" value={code} onChange={(e) => setCode(e.target.value.replace(/\s/g, '').slice(0, 6))} />
           </Formular>
         </div>
       )}
