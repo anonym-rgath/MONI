@@ -45,7 +45,7 @@ Das sichert nur die Datenbank. Für ein vollständiges Backup brauchen Sie zusä
 ./scripts/stop.sh manager
 docker volume ls | grep moni-manager-data       # Name des Volumes: moni-manager_moni-manager-data
 docker run --rm --user root -v moni-manager_moni-manager-data:/data:ro -v "$PWD":/backup \
-  --entrypoint sh ghcr.io/anonym-rgath/moni-manager:2.0.0 \
+  --entrypoint sh ghcr.io/anonym-rgath/moni-manager:2.0.1 \
   -c 'umask 077 && tar czf /backup/moni-data-$(date +%F).tgz -C /data .'
 ./scripts/start.sh manager
 ```
@@ -65,7 +65,7 @@ Die Archivdatei enthält verschlüsselte Geheimnisse, aber auch den HTTPS-Schlü
 
    ```
    docker run --rm --user root -v moni-manager_moni-manager-data:/data:ro -v "$PWD":/backup \
-     --entrypoint sh ghcr.io/anonym-rgath/moni-manager:2.0.0 \
+     --entrypoint sh ghcr.io/anonym-rgath/moni-manager:2.0.1 \
      -c 'umask 077 && tar czf /backup/moni-vor-restore-$(date +%F-%H%M).tgz -C /data .'
    ```
 
@@ -74,7 +74,7 @@ Die Archivdatei enthält verschlüsselte Geheimnisse, aber auch den HTTPS-Schlü
 
    ```
    docker run --rm --user root -v moni-manager_moni-manager-data:/data -v "$PWD":/backup \
-     --entrypoint sh ghcr.io/anonym-rgath/moni-manager:2.0.0 \
+     --entrypoint sh ghcr.io/anonym-rgath/moni-manager:2.0.1 \
      -c "rm -rf /data/* /data/.[!.]* && tar xzf /backup/moni-data-<DATUM>.tgz -C /data && chown -R app:app /data"
    ```
 

@@ -106,6 +106,9 @@ stderr_logfile_maxbytes=0 \n\
 
 RUN mkdir -p /var/log/supervisor
 
+# Auch für `docker compose exec … python -m moni.cli`: ohne MONI_ROLE liefe die CLI in der Agent-Rolle
+ENV MONI_ROLE=manager MONI_DATA_DIR=/data PYTHONUNBUFFERED=1
+
 USER app
 
 EXPOSE 80 443

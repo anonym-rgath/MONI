@@ -1,4 +1,6 @@
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -164,3 +166,32 @@ def test_migration_0005_creates_index(tmp_path):
     c = db.connect(p)
     assert "alert_outbox_event_id" in {r[1] for r in c.execute("PRAGMA index_list(alert_outbox)")}
     c.close()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX-Sperren verhalten sich nur unter Linux wie im Container")
+def test_connect_keeps_locks_of_open_connections(tmp_path):
+    """Ein weiteres connect() im selben Prozess darf die Sperren offener Verbindungen nicht aufheben.
+
+    Sonst hält sich ein zweiter Prozess (CLI im laufenden Container) beim Schließen für den letzten Nutzer und löscht
+    -wal und -shm, während der Manager weiter schreibt: Die Datenbank wird beschädigt.
+    """
+    p = tmp_path / "moni.db"
+    a = db.connect(p)
+    a.execute("CREATE TABLE t (x)")
+    a.commit()
+    db.connect(p).close()
+    subprocess.run([sys.executable, "-c", f"import sqlite3; c = sqlite3.connect({str(p)!r}); c.execute('select count(*) from t').fetchone(); c.close()"],
+                   check=True)
+    assert (tmp_path / "moni.db-wal").exists() and (tmp_path / "moni.db-shm").exists()
+    a.close()
+
+
+def test_connect_does_not_reopen_existing_db_file(tmp_path, monkeypatch):
+    """Kein eigenes os.open() auf eine vorhandene DB-Datei: dessen close() hebt alle POSIX-Sperren des Prozesses auf."""
+    p = tmp_path / "moni.db"
+    db.connect(p).close()
+    opened = []
+    real_open = db.os.open
+    monkeypatch.setattr(db.os, "open", lambda path, *a, **k: (opened.append(str(path)), real_open(path, *a, **k))[1])
+    db.connect(p).close()
+    assert str(p) not in opened

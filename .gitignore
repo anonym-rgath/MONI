@@ -17,3 +17,6 @@ frontend/.env.production.local
 frontend/test-results/
 frontend/playwright-report/
 .trivy-scan.*
+
+# Lokale Testumgebung (lokal/README.md)
+lokal/.env

@@ -4,6 +4,22 @@ Das Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die V
 [Semantic Versioning](https://semver.org/lang/de/). Der oberste Abschnitt muss zur Version in
 `backend/moni/__init__.py` passen (`scripts/ci/check_version.py`).
 
+## [2.0.1] – unveröffentlicht
+
+### Behoben
+
+- **Datenbank konnte beschädigt werden** (wichtig, bitte aktualisieren): Jede neue Datenbankverbindung im Manager hob
+  die Dateisperren der übrigen Verbindungen auf. Ein zweiter Prozess, etwa ein CLI-Aufruf per
+  `docker compose exec moni-manager python -m moni.cli …`, konnte dann `moni.db-wal` und `moni.db-shm` löschen, während
+  der Manager weiterschrieb. Folge waren `disk I/O error` und eine beschädigte Datenbank
+  (`database disk image is malformed`). Wer 2.0.0 betreibt und solche Meldungen im Log sieht, stellt nach dem Update
+  eine Sicherung zurück ([Backup](docs/backup.md)).
+- **CLI im Manager-Container lief in der Agent-Rolle:** `MONI_ROLE` war nur für den Backend-Prozess gesetzt. Befehle wie
+  `user reset-password`, `user reset-2fa`, `user unlock` und `user list` brachen deshalb mit „Benutzer gibt es nur in
+  der Manager-Rolle“ ab, und `token create` schrieb keinen Audit-Eintrag. Das Manager-Image setzt die Rolle jetzt
+  selbst.
+- Die CI prüft beides: CLI-Aufrufe neben dem laufenden Manager, danach keine Datenbankfehler und intakte WAL-Dateien.
+
 ## [2.0.0] – 2026-11-12
 
 Moni wird in zwei Rollen geteilt: den **Agent** (Messdienst pro Host) und den **Manager**

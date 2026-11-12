@@ -33,7 +33,7 @@ Alle Images sind mit cosign (keyless über GitHub-OIDC) signiert. Prüfen Sie di
 zum ersten Mal starten:
 
 ```
-cosign verify ghcr.io/anonym-rgath/moni-agent:2.0.0 \
+cosign verify ghcr.io/anonym-rgath/moni-agent:2.0.1 \
   --certificate-identity-regexp '^https://github.com/anonym-rgath/MONI/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -49,7 +49,7 @@ und eine Provenance-Attestierung. Den Ablauf, der sie erzeugt, beschreibt [Relea
 1. Master-Schlüssel erzeugen:
 
    ```
-   docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.0 python -m moni.cli secret generate
+   docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.1 python -m moni.cli secret generate
    ```
 
 2. Den ausgegebenen Wert in `.env` als `MONI_SECRET_KEY=` eintragen.
@@ -177,8 +177,8 @@ Gesetzt werden sie in `.env` (Compose reicht sie an den Container). Ohne Eintrag
 | Variable | Rolle | Standard | Bedeutung |
 |---|---|---|---|
 | `MONI_SECRET_KEY` | Manager | – (Pflicht) | Master-Schlüssel, siehe [oben](#master-schlüssel) |
-| `MONI_MANAGER_IMAGE` | Manager | `ghcr.io/anonym-rgath/moni-manager:2.0.0` | Image des Managers |
-| `MONI_AGENT_IMAGE` | Agent | `ghcr.io/anonym-rgath/moni-agent:2.0.0` | Image des Agents |
+| `MONI_MANAGER_IMAGE` | Manager | `ghcr.io/anonym-rgath/moni-manager:2.0.1` | Image des Managers |
+| `MONI_AGENT_IMAGE` | Agent | `ghcr.io/anonym-rgath/moni-agent:2.0.1` | Image des Agents |
 | `DOCKER_GID` | beide | – (Pflicht) | Gruppe des Docker-Sockets, siehe [oben](#docker_gid) |
 | `MONI_TLS` | beide | `on` | `on`: HTTPS (Agent mit mTLS, Manager mit eigenem Zertifikat). `off`: nur hinter einem vertrauenswürdigen Proxy, siehe [Proxy](proxy.md) |
 | `MONI_TRUSTED_PROXIES` | beide | leer | IPs/CIDRs vertrauenswürdiger Proxys, kommagetrennt. Wirkt nur bei `MONI_TLS=off`; bei `on` wird sie ignoriert (Warnung im Log) |

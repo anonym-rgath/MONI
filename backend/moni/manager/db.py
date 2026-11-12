@@ -11,8 +11,18 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def _create_private(path: Path) -> None:
-    """Legt die Datei mit 0600 an, falls sie fehlt; SQLite übernimmt den Modus für -wal und -shm."""
-    os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+    """Legt die Datei mit 0600 an, falls sie fehlt; SQLite übernimmt den Modus für -wal und -shm.
+
+    Eine vorhandene Datei bleibt unberührt: close() auf einen eigenen Deskriptor hebt unter POSIX alle Sperren des
+    Prozesses auf dieser Datei auf, auch die offener SQLite-Verbindungen. Ein zweiter Prozess (CLI) würde dann beim
+    Schließen -wal und -shm löschen, während der Manager weiter schreibt.
+    """
+    if path.exists():
+        return
+    try:
+        os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+    except FileExistsError:  # gleichzeitig von einem anderen Prozess angelegt
+        pass
 
 
 def connect(path: Path) -> sqlite3.Connection:

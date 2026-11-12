@@ -46,7 +46,7 @@ damit auch eigene `docker compose`-Aufrufe funktionieren; die Skripte setzen es 
 ```
 git clone https://github.com/anonym-rgath/MONI.git && cd MONI
 cp .env.example .env && chmod 600 .env
-docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.0 python -m moni.cli secret generate   # Ausgabe als MONI_SECRET_KEY in .env eintragen
+docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.1 python -m moni.cli secret generate   # Ausgabe als MONI_SECRET_KEY in .env eintragen
 ./scripts/start.sh manager
 docker compose -f compose.manager.yaml logs moni-manager | grep "Setup-Token"
 ```
