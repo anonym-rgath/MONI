@@ -82,8 +82,16 @@ Das erledigt der Repository-Admin einmal, nicht der Workflow:
    **Packages, Package settings, Change visibility** auf „public“ stellen, sonst kann niemand ohne Anmeldung ziehen.
 2. **Branch-Schutz für `main`:** Pull Request vorgeschrieben, die CI-Jobs („Backend unit tests“, „Frontend“, „Build images & smoke tests“) als
    Pflicht-Checks, keine Force-Pushes.
-3. **Tag-Schutz:** Unter **Settings, Rules, Rulesets** ein Tag-Ruleset für `v*` anlegen: nur Maintainer dürfen erstellen,
-   kein Löschen, kein Überschreiben. Ein beliebiger Tag löst sonst ein Release aus.
+3. **Tag-Schutz:** Unter **Settings, Rules, Rulesets** zwei Tag-Rulesets für `refs/tags/v*` anlegen. Ein beliebiger Tag
+   löst sonst ein Release aus.
+   - `release-tags-anlegen`: Regel „Restrict creations“, Ausnahme nur für die Rolle Repository-Admin.
+   - `release-tags-unveraenderlich`: Regeln „Restrict updates“, „Restrict deletions“ und „Block force pushes“, ohne
+     Ausnahme. Auch Admins können einen Release-Tag dann weder verschieben noch löschen.
 4. **Private Vulnerability Reporting** einschalten (**Settings, Code security**), siehe [SECURITY.md](../SECURITY.md).
 5. **Labels für Dependabot** müssen existieren, sonst scheitert das Anlegen der PRs: `dependencies`, `backend`,
    `frontend`, `docker`, `ci` (siehe `.github/dependabot.yml`).
+
+Stand im Repository `anonym-rgath/MONI` (2026-11-12): Branch-Schutz für `main` (Ruleset `main-protection`), beide
+Tag-Rulesets, Private Vulnerability Reporting und die Dependabot-Labels sind eingerichtet. Die CodeQL-Hinweise zu
+`py/full-ssrf` in `auth/oidc.py` und `manager/poller.py` sind mit Begründung als „Won't fix“ verworfen (siehe
+[SECURITY.md](../SECURITY.md)). Offen bis zum ersten Release: GHCR-Pakete auf „public“ stellen.
