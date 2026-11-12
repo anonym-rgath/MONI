@@ -42,4 +42,4 @@ Die Pakete 4 und 5 sind voneinander unabhängig und können parallel laufen.
 - [x] Paket 4 – Plan: [`2026-11-05-moni-2-paket-4-mtls-kopplung.md`](2026-11-05-moni-2-paket-4-mtls-kopplung.md) (umgesetzt; Task 8 durch Betreiber offen)
 - [x] Paket 5 – Plan: [`2026-11-05-moni-2-paket-5-alarmierung.md`](2026-11-05-moni-2-paket-5-alarmierung.md) (umgesetzt; Task 8 durch Betreiber offen)
 - [x] Paket 6 – Plan: [`2026-11-11-moni-2-paket-6-oberflaeche.md`](2026-11-11-moni-2-paket-6-oberflaeche.md) (umgesetzt; Task 11 durch Betreiber offen)
-- [ ] Paket 7
+- [ ] Paket 7 – Plan: [`2026-11-12-moni-2-paket-7-release.md`](2026-11-12-moni-2-paket-7-release.md) (geplant, Freigabe offen)
