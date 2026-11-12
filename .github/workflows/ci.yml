@@ -77,9 +77,16 @@ jobs:
   build:
     name: Build images & smoke tests
     runs-on: ubuntu-latest
+    env:
+      # Compose nutzt die lokal gebauten CI-Images und zieht nie von GHCR (D5)
+      MONI_AGENT_IMAGE: moni-agent:ci
+      MONI_MANAGER_IMAGE: moni-manager:ci
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Docker-Gruppe des Sockets
+        run: echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -107,7 +114,7 @@ jobs:
       - name: Agent smoke test
         run: |
           set -euo pipefail
-          docker compose -f compose.agent.yaml up -d --build
+          docker compose -f compose.agent.yaml up -d
           ok=0
           for i in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health > agent-health.json 2>/dev/null && grep -q '"ok"' agent-health.json && { ok=1; break; }; sleep 1; done
           [ "$ok" = 1 ] || { echo "FAIL: /api/v1/health nicht erreichbar"; exit 1; }
@@ -128,6 +135,43 @@ jobs:
           # Der Kopplungscode darf (und muss) im Log stehen, solange der Agent ungekoppelt ist (D2)
           test -n "$(grep -oE 'moni-pair-v1:[A-Za-z0-9_:-]+' smoke.log | head -n1)"
 
+      - name: Socket-Proxy sperrt
+        run: |
+          set -euo pipefail
+          # Aus dem Agent-Container gegen DOCKER_API_BASE: nur Liste, Inspect und Stats erlaubt
+          docker compose -f compose.agent.yaml exec -T moni-agent python - <<'PY'
+          import json, os, urllib.error, urllib.request
+          base = os.environ["DOCKER_API_BASE"]
+          def call(method, path):
+              req = urllib.request.Request(base + path, method=method, data=b"" if method == "POST" else None)
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as r:
+                      return r.status, r.read()
+              except urllib.error.HTTPError as e:
+                  return e.code, b""
+          st, body = call("GET", "/containers/json")
+          assert st == 200, ("containers/json", st)
+          cid = json.loads(body)[0]["Id"]
+          want = {
+              ("GET", "/containers/json?all=true"): (200,),
+              ("GET", f"/containers/{cid}/json"): (200,),
+              ("GET", f"/containers/{cid}/stats?stream=false"): (200,),
+              ("GET", f"/containers/{cid}/logs?stdout=1"): (403,),
+              ("GET", f"/containers/{cid}/archive?path=/"): (403,),
+              ("POST", f"/containers/{cid}/stop"): (403, 405),
+              ("GET", "/images/json"): (403,),
+          }
+          bad = []
+          for (m, p), ok in want.items():
+              got = call(m, p)[0]
+              print(m, p.split("?")[0].replace(cid, "<id>"), got)
+              if got not in ok:
+                  bad.append((m, p, got))
+          assert not bad, bad
+          print("OK Socket-Proxy sperrt")
+          PY
+          python3 -c "import json; s=json.load(open('snap.json')); n=sum(c['stats_available'] for c in s['containers']); assert n>0, 'keine Container-Metriken'; print('OK', n, 'Container mit Metriken')"
+
       - name: Manager smoke test
         env:
           COMPOSE_PROJECT_NAME: moni-manager
@@ -135,7 +179,7 @@ jobs:
           set -euo pipefail
           MONI_SECRET_KEY=$(docker run --rm moni-manager:ci python -m moni.cli secret generate)
           export MONI_SECRET_KEY
-          docker compose -f compose.manager.yaml up -d --build
+          docker compose -f compose.manager.yaml up -d
           ok=0
           for i in $(seq 1 60); do curl -fsSk https://127.0.0.1:8443/api/v1/health > health.json 2>/dev/null && grep -q '"ok"' health.json && { ok=1; break; }; sleep 1; done
           [ "$ok" = 1 ] || { echo "FAIL: Manager /api/v1/health nicht erreichbar"; exit 1; }
