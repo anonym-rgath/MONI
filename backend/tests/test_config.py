@@ -166,3 +166,12 @@ def test_https_port_out_of_range(value):
 def test_https_port_not_a_number(value):
     with pytest.raises(ValueError, match="MONI_HTTPS_PORT"):
         Settings.from_env({"MONI_HTTPS_PORT": value})
+
+
+def test_trusted_proxies_with_tls_on_warns(caplog):
+    with caplog.at_level(logging.WARNING):
+        Settings.from_env({"MONI_TLS": "on", "MONI_TRUSTED_PROXIES": "10.0.0.1"})
+    assert any("MONI_TRUSTED_PROXIES" in r.message and "ignoriert" in r.message for r in caplog.records)
+    caplog.clear()
+    Settings.from_env({"MONI_TLS": "off", "MONI_TRUSTED_PROXIES": "10.0.0.1"})
+    assert not caplog.records

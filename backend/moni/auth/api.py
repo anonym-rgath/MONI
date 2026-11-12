@@ -4,7 +4,6 @@ Nie Passwörter, Codes, Secrets, Cookies oder CSRF-Werte in Logs, Audit-Details 
 """
 import hashlib
 import hmac
-import ipaddress
 import re
 import sqlite3
 import time
@@ -17,6 +16,7 @@ from ..manager import db
 from . import audit, passwords
 from .deps import Principal, client_ip, require_scope, require_stage
 from .sessions import COOKIE, Session, SessionStore
+from .throttle import throttle_key
 from .users import Conflict, User, UserStore, normalize_email
 
 router = APIRouter(prefix="/api/v1")
@@ -53,20 +53,6 @@ class TotpSetupBody(_Body):
 class PasswordBody(_Body):
     current_password: Str
     new_password: Str
-
-
-def throttle_key(request: Request) -> str:
-    """IP für die Drosselung; IPv6 auf das /64-Präfix gekürzt (P3-R2), sonst wechselt ein Angreifer einfach die Adresse."""
-    ip = client_ip(request) or ""
-    try:
-        a = ipaddress.ip_address(ip)
-    except ValueError:
-        return ip
-    if a.version == 4:
-        return ip
-    if a.ipv4_mapped:
-        return str(a.ipv4_mapped)
-    return f"{ipaddress.IPv6Address(int(a) >> 64 << 64)}/64"
 
 
 def _throttle(request: Request, now: int) -> None:

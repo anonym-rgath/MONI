@@ -8,10 +8,11 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, StrictStr, StringConstraints
 
-from moni.auth.api import throttle_key
 from moni.auth.deps import manager_cert, require_manager
+from moni.auth.throttle import throttle_key
+from moni.auth.tokens import NewToken  # ohne scope (§6.3: am Agent immer read); manager/api.py nutzt es mit
 from moni.timeutil import utcnow
 
 log = logging.getLogger("moni.agent")
@@ -29,18 +30,6 @@ class _Body(BaseModel):
 class CertBody(_Body):
     certificate: Pem
     ca: Pem
-
-
-class NewToken(_Body):  # wie admin_api.NewToken, aber ohne scope (§6.3: am Agent immer read)
-    name: Annotated[StrictStr, StringConstraints(min_length=1, max_length=64)]
-    expires_days: StrictInt | None = Field(None, ge=1, le=3650)
-
-    @field_validator("name")
-    @classmethod
-    def _visible(cls, v: str) -> str:
-        if not v.isprintable() or not v.strip():
-            raise ValueError("Name muss sichtbare Zeichen enthalten")
-        return v
 
 
 # async: alles am TlsState läuft im Event-Loop-Thread, der laufende SSLContext ist nicht threadsicher (P4-R2)

@@ -10,6 +10,9 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, StringConstraints, field_validator
 
 from ..fsutil import write_private
 from ..timeutil import iso, parse_iso, utcnow
@@ -18,6 +21,20 @@ log = logging.getLogger(__name__)
 
 SCOPES = frozenset({"read", "admin"})
 _ID_RE = re.compile(r"[0-9a-f]{8}")
+
+
+class NewToken(BaseModel):
+    """Eingabe für neue Tokens; Manager-API erweitert um scope, der Agent nimmt sie unverändert (immer read)."""
+    model_config = ConfigDict(extra="forbid")
+    name: Annotated[StrictStr, StringConstraints(min_length=1, max_length=64)]
+    expires_days: StrictInt | None = Field(None, ge=1, le=3650)
+
+    @field_validator("name")
+    @classmethod
+    def _visible(cls, v: str) -> str:
+        if not v.isprintable() or not v.strip():
+            raise ValueError("Name muss sichtbare Zeichen enthalten")
+        return v
 
 
 @dataclass(frozen=True)

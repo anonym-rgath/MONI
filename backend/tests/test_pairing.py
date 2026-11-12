@@ -367,3 +367,18 @@ def test_agent_tokens_rejected_for_token_servers(api, spy):
         r = api.request(method, base + path, json=body)
         assert (r.status_code, r.json()["detail"]) == (422, "Nur für gekoppelte Server"), method
     assert spy == [] and _token_audit(api) == []
+
+
+def test_pairing_total_deadline(agent_tls_server, manager_pki, monkeypatch):
+    """Jeder Schritt bleibt knapp unter dem Socket-Timeout, zusammen überschreiten sie die Gesamtfrist (3 x Timeout)."""
+    t = [0.0]
+    monkeypatch.setattr(pairing, "_clock", lambda: t[0])
+    real_post = pairing._post
+
+    def slow(*a, **kw):
+        t[0] += 1.9
+        return real_post(*a, **kw)
+    monkeypatch.setattr(pairing, "_post", slow)
+    with pytest.raises(PairingError) as e:
+        pairing.pair(agent_tls_server.url, agent_tls_server.code, manager_pki, NOW, 1)
+    assert e.value.status == 504

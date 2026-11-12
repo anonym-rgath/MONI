@@ -1073,3 +1073,20 @@ def test_no_https_check_in_proxy_mode(settings, box, monkeypatch, tmp_path):
     finally:
         p.close()
     assert calls == [] and settings.tls == "off"
+
+
+def test_renew_respects_stop(paired_env, servers, monkeypatch):
+    """_stop mitten in der Erneuerung: kein weiterer Agent-Aufruf."""
+    from moni.manager import pairing
+    p = paired_env.poller
+    p._conn = db.connect(p._settings.db_path)
+    servers.add_mtls("zwei", "https://127.0.0.2:1", 1)
+    calls = []
+
+    def first(client, url, mp, now):
+        calls.append(url)
+        p._stop.set()
+        raise OSError
+    monkeypatch.setattr(pairing, "renew", first)
+    p._renew_certs(paired_env.real)
+    assert len(calls) == 1

@@ -9,6 +9,7 @@ def write_temp(path: Path, data: bytes) -> Path:
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as f:
+            os.fchmod(f.fileno(), 0o600)  # unabhängig von umask und Dateisystem
             f.write(data)
             f.flush()
             os.fsync(f.fileno())

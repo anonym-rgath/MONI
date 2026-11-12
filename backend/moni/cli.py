@@ -3,7 +3,7 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-from .agent.tls import TlsState
+from .agent.tls import TlsError, TlsState
 from .auth import audit, oidc
 from .auth.sessions import SessionStore
 from .auth.tokens import TokenStore
@@ -212,7 +212,7 @@ def _pair(args) -> int:
             return 0
         st.ensure(utcnow())
         code = st.pairing_code(s.public_url)
-    except (OSError, ValueError) as e:  # ssl.SSLError ist ein OSError
+    except (OSError, ValueError, TlsError) as e:  # ssl.SSLError ist ein OSError
         print(f"Fehler: {e}", file=sys.stderr)
         return 2
     if code is None:

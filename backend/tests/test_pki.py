@@ -199,3 +199,34 @@ def test_issued_cert_passes_strict_default_context(world):
     c, _ = _handshake(srv, cli, "127.0.0.1")
     assert c.getpeercert()
     assert pki.client_context(ca_pem).verify_flags & ssl.VERIFY_X509_STRICT
+
+
+@pytest.mark.parametrize("host", ["bad host", "*.example.com", "a..b", ".a", "a.", "x" * 254, "", "a/b"])
+def test_san_for_host_rejects_garbage(host):
+    with pytest.raises(ValueError):
+        pki.san_for_host(host)
+
+
+def test_issue_rejects_empty_sans():
+    ca_key, ca = pki.create_ca(NOW)
+    with pytest.raises(ValueError):
+        pki.issue(ca_key, ca, pki.make_csr(pki.new_key(), "x"), cn="a", sans=[], usage="server", now=NOW, days=1)
+
+
+def test_client_context_requires_cert_and_key_together():
+    ca_key, ca = pki.create_ca(NOW)
+    key = pki.new_key()
+    cert = pki.cert_pem(pki.issue(ca_key, ca, pki.make_csr(key, "x"), cn="c", sans=["c"], usage="client", now=NOW, days=1))
+    with pytest.raises(ValueError):
+        pki.client_context(pki.cert_pem(ca), cert_pem=cert)
+    with pytest.raises(ValueError):
+        pki.client_context(pki.cert_pem(ca), key_pem=pki.key_pem(key))
+
+
+def test_write_private_mode_0600_even_with_umask_000(tmp_path):
+    old = os.umask(0)
+    try:
+        pki.write_private(tmp_path / "k.pem", b"x")
+    finally:
+        os.umask(old)
+    assert os.stat(tmp_path / "k.pem").st_mode & 0o777 == 0o600

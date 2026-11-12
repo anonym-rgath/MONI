@@ -1,6 +1,7 @@
 """TLS- und Kopplungszustand des Agents in <data_dir>/tls/ (D2, D3, D4, D10)."""
 import hmac
 import json
+import os
 import secrets
 import ssl
 from datetime import datetime
@@ -9,6 +10,10 @@ from pathlib import Path
 from moni import pki
 
 _CN = "moni-agent"
+
+
+class TlsError(Exception):
+    """Fester deutscher Text für den Admin, nie ein ssl-Traceback."""
 
 
 class TlsState:
@@ -33,9 +38,26 @@ class TlsState:
     def ensure(self, now: datetime) -> None:
         if not self._p("cert.pem").exists():
             self._provisional(now)
-        elif not self.paired and not self._p("pairing.json").exists():
-            self._new_token()
+        else:
+            self._recover()
+            if not self.paired and not self._p("pairing.json").exists():
+                self._new_token()
         self._load()
+
+    def _recover(self) -> None:
+        """Absturz in install(): Zertifikat ist neu, der Schlüssel liegt noch als pending_key.pem; Paar vervollständigen."""
+        try:
+            cert = pki.load_cert(self._p("cert.pem").read_bytes())
+            if pki.matches_key(cert, pki.load_key(self._p("key.pem").read_bytes())):
+                return
+            pending = self._p("pending_key.pem")
+            if pending.exists() and pki.matches_key(cert, pki.load_key(pending.read_bytes())):
+                os.replace(pending, self._p("key.pem"))
+                return
+        except ValueError:  # Datei kaputt: wie ein nicht passendes Paar behandeln
+            pass
+        raise TlsError("Zertifikat und Schlüssel des Agents passen nicht zusammen – "
+                       "'python -m moni.cli pair reset' ausführen und den Agent neu koppeln")
 
     def _provisional(self, now: datetime) -> None:
         self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -99,11 +121,11 @@ class TlsState:
             ok = False
         if not ok:  # außerhalb von except, damit kein __context__ mitläuft
             raise ValueError("Zertifikat passt nicht")
-        pki.write_private(self._p("key.pem"), key_pem)
-        pki.write_private(self._p("cert.pem"), cert_pem)
+        # Reihenfolge für ensure(): pending_key.pem bleibt bis zum letzten Schritt, dann ersetzt er key.pem atomar
         pki.write_private(self._p("ca.pem"), ca_pem)
+        pki.write_private(self._p("cert.pem"), cert_pem)
         self._p("pairing.json").unlink(missing_ok=True)
-        self._p("pending_key.pem").unlink(missing_ok=True)
+        os.replace(self._p("pending_key.pem"), self._p("key.pem"))
         self._load()
 
     def reset(self, now: datetime, public_url: str = "") -> str:

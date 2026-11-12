@@ -25,6 +25,7 @@ class ManagerPki:
         self.dir = Path(data_dir) / "tls"
         self._box = box
         self._cached: tuple[bytes, ssl.SSLContext] | None = None  # (client.crt, Kontext); Tausch als Ganzes, threadsicher
+        self._ca: tuple[bytes, object, object] | None = None  # (ca.crt, Schlüssel, Zertifikat); Tausch als Ganzes
 
     def _p(self, name: str) -> Path:
         return self.dir / name
@@ -34,6 +35,13 @@ class ManagerPki:
 
     def _write_key(self, name: str, key) -> None:
         write_private(self._p(name), self._box.encrypt(pki.key_pem(key).decode()).encode())
+
+    def _ca_pair(self):
+        """CA-Schlüssel einmal entschlüsseln und behalten; neu gelesen, sobald sich ca.crt ändert."""
+        pem, cached = self.ca_pem, self._ca
+        if cached is None or cached[0] != pem:
+            cached = self._ca = (pem, pki.load_key(self._key_pem("ca.key.enc")), pki.load_cert(pem))
+        return cached[1], cached[2]
 
     @property
     def ca_pem(self) -> bytes:
@@ -63,7 +71,7 @@ class ManagerPki:
 
     def ensure_https(self, hostnames: tuple[str, ...], now: datetime) -> bool:
         """HTTPS-Zertifikat für nginx (D7); True, wenn neu geschrieben (ab 30 Tagen Rest oder bei neuen Hostnamen)."""
-        ca_key, ca_cert = pki.load_key(self._key_pem("ca.key.enc")), pki.load_cert(self.ca_pem)
+        ca_key, ca_cert = self._ca_pair()
         if self._https_ok(ca_cert, list(hostnames), now):
             return False
         key = pki.new_key()
@@ -94,7 +102,7 @@ class ManagerPki:
 
     def agent_signer(self) -> Callable[[bytes, str, datetime], bytes]:
         """Liest CA-Schlüssel und -Zertifikat sofort, damit lokale Fehler vor jedem Kontakt zum Agent auffallen (P4-R4)."""
-        ca_key, ca_cert = pki.load_key(self._key_pem("ca.key.enc")), pki.load_cert(self.ca_pem)
+        ca_key, ca_cert = self._ca_pair()
 
         def sign(csr_pem: bytes, host: str, now: datetime) -> bytes:
             """SAN kommt aus dem Host der Agent-URL, nie aus der CSR (D1)."""

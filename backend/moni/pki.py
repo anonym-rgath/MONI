@@ -17,7 +17,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from moni.fsutil import write_private  # noqa: F401  (Re-Export)
 
-_HOST_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?")
+_HOST_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*")
 _EKU = {"server": ExtendedKeyUsageOID.SERVER_AUTH, "client": ExtendedKeyUsageOID.CLIENT_AUTH}
 
 
@@ -114,6 +114,8 @@ def _load_csr(pem: bytes):
 def issue(ca_key, ca_cert, csr_pem: bytes, *, cn: str, sans: list[str],
           usage: Literal["server", "client"], now: datetime, days: int) -> x509.Certificate:
     csr = _load_csr(csr_pem)
+    if not sans:
+        raise ValueError("SAN fehlt")
     if csr is None:  # außerhalb von except, damit kein __context__ mitläuft
         raise ValueError("CSR ist ungültig")
     # Nur den öffentlichen Schlüssel aus der CSR übernehmen; Namen und Extensions sind fest.
@@ -188,6 +190,8 @@ def server_context(cert_pem: bytes, key_pem: bytes, ca_pem: bytes | None) -> ssl
 def client_context(ca_pem: bytes | None, cert_pem: bytes | None = None, key_pem: bytes | None = None) -> ssl.SSLContext:
     ctx = ssl.create_default_context(cadata=ca_pem.decode() if ca_pem else None)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    if cert_pem is not None and key_pem is not None:
+    if (cert_pem is None) != (key_pem is None):
+        raise ValueError("Zertifikat und Schlüssel nur zusammen angeben")
+    if cert_pem is not None:
         load_chain_into(ctx, cert_pem, key_pem)
     return ctx

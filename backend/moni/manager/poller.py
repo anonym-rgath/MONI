@@ -372,6 +372,8 @@ class Poller:
             (now + _RENEW_BEFORE, now - _RENEW_RETRY)).fetchall()
         done = []
         for sid, name, url in due:  # nacheinander: es sind wenige Server
+            if self._stop.is_set():
+                break
             try:
                 client = self._client_factory(url, "", {}, self._settings.poll_timeout_seconds,
                                               ssl_context=self._pki.client_context())

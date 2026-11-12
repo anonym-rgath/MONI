@@ -1,5 +1,10 @@
 """Drosselung fehlgeschlagener Anmeldungen pro IP (D8), nur im Speicher."""
+import ipaddress
 import threading
+
+from fastapi import Request
+
+from .deps import client_ip
 
 MAX_IPS = 10_000
 
@@ -30,3 +35,17 @@ class LoginThrottle:
             while len(self._hits) >= MAX_IPS:
                 del self._hits[next(iter(self._hits))]
             self._hits[ip] = hits
+
+
+def throttle_key(request: Request) -> str:
+    """IP für die Drosselung; IPv6 auf das /64-Präfix gekürzt (P3-R2), sonst wechselt ein Angreifer einfach die Adresse."""
+    ip = client_ip(request) or ""
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if a.version == 4:
+        return ip
+    if a.ipv4_mapped:
+        return str(a.ipv4_mapped)
+    return f"{ipaddress.IPv6Address(int(a) >> 64 << 64)}/64"

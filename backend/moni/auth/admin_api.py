@@ -7,13 +7,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstraints
 
 from ..manager import db
 from ..timeutil import iso, utcnow
 from . import audit
 from .deps import Principal, client_ip, require_scope
 from .sessions import SessionStore
+from .tokens import NewToken as BaseNewToken
 from .users import Conflict, User, UserStore
 
 router = APIRouter(prefix="/api/v1")
@@ -45,17 +46,8 @@ class PasswordBody(_Body):
     password: Str
 
 
-class NewToken(_Body):
-    name: Annotated[StrictStr, StringConstraints(min_length=1, max_length=64)]
+class NewToken(BaseNewToken):
     scope: Literal["read", "admin"] = "read"
-    expires_days: StrictInt | None = Field(None, ge=1, le=3650)
-
-    @field_validator("name")
-    @classmethod
-    def _visible(cls, v: str) -> str:
-        if not v.isprintable() or not v.strip():
-            raise ValueError("Name muss sichtbare Zeichen enthalten")
-        return v
 
 
 def _user_out(u: User, now: int) -> dict:

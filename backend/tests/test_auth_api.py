@@ -235,12 +235,12 @@ def test_ip_throttle_429(mgr_client, make_user):
     ("testclient", "testclient"),
 ])
 def test_throttle_key(ip, key):
-    from moni.auth.api import throttle_key
+    from moni.auth.throttle import throttle_key
     assert throttle_key(SimpleNamespace(client=SimpleNamespace(host=ip))) == key
 
 
 def test_throttle_key_without_client():
-    from moni.auth.api import throttle_key
+    from moni.auth.throttle import throttle_key
     assert throttle_key(SimpleNamespace(client=None)) == ""
 
 

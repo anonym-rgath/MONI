@@ -29,7 +29,8 @@ from ..manager import db
 from ..manager.poller import _OPENER  # kein Proxy aus der Umgebung, keine Weiterleitungen (wie P2-R6)
 from ..secretbox import SecretBox, SecretError
 from . import audit
-from .api import _set_cookie, throttle_key
+from .api import _set_cookie
+from .throttle import throttle_key
 from .deps import Principal, client_ip, require_scope
 from .sessions import SessionStore
 from .users import Conflict, User, UserStore

@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import ssl
+import time
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -29,7 +30,9 @@ _BAD_ANSWER = "Ungültige Antwort vom Agent"
 _LOCAL = "Manager-Zertifikate nicht lesbar"
 _PAIRED_BUT = ("Agent wurde gekoppelt, antwortet aber nicht wie erwartet – am Agent 'python -m moni.cli pair reset' "
                "ausführen und neu koppeln")
+_TOO_SLOW = "Kopplung dauert zu lange"
 _MAX_BODY = 64 * 1024
+_clock = time.monotonic
 _AGENT_STATUS = {401: (401, "Kopplungs-Token ungültig"), 409: (409, "Agent ist bereits gekoppelt"),
                  422: (502, "Zertifikat passt nicht")}
 
@@ -63,7 +66,10 @@ def _fingerprint(der: bytes) -> str:  # wie pki.fingerprint, direkt über das DE
     return base64.urlsafe_b64encode(hashlib.sha256(der).digest()).rstrip(b"=").decode()
 
 
-def _post(conn: http.client.HTTPSConnection, path: str, token: str, body: dict | None = None) -> tuple[int, bytes]:
+def _post(conn: http.client.HTTPSConnection, path: str, token: str, body: dict | None = None,
+          deadline: float = float("inf")) -> tuple[int, bytes]:
+    if _clock() > deadline:  # vor dem Senden: der Agent ist bis hier nicht gekoppelt
+        raise PairingError(_TOO_SLOW, 504)
     conn.request("POST", path, body=json.dumps(body).encode() if body is not None else b"",
                  headers={"X-Moni-Pairing-Token": token, "Content-Type": "application/json", "Accept": "application/json"})
     r = conn.getresponse()
@@ -93,8 +99,8 @@ def _signed(sign, csr_answer, host: str, now: datetime) -> bytes | PairingError:
         return PairingError(_BAD_ANSWER)
 
 
-def _exchange(conn, token: str, host: str, sign, ca_pem: str, now: datetime) -> PairingError | int:
-    status, body = _post(conn, "/api/v1/tls/csr", token)
+def _exchange(conn, token: str, host: str, sign, ca_pem: str, now: datetime, deadline: float) -> PairingError | int:
+    status, body = _post(conn, "/api/v1/tls/csr", token, deadline=deadline)
     if status != 200:
         return _agent_error(status)
     try:
@@ -104,7 +110,7 @@ def _exchange(conn, token: str, host: str, sign, ca_pem: str, now: datetime) -> 
     cert_pem = _signed(sign, answer, host, now)
     if isinstance(cert_pem, PairingError):
         return cert_pem
-    status, _ = _post(conn, "/api/v1/tls/cert", token, {"certificate": cert_pem.decode(), "ca": ca_pem})
+    status, _ = _post(conn, "/api/v1/tls/cert", token, {"certificate": cert_pem.decode(), "ca": ca_pem}, deadline)
     if status != 204:
         return _agent_error(status)
     return int(pki.load_cert(cert_pem).not_valid_after_utc.timestamp())
@@ -121,7 +127,11 @@ def renew(client: AgentClient, url: str, mp: ManagerPki, now: datetime) -> int:
 
 
 def pair(url: str, code: str, mp: ManagerPki, now: datetime, timeout: float) -> int:
-    """Koppelt den Agent unter `url`; liefert das Ablaufdatum seines neuen Zertifikats (Unix-Sekunden)."""
+    """Koppelt den Agent unter `url`; liefert das Ablaufdatum seines neuen Zertifikats (Unix-Sekunden).
+
+    `timeout` gilt je Socket-Vorgang; alle Schritte zusammen dürfen höchstens 3 x timeout dauern (504).
+    """
+    deadline = _clock() + timeout * 3
     fp, token, _ = parse_code(code)
     u = urlsplit(url)
     if u.scheme != "https" or not u.hostname:
@@ -137,7 +147,7 @@ def pair(url: str, code: str, mp: ManagerPki, now: datetime, timeout: float) -> 
         if not hmac.compare_digest(_fingerprint(conn.sock.getpeercert(binary_form=True) or b"").encode(), fp.encode()):
             result = PairingError(_FP_MISMATCH)
         else:  # dieselbe gepinnte Verbindung für CSR und Zertifikat
-            result = _exchange(conn, token, host, sign, ca_pem, now)
+            result = _exchange(conn, token, host, sign, ca_pem, now, deadline)
     except (OSError, http.client.HTTPException):  # Verbindung, Timeout, TLS-Abbruch
         result = PairingError(_UNREACHABLE)
     finally:
@@ -145,6 +155,9 @@ def pair(url: str, code: str, mp: ManagerPki, now: datetime, timeout: float) -> 
     if isinstance(result, PairingError):  # außerhalb von except: kein __context__ mit Verbindungsdetails
         raise result
     # Kontrollabruf mit echter CA- und Hostnamen-Prüfung; der Agent ist ab hier schon gekoppelt
+    if _clock() > deadline:  # der Agent ist ab hier gekoppelt: derselbe Hinweis wie bei fehlgeschlagenem Kontrollabruf
+        log.warning("Gesamtfrist der Kopplung vor dem Kontrollabruf überschritten")
+        raise PairingError(_PAIRED_BUT, 504)
     try:
         info = AgentClient(url, "", {}, timeout, ssl_context=ctx).get("/api/v1/info")
         reason = None if info.get("paired") is True else "Agent bestätigt die Kopplung nicht"

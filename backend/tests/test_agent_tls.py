@@ -1,3 +1,4 @@
+import os
 import ssl
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -5,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from moni import cli, pki
-from moni.agent.tls import TlsState
+from moni.agent.tls import TlsError, TlsState
 from moni.config import Settings
 
 NOW = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
@@ -200,3 +201,37 @@ def test_tls_off_has_no_state_and_is_unpaired(settings, collector, auth):
     app = create_app(replace(settings, tls="off"), collector)
     assert app.state.tls is None and not (settings.db_path.parent / "tls").exists()
     assert TestClient(app).get("/api/v1/info", headers=auth).json()["paired"] is False
+
+
+def _paired_dir(tmp_path):
+    """Agent im Zustand "CSR geholt": Schlüssel und Zertifikat der CA liegen bereit, install() läuft noch nicht."""
+    st = TlsState(tmp_path); st.ensure(NOW)
+    ca = pki.create_ca(NOW)
+    csr = st.new_csr()
+    return st, ca, _issue(ca, csr), pki.cert_pem(ca[1])
+
+
+def test_install_crash_between_cert_and_key_recovers(tmp_path, monkeypatch):
+    st, ca, cert_pem, ca_pem = _paired_dir(tmp_path)
+    real_replace = os.replace
+
+    def crash(src, dst):
+        if str(dst).endswith("/key.pem"):
+            raise OSError("Absturz")
+        real_replace(src, dst)
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(OSError):
+        st.install(cert_pem, ca_pem, NOW)
+    monkeypatch.undo()
+    assert (tmp_path / "tls" / "cert.pem").read_bytes() == cert_pem and (tmp_path / "tls" / "pending_key.pem").exists()
+    fresh = TlsState(tmp_path); fresh.ensure(NOW)
+    assert fresh.paired is True and not (tmp_path / "tls" / "pending_key.pem").exists()
+    assert fresh.cert_not_after == pki.load_cert(cert_pem).not_valid_after_utc
+
+
+def test_ensure_mismatched_pair_gives_german_hint(tmp_path):
+    st = TlsState(tmp_path); st.ensure(NOW)
+    (tmp_path / "tls" / "key.pem").write_bytes(pki.key_pem(pki.new_key()))
+    with pytest.raises(TlsError) as e:
+        TlsState(tmp_path).ensure(NOW)
+    assert "python -m moni.cli pair reset" in str(e.value) and not isinstance(e.value, ssl.SSLError)

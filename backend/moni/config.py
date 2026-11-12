@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import math
 import os
 import re
@@ -8,6 +9,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from moni.collect.host import read_hostname
+
+log = logging.getLogger(__name__)
 
 
 def _num(conv, what, env, name, default):
@@ -172,6 +175,8 @@ class Settings:
         _check_host(s.bind_host)
         if s.tls not in ("on", "off"):
             raise ValueError("MONI_TLS muss on oder off sein")
+        if s.tls == "on" and s.trusted_proxies:
+            log.warning("MONI_TRUSTED_PROXIES wird bei MONI_TLS=on ignoriert")
         if s.collect_interval_seconds < 1:
             raise ValueError("MONI_COLLECT_INTERVAL muss >= 1 sein")
         if s.buffer_seconds < s.collect_interval_seconds:
