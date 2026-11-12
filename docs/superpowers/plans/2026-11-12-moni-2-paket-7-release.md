@@ -349,3 +349,44 @@ Dieser Task ändert `main`, veröffentlicht Images und betrifft die Produktivsys
 - [ ] **Step 5: Pi (Manager).** Alten `linux-monitor` stoppen (Volume behalten, bis 2.0 läuft). `compose.manager.yaml` mit Override für Traefik/zentralen Socket-Proxy (PI-SETUP), Master-Schlüssel als Secret. Ersteinrichtung mit 2FA, `scripts/smoke.sh manager`.
 - [ ] **Step 6: SAU-INDEX (Agent).** `compose.agent.yaml` über den bestehenden Cloudflare Tunnel, kein offener Port. Kopplung per Code in der Oberfläche, `scripts/smoke.sh agent`. Im Manager Daten und Standardalarme prüfen.
 - [ ] **Step 7:** Echte Alarmkanäle (Webhook/SMTP) testen. Die offenen Betreiber-Schritte der Pakete 1–6 abhaken oder bewusst verwerfen. Übersicht auf „Paket 7 umgesetzt“ setzen.
+
+## Nachlauf aus der Umsetzung (2026-11-12)
+
+Umgesetzt sind die Tasks 1–11, jeder mit eigenem Review, dazu ein Abschlussreview mit einer Fixwelle (Commits `a9ac8d1` bis `d524e39`). Task 12 liegt beim Betreiber.
+
+### Rulings
+
+- **P7-R1:** Trivy läuft nur über `scripts/ci/trivy.sh` (eine Quelle für Digest und Flags), in CI und Release. Mit Plattform-Argument scannt es einen `docker save --platform`-Export, weil Trivy `--platform` bei Daemon-Images mit containerd-Store ignoriert.
+- **P7-R2:** Die CI startet den Manager mit `MONI_COLLECT_INTERVAL=5`.
+- **P7-R3:** Die Starlette-Warnung behebt der Wechsel der Testabhängigkeit von `httpx` auf `httpx2==2.16.0` (vom Autor freigegeben). Die CI läuft mit `-W error::DeprecationWarning`.
+- **P7-R4:** Die Webhook-Gesamtfrist umfasst TCP-Connect, TLS-Handshake, Antwortköpfe und Rumpf. Nur die DNS-Auflösung bleibt außerhalb (im Code vermerkt).
+- **P7-R5:** `PollStats` wird nur im Haupt-Thread geschrieben. Fehler zählt `_fail`, deaktivierte Server erscheinen nicht in den Kennzahlen.
+- **P7-R6:** `info.version` bleibt in `docs/api/openapi-*.json`. Bei jedem Versionssprung werden die Dateien neu erzeugt.
+- **P7-R7:** Weiterleitungen nach der Anmeldung kommen nur vom Wächter (kein Timer). Bestätigt der Server das Abmelden nicht, zeigt die Anmeldeseite einen Hinweis, dass die Server-Sitzung bis zum Ablauf weiterlebt.
+- **P7-R8:** Dev-Abhängigkeiten nur in Versionen, die mindestens 14 Tage alt sind (`@isaacs/nonrecursive-glob-match` 1.0.3, `brace-expansion` 5.0.12 per `overrides`).
+- **P7-R9:** `DOCKER_GID` ist Pflicht in beiden Compose-Dateien. Die Skripte setzen es automatisch (Linux per `stat`, macOS 0).
+- **P7-R10:** Socket-Proxy `wollomatic/socket-proxy` 1.13.2 mit Allowlist `^/(v[0-9.]+/)?containers/(json|[a-zA-Z0-9][a-zA-Z0-9_.-]*/(json|stats))$`. Die CI prüft Pfadtricks und fremde Clients (strikt 403). `-allowfrom` wird je Anfrage aufgelöst.
+- **P7-R11:** Die Skripte lesen Schema und Port vom laufenden Container (`docker compose port`, nur `MONI_TLS` aus dem Container-Env), nicht aus `.env`. `diagnose.sh` maskiert auch inhaltsbasiert.
+- **P7-R12:** Die Laufzeit-Images haben kein pip und kein setuptools mehr, zlib1g wird aktualisiert. `.trivyignore` ist leer.
+- **P7-R13:** Der Punkt „Ziffern-Regex soll auch URLs erfassen“ aus Paket 4 entfällt, er ist nicht zuordenbar.
+- **P7-R14:** Der Release-Ablauf ist: Push nur per Digest, dann je Plattform Pull, Architekturprüfung, Smoke und Trivy, dann cosign sign und verify, zuletzt Tags per `imagetools`. Rechte: `publish` hat `contents: read`, `packages: write`, `id-token: write`; `release` hat nur `contents: write`.
+- **P7-R15:** Der Smoke importiert `moni.app` und `moni.auth.passwords` (es gibt kein Paket `argon2`).
+- **P7-R16:** `check_version.py TAG` lehnt eine CHANGELOG-Überschrift „unveröffentlicht“ ab und prüft auch `package-lock.json`.
+- **P7-R17:** Die Projektnamen stehen fest in den Compose-Dateien (`moni-agent`, `moni-manager`).
+- **P7-R18:** Vor `v2.0.0` steht ein Probelauf mit `v2.0.0-rc.1` (Task 12, Step 1; Ablauf in `docs/release.md`).
+
+### Geparkte Punkte
+
+- **Vor dem Release prüfen:**
+  - `docs/backup.md`: `umask 077` auf dem Host wirkt nicht auf den Container-Prozess, das Archiv entsteht vermutlich mit 0644. Nach dem Lauf `chmod 600` auf dem Host ergänzen.
+  - `SECURITY.md`: Reaktionszeit („binnen 7 Tagen“) und „nur die neueste 2.x“ sind Annahmen und vom Autor zu bestätigen.
+  - Ob cosign 2.x die v3-Signaturen findet, ist unbestätigt; die Doku sagt „getestet mit cosign 3.x“.
+- **Später (Auswahl, vollständig im Ledger der Umsetzung):**
+  - Die Kopplungsfrist kann um einen Socket-Timeout überziehen.
+  - `TlsState.install()` prüft nicht selbst, ob der Agent schon gekoppelt ist.
+  - `store_password`-Race: 204 und Audit-Eintrag für einen gerade gelöschten Benutzer.
+  - Die Ersteinrichtung hasht im Schreib-Lock.
+  - Der `zlib1g`-Upgrade-Schritt entfällt, sobald der Basis-Digest den Fix enthält.
+  - Dependabot erkennt `${VAR:-image}` in Compose evtl. nicht.
+  - `redeploy --local`, `start.sh` und Selftest haben kleinere Annahmen (Loopback-Bind, keine Skalierung).
+  - Transitive Python-Abhängigkeiten sind nicht gepinnt, die CI kann dadurch ohne Repo-Änderung rot werden.
