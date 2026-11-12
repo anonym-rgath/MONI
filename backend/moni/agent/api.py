@@ -4,6 +4,7 @@ from moni import __version__
 from moni.agent import prometheus
 from moni.auth.deps import require_scope
 from moni.collect.host import read_hostname
+from moni.errors import problem
 from moni.timeutil import parse_iso
 
 router = APIRouter(prefix="/api/v1")
@@ -14,6 +15,13 @@ read = Depends(require_scope("read"))
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.get("/ready")
+def ready(request: Request):
+    if request.app.state.collector.latest() is None:
+        return problem(503, "Noch nicht bereit")
+    return {"status": "ready"}
 
 
 @router.get("/info", dependencies=[read])
@@ -48,4 +56,4 @@ def metrics(request: Request):
     snap = request.app.state.collector.latest()
     if snap is None:
         raise HTTPException(503, "Noch keine Messung vorhanden")
-    return Response(prometheus.render(snap), media_type=prometheus.CONTENT_TYPE)
+    return Response(prometheus.render(snap, "agent", __version__), media_type=prometheus.CONTENT_TYPE)

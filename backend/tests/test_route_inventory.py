@@ -89,3 +89,13 @@ def test_viewer_cannot_read_admin_lists(mgr_client, make_user, login_cookie, pat
     mgr_client.cookies.set(COOKIE, login_cookie(make_user("viewer"))[0])
     r = mgr_client.get(path)
     assert (r.status_code, r.json()["detail"]) == (403, NO_ROLE)
+
+
+# Öffentliche Lese-Routen ohne Anmeldung; jede Ausnahme steht hier ausdrücklich
+PUBLIC_GET = {"/api/v1/health", "/api/v1/ready"}
+
+
+def test_public_ready_route_is_deliberate(mgr_app, mgr_client):
+    assert ("GET", "/api/v1/ready") in _routes(mgr_app)
+    assert mgr_client.get("/api/v1/ready").status_code != 401
+    assert mgr_client.get("/api/v1/metrics").status_code == 401  # Kennzahlen bleiben geschützt

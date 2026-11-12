@@ -154,6 +154,9 @@ class Dummy:
     def stop(self):
         pass
 
+    def alive(self):
+        return True
+
 
 @pytest.fixture
 def mgr_settings(tmp_path):

@@ -22,6 +22,7 @@ from ..config import Settings
 from ..secretbox import SecretBox, SecretError
 from ..timeutil import iso, parse_iso
 from . import alerting, db, tsdb
+from .selfmetrics import PollStats
 from .servers import ServerStore
 
 log = logging.getLogger("moni.poller")
@@ -191,9 +192,20 @@ class Poller:
         self._info_at: dict[int, int] = {}  # Zeitpunkt des letzten Info-Versuchs, ob erfolgreich oder nicht
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.stats = PollStats()
+
+    def alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
 
     def _fetch(self, server, client, now: int):
-        """Läuft im Worker-Thread: nur HTTP, keine DB."""
+        """Läuft im Worker-Thread: misst Dauer und Erfolg des Abrufs."""
+        t0 = time.monotonic()
+        result = self._fetch_http(server, client, now)
+        self.stats.record(server.name, time.monotonic() - t0, not isinstance(result, AgentError))
+        return result
+
+    def _fetch_http(self, server, client, now: int):
+        """Nur HTTP, keine DB."""
         try:
             snaps = fetch_new(client, server.last_ts, now, self._settings.collect_interval_seconds)
             info = None
@@ -252,11 +264,15 @@ class Poller:
     def _fetch_all(self, jobs, now: int) -> dict:
         """Parallel, außerhalb jeder DB-Transaktion; Nachzügler blockieren den Zyklus nicht."""
         ex = ThreadPoolExecutor(max_workers=max(1, min(_MAX_WORKERS, len(jobs))))
+        start = time.monotonic()
         try:
             futs = {ex.submit(self._fetch, s, c, now): s for s, c in jobs}
             pending, end = set(futs), time.monotonic() + self._settings.poll_timeout_seconds * 3 + _GRACE
             while pending and not self._stop.is_set() and (left := end - time.monotonic()) > 0:
                 _, pending = wait(pending, timeout=min(left, 0.5))  # in Schritten, damit stop() greift
+            for f, s in futs.items():
+                if f in pending:  # hängender Worker meldet sich nie selbst
+                    self.stats.record(s.name, time.monotonic() - start, False)
             return {s.id: AgentError("Agent nicht erreichbar") if f in pending else f.result() for f, s in futs.items()}
         finally:
             ex.shutdown(wait=False, cancel_futures=True)
@@ -427,10 +443,12 @@ class Poller:
             self._conn = None
 
     def _run_one_cycle(self) -> None:
+        t0 = time.monotonic()
         try:
             self.poll_once(int(time.time()))
         except Exception:  # Sicherheitsnetz: der Abruf-Thread darf nie sterben
             log.exception("Abrufzyklus fehlgeschlagen")
+        self.stats.cycle(time.monotonic() - t0)
 
     def _loop(self) -> None:
         try:

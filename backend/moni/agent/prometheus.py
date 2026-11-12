@@ -8,13 +8,26 @@ def _esc(v) -> str:
     return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def render(snapshot: dict) -> str:
+def sample(name: str, labels, value) -> str:
+    lab = ",".join(f'{k}="{_esc(v)}"' for k, v in labels)
+    return f"{name}{{{lab}}} {value!r}" if lab else f"{name} {value!r}"
+
+
+def family(name: str, help_: str, kind: str, samples: list[str]) -> list[str]:
+    return [f"# HELP {name} {help_}", f"# TYPE {name} {kind}", *samples]
+
+
+def build_info(role: str, version: str) -> list[str]:
+    return family("moni_build_info", "Bauinformation von Moni, Wert immer 1", "gauge",
+                  [sample("moni_build_info", [("role", role), ("version", version)], 1)])
+
+
+def render(snapshot: dict, role: str | None = None, version: str = "") -> str:
     fam: dict[str, list[str]] = {}
     for s in flatten(snapshot):
-        lab = ",".join(f'{k}="{_esc(v)}"' for k, v in s.labels)
-        fam.setdefault(s.name, []).append(f"{s.name}{{{lab}}} {s.value!r}" if lab else f"{s.name} {s.value!r}")
+        fam.setdefault(s.name, []).append(sample(s.name, s.labels, s.value))
 
-    lines = []
+    lines = build_info(role, version) if role else []
     for name, samples in fam.items():
-        lines += [f"# HELP {name} {HELP[name]}", f"# TYPE {name} gauge", *samples]
+        lines += family(name, HELP[name], "gauge", samples)
     return "\n".join(lines) + "\n"

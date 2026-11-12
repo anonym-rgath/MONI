@@ -1,6 +1,7 @@
 """Manager-API v1: Serverliste, Verwaltung (admin) und Verlaufsabfrage. Nie Token- oder Header-Werte ausgeben."""
 import json
 import logging
+import sqlite3
 from contextlib import contextmanager
 from typing import Annotated
 from datetime import datetime, timedelta, timezone
@@ -10,10 +11,12 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstra
 
 from moni import __version__
 from moni.agent.pairing_api import NewToken as NewAgentToken  # gleiche Prüfung wie am Agent, extra=forbid
+from moni.agent import prometheus
 from moni.auth import audit
 from moni.auth.deps import Principal, client_ip, require_scope
 from moni.collect.host import read_hostname
-from moni.manager import db, pairing, tsdb
+from moni.errors import problem
+from moni.manager import db, pairing, selfmetrics, tsdb
 from moni.metrics_model import flatten
 from moni.manager.pairing import PairingError
 from moni.manager.poller import AgentClient, AgentError
@@ -128,6 +131,30 @@ def _get(store: ServerStore, server_id: int) -> Server:
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.get("/ready")
+def ready(request: Request):
+    """Öffentlich, daher ohne Details: Datenbank antwortet und der Poller-Thread lebt (D7)."""
+    try:
+        conn = db.connect(request.app.state.settings.db_path)
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+        ok = request.app.state.poller.alive()
+    except (sqlite3.Error, OSError):
+        ok = False
+    return {"status": "ready"} if ok else problem(503, "Noch nicht bereit")
+
+
+@router.get("/metrics", dependencies=[read])
+def metrics(request: Request):
+    with _store(request) as (_, store):
+        servers = store.list()
+    text = selfmetrics.render(request.app.state.poll_stats.snapshot(), servers,
+                              request.app.state.settings.db_path, __version__)
+    return Response(text, media_type=prometheus.CONTENT_TYPE)
 
 
 @router.get("/info", dependencies=[read])

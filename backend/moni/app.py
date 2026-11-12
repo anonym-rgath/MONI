@@ -25,6 +25,7 @@ from moni.manager.api import router as manager_router
 from moni.manager.ca import ManagerPki
 from moni.manager.notifier import Notifier
 from moni.manager.poller import Poller
+from moni.manager.selfmetrics import PollStats
 from moni.manager.servers import ServerStore
 from moni.logs import setup_logging
 from moni.ratelimit import RateLimitMiddleware
@@ -110,6 +111,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     if manager:
         app.state.box, app.state.poller, app.state.pki = box, poller, manager_pki
         app.state.notifier = notifier
+        app.state.poll_stats = getattr(poller, "stats", None) or PollStats()  # Test-Attrappen haben keine
         app.state.setup_hash, app.state.throttle = setup_hash, LoginThrottle()
         app.state.oidc_flows = oidc.Flows()
         app.include_router(manager_router)
