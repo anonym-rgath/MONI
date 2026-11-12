@@ -244,8 +244,13 @@ def main(argv: list[str] | None = None) -> int:
             tok, plain = store.create(args.name, args.scope, expires_at=exp)
             try:
                 _cli_audit(settings, "token.created", tok.id, {"scope": tok.scope})
-            except sqlite3.Error:  # kein Token ohne Audit: sonst bliebe ein verwaister, nie angezeigter Token gültig
-                store.revoke(tok.id)
+            except (sqlite3.Error, OSError, ValueError):  # kein Token ohne Audit: sonst bliebe ein verwaister, nie angezeigter Token gültig
+                try:
+                    store.revoke(tok.id)
+                except (OSError, RuntimeError, ValueError):
+                    print(f"Fehler: Audit-Eintrag nicht möglich, und der Token {tok.id} konnte nicht widerrufen werden. "
+                          f"Bitte sofort widerrufen: python -m moni.cli token revoke {tok.id}", file=sys.stderr)
+                    return 1
                 print("Fehler: Audit-Eintrag nicht möglich, der Token wurde nicht angelegt.", file=sys.stderr)
                 return 1
             print("Token wird nur jetzt angezeigt.")
@@ -260,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Token {args.id} widerrufen.")
             try:
                 _cli_audit(settings, "token.revoked", args.id)
-            except sqlite3.Error:
+            except (sqlite3.Error, OSError, ValueError):
                 print("Fehler: Der Token ist widerrufen, der Audit-Eintrag fehlt aber.", file=sys.stderr)
                 return 1
     except (OSError, RuntimeError, ValueError) as e:

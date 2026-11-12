@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 import sqlite3
@@ -113,7 +114,8 @@ def test_full_first_run_flow(mgr_client, mgr_app, caplog):
 
 
 def test_setup_wrong_token_is_throttled_and_403_text(mgr_client, caplog):
-    assert mgr_client.post("/api/v1/setup", json=SETUP | {"setup_token": "setup_\udcff"}).status_code == 422
+    raw = json.dumps(SETUP | {"setup_token": "setup_\udcff"})  # ASCII-escaped: httpx2 kodiert Surrogate nicht mehr selbst
+    assert mgr_client.post("/api/v1/setup", content=raw, headers={"Content-Type": "application/json"}).status_code == 422
     r = mgr_client.post("/api/v1/setup", json=SETUP | {"setup_token": "setup_falsch"})
     assert r.status_code == 403 and r.json()["detail"] == "Setup-Token ist ungültig"
     for _ in range(19):
@@ -488,3 +490,16 @@ def test_invalid_login_email_not_in_audit(mgr_client, mgr_app):
     bad, ok = [e for e in _audit(mgr_app) if e["action"] == "login.failure"][::-1]
     assert bad["target"] is None and bad["actor"] == "anonym" and "geheim" not in str(bad)
     assert ok["target"] == "niemand@example.org"
+
+
+def test_string_limit_1024_boundary(mgr_client, mgr_app, make_user, login_cookie):
+    assert login(mgr_client, "a@example.org", "x" * 1024).status_code == 401  # angenommen, nur falsch
+    assert login(mgr_client, "a@example.org", "x" * 1025).status_code == 422
+    u = make_user("viewer")
+    (a, csrf_a), = [login_cookie(u)]
+    use(mgr_client, a)
+    h, url = {"X-CSRF-Token": csrf_a}, "/api/v1/account/password"
+    ok = mgr_client.post(url, json={"current_password": "x" * 1024, "new_password": NEW_PW}, headers=h)
+    assert ok.status_code == 401  # Schema nimmt 1024 an, der Faktor ist falsch
+    assert mgr_client.post(url, json={"current_password": "x" * 1025, "new_password": NEW_PW}, headers=h).status_code == 422
+    assert mgr_client.post(url, json={"current_password": TEST_PASSWORD, "new_password": "x" * 1025}, headers=h).status_code == 422

@@ -360,3 +360,40 @@ def test_argon2_outside_write_lock(env, monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO("Ein-ganz-neues-Passwort\n"))
     assert cli.main(["user", "reset-password", "a@b.de", "--password-file", "-"]) == 0
     assert order == ["hash", "begin"]
+
+
+@pytest.mark.parametrize("exc", [sqlite3.OperationalError("locked"), OSError("disk"), ValueError("kaputt")])
+def test_token_create_audit_failure_any_error_no_orphan(env, monkeypatch, capsys, exc):
+    def boom(*a, **k):
+        raise exc
+    monkeypatch.setattr("moni.auth.audit.record", boom)
+    assert cli.main(["token", "create", "--name", "g"]) == 1
+    cap = capsys.readouterr()
+    assert "Traceback" not in cap.err and "moni_" not in cap.out + cap.err
+    assert TokenStore(env / "tokens.json").list() == []
+
+
+def test_token_create_audit_and_revoke_failure_names_id(env, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise OSError("disk")
+    monkeypatch.setattr("moni.auth.audit.record", boom)
+    monkeypatch.setattr(TokenStore, "revoke", boom)
+    assert cli.main(["token", "create", "--name", "g"]) == 1
+    cap = capsys.readouterr()
+    tid = TokenStore(env / "tokens.json").list()[0].id
+    assert f"Token {tid} konnte nicht widerrufen werden" in cap.err and "moni_" not in cap.out + cap.err
+    assert cap.out == ""
+
+
+def test_token_revoke_audit_failure(env, monkeypatch, capsys):
+    assert cli.main(["token", "create", "--name", "g"]) == 0
+    tid = TokenStore(env / "tokens.json").list()[0].id
+    capsys.readouterr()
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("locked")
+    monkeypatch.setattr("moni.auth.audit.record", boom)
+    assert cli.main(["token", "revoke", tid]) == 1
+    cap = capsys.readouterr()
+    assert "Traceback" not in cap.err and "Audit-Eintrag fehlt" in cap.err
+    assert TokenStore(env / "tokens.json").list() == []
