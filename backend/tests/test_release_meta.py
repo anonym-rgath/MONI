@@ -8,6 +8,25 @@ check_version = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_version)
 
 
+def _copy_sources(tmp_path, monkeypatch):
+    for rel in ("backend/moni/__init__.py", "frontend/package.json", "CHANGELOG.md", "compose.agent.yaml", "compose.manager.yaml"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text((REPO / rel).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(check_version, "ROOT", tmp_path)
+    return tmp_path / "CHANGELOG.md"
+
+
+def test_unreleased_changelog_fails_with_tag_only(tmp_path, monkeypatch, capsys):
+    changelog = _copy_sources(tmp_path, monkeypatch)
+    text = changelog.read_text(encoding="utf-8")
+    changelog.write_text(re.sub(r"(?m)^(## \[2\.0\.0\] – ).*$", r"\1unveröffentlicht", text), encoding="utf-8")
+    assert check_version.main([]) == 0
+    assert check_version.main(["v2.0.0"]) == 1
+    assert "unveröffentlicht" in capsys.readouterr().out
+    changelog.write_text(re.sub(r"(?m)^(## \[2\.0\.0\] – ).*$", r"\g<1>2026-12-01", text), encoding="utf-8")
+    assert check_version.main(["v2.0.0"]) == 0
+
+
 def test_versions_agree(capsys):
     assert check_version.main([]) == 0, capsys.readouterr().out
 

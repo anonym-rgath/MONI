@@ -8,6 +8,8 @@ und compose.manager.yaml. Exit 0, wenn alle gleich sind, sonst Exit 1 mit der Li
 Mit TAG (z. B. v2.0.0) gilt: TAG == "v" + Version, exakt. Auch Vorabversionen stehen deshalb in
 allen Quellen (v2.0.0-rc.1 -> "2.0.0-rc.1"); der Release-Workflow nimmt sie dann (D2) nur mit
 eigenem Tag und ohne latest. Ohne TAG gilt die Version aus __init__.py als Soll.
+Mit TAG darf die CHANGELOG-Ueberschrift nicht mehr "unveroeffentlicht" sagen (Datum setzen);
+ohne TAG (Pull Requests) ist das erlaubt.
 """
 from __future__ import annotations
 
@@ -51,6 +53,10 @@ def main(argv: list[str]) -> int:
             errors.append(f"Tag {argv[0]!r} ist keine Version vX.Y.Z[-Suffix]")
     else:
         expected = found["moni/__init__.py"] or ""
+    if argv:
+        heading = _first(r"^(## \[[^\]]+\][^\n]*)", "CHANGELOG.md", re.M) or ""
+        if "unveröffentlicht" in heading.lower():
+            errors.append(f"CHANGELOG.md: Abschnitt ist noch unveröffentlicht ({heading!r}), vor dem Tag das Datum eintragen")
     for name, value in found.items():
         if value != expected:
             errors.append(f"{name}: {value!r}, erwartet {expected!r}")

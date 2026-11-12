@@ -33,7 +33,7 @@ Moni wird in zwei Rollen geteilt: den **Agent** (Messdienst pro Host) und den **
 - Paket 5, Alarmierung: Regeln mit Schwelle und Dauer, Zustände „ausgelöst“ und „behoben“,
   Erinnerungen, Stummschaltung, Webhook (optional HMAC-signiert) und E-Mail, Test-Versand, Alarmverlauf.
 - Paket 6, Oberfläche: neue Weboberfläche mit Anmeldung, Übersicht, Serverdetail, Alarmen, Verwaltung
-  und Konto; helles und dunkles Design, WCAG 2.2 AA.
+  und Konto; helles und dunkles Design, geprüft mit axe gegen WCAG 2.2 AA.
 - Paket 7, Release: signierte Multi-Arch-Images (amd64, arm64) auf GHCR mit SBOM, Release-Workflow,
   Trivy und End-to-End-Test in der CI, OpenAPI-Abgleich, Eigenkennzahlen und Readiness,
   Betriebsskripte für beide Rollen, Dokumentation.

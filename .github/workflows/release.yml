@@ -6,10 +6,11 @@
 #   verify   je Target (agent, manager) und Plattform (amd64, arm64): Einzelbuild mit load, Smoke
 #            (Imports im Container der Plattform), Trivy (scripts/ci/trivy.sh). Alles vor dem Push.
 #            arm64 laeuft unter QEMU. Der Layer-Cache liegt je Target und Plattform im GHA-Cache.
-#   publish  nur Tag, nur nach verify: Multi-Arch-Build aus dem Cache von verify, Push nach GHCR
-#            mit SBOM (SPDX) und Provenance (mode=max), cosign keyless ueber den Digest,
-#            Selbstpruefung mit cosign verify. Tags nach D2: X.Y.Z, X.Y, X und latest; ein Pre-Release
-#            bekommt nur seinen eigenen Tag.
+#   publish  nur Tag-Push, nur nach verify: Multi-Arch-Build, Push NUR per Digest (ohne Tags) mit SBOM
+#            (SPDX) und Provenance (mode=max). Genau dieses Image wird je Plattform per Digest gezogen,
+#            Smoke und Trivy laufen darauf. Erst danach: cosign keyless ueber den Digest, Selbstpruefung
+#            mit cosign verify, dann Tags (D2: X.Y.Z, X.Y, X, latest; Pre-Release nur der eigene Tag)
+#            per imagetools auf denselben Index-Digest. Ein Fehler vorher laesst keinen Tag zurueck.
 #   release  nur Tag, nach publish beider Images: GitHub-Release mit dem CHANGELOG-Abschnitt.
 # Pruefen der Signatur: siehe CHANGELOG.md. Alle Actions per Commit-SHA gepinnt.
 
@@ -43,6 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Versionen pruefen
         run: |
@@ -81,14 +84,13 @@ jobs:
 
   publish:
     name: Publish moni-${{ matrix.target }}
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       packages: write
       id-token: write
-      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -96,6 +98,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Image-Name (klein geschrieben)
         id: name
@@ -128,22 +132,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Layer kommen aus dem Cache der verify-Jobs (gleicher Lauf, gleiche Scopes); ohne Treffer baut es neu.
-      - name: Build und Push (amd64, arm64)
+      # Push nur per Digest, ohne Tag: Ein Scan-Fehler unten laesst keinen Tag zurueck. Der Cache aus verify
+      # beschleunigt nur; gescannt wird unten das tatsaechlich gepushte Image.
+      - name: Build und Push per Digest (amd64, arm64)
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: mode=max
           cache-from: |
             type=gha,scope=${{ matrix.target }}-amd64
             type=gha,scope=${{ matrix.target }}-arm64
+
+      # Je Plattform nacheinander ziehen (derselbe Digest-Verweis), damit Smoke und Trivy das gepushte Image sehen.
+      - name: Smoke und Trivy auf dem gepushten Image
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker pull --platform "linux/$arch" "$IMAGE@$DIGEST"
+            docker run --rm --platform "linux/$arch" "$IMAGE@$DIGEST" python -c "import moni.app, moni.auth.passwords; print('OK Imports')"
+            scripts/ci/trivy.sh "$IMAGE@$DIGEST"
+          done
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -167,9 +184,28 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
           echo "OK Signatur von $IMAGE@$DIGEST"
 
+      # imagetools create kopiert den Index samt SBOM- und Provenance-Manifesten unveraendert (gleicher Digest).
+      - name: Tags setzen (D2) und Digest pruefen
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          args=()
+          while IFS= read -r t; do [ -n "$t" ] && args+=(-t "$t"); done <<< "$TAGS"
+          [ "${#args[@]}" -gt 0 ] || { echo "FEHLER: keine Tags"; exit 1; }
+          docker buildx imagetools create "${args[@]}" "$IMAGE@$DIGEST"
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            got=$(docker buildx imagetools inspect "$t" --format '{{json .Manifest}}' | python3 -c "import json,sys; print(json.load(sys.stdin)['digest'])")
+            [ "$got" = "$DIGEST" ] || { echo "FEHLER: $t zeigt auf $got, erwartet $DIGEST"; exit 1; }
+            echo "OK $t -> $DIGEST"
+          done <<< "$TAGS"
+
   release:
     name: GitHub-Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: publish
     runs-on: ubuntu-latest
     permissions:
@@ -177,6 +213,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Versionen pruefen
         run: python3 scripts/ci/check_version.py "$GITHUB_REF_NAME"
