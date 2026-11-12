@@ -80,7 +80,11 @@ jobs:
             python -c "import moni.app, moni.auth.passwords; print('OK Imports')"
 
       - name: Trivy
-        run: scripts/ci/trivy.sh "moni-${{ matrix.target }}:verify-${{ matrix.arch }}"
+        run: |
+          set -euo pipefail
+          img="moni-${{ matrix.target }}:verify-${{ matrix.arch }}"
+          [ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$img")" = "linux/${{ matrix.arch }}" ]
+          scripts/ci/trivy.sh "$img" "linux/${{ matrix.arch }}"
 
   publish:
     name: Publish moni-${{ matrix.target }}
@@ -158,8 +162,10 @@ jobs:
           set -euo pipefail
           for arch in amd64 arm64; do
             docker pull --platform "linux/$arch" "$IMAGE@$DIGEST"
+            got=$(docker image inspect --platform "linux/$arch" --format '{{.Os}}/{{.Architecture}}' "$IMAGE@$DIGEST")
+            [ "$got" = "linux/$arch" ] || { echo "FEHLER: gezogenes Image ist $got, erwartet linux/$arch"; exit 1; }
             docker run --rm --platform "linux/$arch" "$IMAGE@$DIGEST" python -c "import moni.app, moni.auth.passwords; print('OK Imports')"
-            scripts/ci/trivy.sh "$IMAGE@$DIGEST"
+            scripts/ci/trivy.sh "$IMAGE@$DIGEST" "linux/$arch"
           done
 
       - name: Install cosign
