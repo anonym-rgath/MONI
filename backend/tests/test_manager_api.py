@@ -1,0 +1,270 @@
+import json
+import logging
+import sqlite3
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from moni import errors
+from moni.auth.tokens import TokenStore
+from moni.manager import db, tsdb
+from moni.manager.api import router
+from moni.secretbox import SecretBox, generate_key
+
+
+@pytest.fixture
+def app(settings, tmp_path):
+    db.migrate(settings.db_path)
+    a = FastAPI()
+    a.state.settings = settings
+    a.state.tokens = TokenStore(tmp_path / "tokens.json")
+    a.state.box = SecretBox(generate_key())
+    errors.install(a)
+    a.include_router(router)
+    return a
+
+
+@pytest.fixture
+def client(app):
+    return TestClient(app)
+
+
+@pytest.fixture
+def read_auth(app):
+    return {"Authorization": f"Bearer {app.state.tokens.create('r', 'read')[1]}"}
+
+
+@pytest.fixture
+def admin_auth(app):
+    return {"Authorization": f"Bearer {app.state.tokens.create('a', 'admin')[1]}"}
+
+
+@pytest.fixture
+def conn(app, client):
+    c = db.connect(app.state.settings.db_path)
+    yield c
+    c.close()
+
+
+@pytest.fixture
+def local_id(conn, app):
+    from moni.manager.servers import ServerStore
+    return ServerStore(conn, app.state.box).ensure_local("lokal").id
+
+
+def test_health_open(client):
+    assert client.get("/api/v1/health").json() == {"status": "ok"}
+
+
+def test_info(client, read_auth, local_id):
+    i = client.get("/api/v1/info", headers=read_auth).json()
+    assert i["role"] == "manager" and i["api_version"] == "v1" and i["server_count"] == 1 and i["tls"] == "off"
+    assert i["hostname"] and i["version"]
+
+
+def test_read_token_cannot_write(client, read_auth):
+    assert client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "t"}, headers=read_auth).status_code == 403
+
+
+def test_no_token_401(client):
+    assert client.get("/api/v1/servers").status_code == 401
+
+
+def test_create_list_never_leaks(client, admin_auth):
+    r = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t",
+                                             "headers": {"CF-Access-Client-Secret": "geheim-h"}}, headers=admin_auth)
+    assert r.status_code == 201 and "geheim" not in r.text
+    body = client.get("/api/v1/servers", headers=admin_auth).text
+    assert "geheim-t" not in body and "geheim-h" not in body and "CF-Access-Client-Secret" in body
+    item = json.loads(body)[0]
+    assert item["warnings"] == 0 and item["agent_version"] is None and item["last_seen"] is None and item["status"]
+
+
+def test_create_invalid_422_no_echo(client, admin_auth):
+    r = client.post("/api/v1/servers", json={"name": "a", "url": "ftp://x", "token": "geheim-t"}, headers=admin_auth)
+    assert r.status_code == 422 and "geheim" not in r.text and "URL" in r.json()["detail"]
+    r = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t", "headers": {"X": 5}}, headers=admin_auth)
+    assert r.status_code == 422 and "geheim" not in r.text
+    r = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": 1234567}, headers=admin_auth)
+    assert r.status_code == 422 and "1234567" not in r.text
+
+
+def test_detail_snapshot_patch_delete(client, admin_auth, conn, app):
+    sid = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "t"}, headers=admin_auth).json()["id"]
+    assert client.get(f"/api/v1/servers/{sid}/snapshot", headers=admin_auth).json()["detail"] == "Noch kein Snapshot"
+    from moni.manager.servers import ServerStore
+    ServerStore(conn, app.state.box).record_success(sid, 1762257600, 1762257600, json.dumps({"warnings": [1, 2], "x": 1}),
+                                                    json.dumps({"version": "2.0.1"}))
+    conn.commit()
+    d = client.get(f"/api/v1/servers/{sid}", headers=admin_auth).json()
+    assert d["warnings"] == 2 and d["agent_version"] == "2.0.1" and d["agent_info"] == {"version": "2.0.1"}
+    assert d["last_seen"] == "2025-11-04T12:00:00Z"
+    assert client.get(f"/api/v1/servers/{sid}/snapshot", headers=admin_auth).json()["x"] == 1
+    p = client.patch(f"/api/v1/servers/{sid}", json={"enabled": False}, headers=admin_auth)
+    assert p.status_code == 200 and p.json()["enabled"] is False
+    assert client.patch(f"/api/v1/servers/{sid}", json={"enabled": "nein"}, headers=admin_auth).status_code == 422
+    assert client.delete(f"/api/v1/servers/{sid}", headers=admin_auth).status_code == 204
+    assert client.get(f"/api/v1/servers/{sid}", headers=admin_auth).status_code == 404
+
+
+def test_series_and_history(client, read_auth, local_id, conn):
+    snap = {"taken_at": "2026-11-04T12:00:00Z", "host": {"cpu": {"percent": 5.0}}}
+    tsdb.write_snapshots(conn, local_id, [snap])
+    conn.commit()
+    assert isinstance(client.get(f"/api/v1/servers/{local_id}/series", headers=read_auth).json(), list)
+    r = client.get(f"/api/v1/servers/{local_id}/history?metric=x&from=2026-11-04T11:00:00Z&to=2026-11-04T13:00:00Z&label=a:b:c&label=d:e",
+                   headers=read_auth)
+    assert r.status_code == 200 and "series" in r.json()
+    assert client.get(f"/api/v1/servers/{local_id}/history?metric=x", headers=read_auth).status_code == 200
+
+
+@pytest.mark.parametrize("qs", ["metric=x&from=2026-11-04T13:00:00Z&to=2026-11-04T12:00:00Z",
+                                "metric=x&resolution=5m", "metric=x&from=gestern", "from=2026-11-04T12:00:00Z",
+                                "metric=x&label=ohnedoppelpunkt"])
+def test_history_422(client, read_auth, local_id, qs):
+    assert client.get(f"/api/v1/servers/{local_id}/history?{qs}", headers=read_auth).status_code == 422
+
+
+def test_unknown_server_404(client, read_auth):
+    for p in ("snapshot", "series", "history?metric=x", ""):
+        assert client.get(f"/api/v1/servers/999/{p}".rstrip("/"), headers=read_auth).status_code == 404
+
+
+def test_unknown_patch_delete_404(client, admin_auth):
+    assert client.patch("/api/v1/servers/999", json={"enabled": True}, headers=admin_auth).status_code == 404
+    assert client.delete("/api/v1/servers/999", headers=admin_auth).status_code == 404
+
+
+def test_local_not_deletable(client, admin_auth, local_id):
+    assert client.delete(f"/api/v1/servers/{local_id}", headers=admin_auth).status_code == 422
+
+
+def test_no_body_or_auth_logged(client, admin_auth, caplog):
+    caplog.set_level(logging.DEBUG)
+    client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t"}, headers=admin_auth)
+    assert "geheim-t" not in caplog.text and admin_auth["Authorization"].split()[1] not in caplog.text
+
+
+@pytest.mark.parametrize("qs", ["from=0001-01-01T00:00:00%2B14:00", "to=0001-01-01T00:30:00Z", "from=9999-12-31T23:00:00-05:00"])
+def test_history_out_of_range_422(client, read_auth, local_id, qs):
+    assert client.get(f"/api/v1/servers/{local_id}/history?metric=x&{qs}", headers=read_auth).status_code == 422
+
+
+def _store_for(conn, app):
+    from moni.manager.servers import ServerStore
+    return ServerStore(conn, app.state.box)
+
+
+def test_hostile_agent_data_does_not_break_list(client, admin_auth, conn, app):
+    st = _store_for(conn, app)
+    a = st.add("a", "https://a", "t").id
+    b = st.add("b", "https://b", "t").id
+    c = st.add("c", "https://c", "t").id
+    st.record_success(a, 1762257600, 1, json.dumps({"warnings": 5}), '{"version": NaN, "capabilities": [NaN], "evil": 1}')
+    st.record_success(b, 1762257600, 1, json.dumps({"warnings": True}), json.dumps([1]))
+    st.record_success(c, 1762257600, 1, "{kaputt", "{kaputt")
+    conn.commit()
+    r = client.get("/api/v1/servers", headers=admin_auth)
+    assert r.status_code == 200 and all(x["warnings"] == 0 for x in r.json())
+    d = client.get(f"/api/v1/servers/{a}", headers=admin_auth)
+    assert d.status_code == 200 and d.json()["agent_info"] == {} and "evil" not in d.text
+    assert client.get(f"/api/v1/servers/{c}", headers=admin_auth).status_code == 200
+
+
+def test_huge_id_422(client, read_auth):
+    assert client.get(f"/api/v1/servers/{2**64}", headers=read_auth).status_code == 422
+    assert client.get("/api/v1/servers/0", headers=read_auth).status_code == 422
+
+
+def test_patch_strict(client, admin_auth, local_id):
+    for body in ({"enabled": "yes"}, {"enabled": 1}, {"enabled": True, "name": "x"}):
+        assert client.patch(f"/api/v1/servers/{local_id}", json=body, headers=admin_auth).status_code == 422
+
+
+def test_read_token_cannot_patch_delete(client, read_auth, local_id):
+    assert client.patch(f"/api/v1/servers/{local_id}", json={"enabled": False}, headers=read_auth).status_code == 403
+    assert client.delete(f"/api/v1/servers/{local_id}", headers=read_auth).status_code == 403
+
+
+def test_detail_never_leaks(client, admin_auth):
+    sid = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t",
+                                               "headers": {"CF-Access-Client-Secret": "geheim-h"}}, headers=admin_auth).json()["id"]
+    body = client.get(f"/api/v1/servers/{sid}", headers=admin_auth).text
+    assert "geheim" not in body and "CF-Access-Client-Secret" in body
+
+
+def test_history_with_infinite_rollup_is_200_with_null(client, read_auth, local_id, conn):  # Final 1c
+    sid = conn.execute("INSERT INTO series (server_id, name, labels) VALUES (?, 'x', '[]')", (local_id,)).lastrowid
+    conn.execute("INSERT INTO samples_1m VALUES (?, 1793793600, ?, ?, ?, 2)", (sid, float("-inf"), float("inf"), float("inf")))
+    conn.commit()
+    r = client.get(f"/api/v1/servers/{local_id}/history?metric=x&from=2026-11-04T12:00:00Z&to=2026-11-04T12:05:00Z"
+                   "&resolution=1m", headers=read_auth)
+    assert r.status_code == 200 and r.json()["series"][0]["points"] == [["2026-11-04T12:00:00Z", None, None, None]]
+
+
+@pytest.mark.parametrize("method,path,attr,body", [
+    ("post", "/api/v1/servers", "add", {"name": "a", "url": "https://a", "token": "geheim-t"}),
+    ("patch", "/api/v1/servers/1", "set_enabled", {"enabled": False}),
+    ("delete", "/api/v1/servers/1", "delete", None),
+])
+def test_locked_db_is_503(client, admin_auth, monkeypatch, method, path, attr, body):  # Final 10
+    from moni.manager.servers import ServerStore
+    monkeypatch.setattr(ServerStore, attr, lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+    r = client.request(method.upper(), path, json=body, headers=admin_auth)
+    assert r.status_code == 503 and r.headers["Retry-After"] == "5"
+    assert r.headers["content-type"] == "application/problem+json"
+    assert r.json()["detail"] == "Datenbank ist gerade beschäftigt, bitte erneut versuchen" and "geheim" not in r.text
+
+
+def test_other_operational_error_stays_500(client, admin_auth, monkeypatch):
+    from moni.manager.servers import ServerStore
+    monkeypatch.setattr(ServerStore, "add", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")))
+    c = TestClient(client.app, raise_server_exceptions=False)
+    assert c.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "t"}, headers=admin_auth).status_code == 500
+
+
+def test_token_server_output_and_strict_body(client, admin_auth, local_id):
+    r = client.post("/api/v1/servers", json={"name": "a", "url": "https://a", "token": "geheim-t"}, headers=admin_auth)
+    assert r.status_code == 201 and (r.json()["security"], r.json()["cert_not_after"]) == ("token", None)
+    items = client.get("/api/v1/servers", headers=admin_auth).json()
+    assert [(i["name"], i["security"]) for i in items] == [("lokal", "token"), ("a", "token")]
+    r = client.post("/api/v1/servers", json={"name": "b", "url": "https://b", "token": "geheim-t", "x": 1}, headers=admin_auth)
+    assert r.status_code == 422 and "geheim" not in r.text
+
+
+def _snap(**kw):
+    return {"timestamp": "2025-11-04T12:00:00Z", **kw}
+
+
+def _set_snapshot(conn, app, sid, snap):
+    from moni.manager.servers import ServerStore
+    ServerStore(conn, app.state.box).record_success(sid, 1762257600, 1762257600, json.dumps(snap), json.dumps({}))
+    conn.commit()
+
+
+def test_server_list_has_summary_from_snapshot(client, read_auth, local_id, conn, app):
+    snap = _snap(host={"cpu": {"usage_percent": 12.34}, "memory": {"usage_percent": 55.57},
+                       "temperature": {"zones": [{"name": "a", "id": "1", "celsius": 41.0},
+                                                 {"name": "b", "id": "2", "celsius": 63.26}]},
+                       "filesystems": [{"mountpoint": "/", "device": "d1", "fstype": "ext4", "usage_percent": 40.0},
+                                       {"mountpoint": "/data", "device": "d2", "fstype": "ext4", "usage_percent": 81.04}]},
+                 containers=[{"name": f"c{i}", "status": "running" if i < 5 else "exited"} for i in range(6)])
+    _set_snapshot(conn, app, local_id, snap)
+    expect = {"cpu_percent": 12.3, "memory_percent": 55.6, "temperature_max_c": 63.3,
+              "filesystem_max": {"mountpoint": "/data", "percent": 81.0},
+              "containers_running": 5, "containers_total": 6}
+    assert client.get("/api/v1/servers", headers=read_auth).json()[0]["summary"] == expect
+    assert client.get(f"/api/v1/servers/{local_id}", headers=read_auth).json()["summary"] == expect
+
+
+def test_summary_null_without_snapshot_and_null_fields_for_missing_metrics(client, read_auth, admin_auth, local_id, conn, app):
+    assert client.get("/api/v1/servers", headers=read_auth).json()[0]["summary"] is None
+    _set_snapshot(conn, app, local_id, _snap(host={"cpu": {"usage_percent": 7}}))
+    assert client.get("/api/v1/servers", headers=read_auth).json()[0]["summary"] == {
+        "cpu_percent": 7.0, "memory_percent": None, "temperature_max_c": None, "filesystem_max": None,
+        "containers_running": None, "containers_total": None}
+    for bad in ([1, 2], {"host": [1]}, {"timestamp": "kaputt"}):  # nie ein 500
+        _set_snapshot(conn, app, local_id, bad)
+        r = client.get("/api/v1/servers", headers=read_auth)
+        assert (r.status_code, r.json()[0]["summary"]) == (200, None)

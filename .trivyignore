@@ -1,0 +1,4 @@
+# Trivy-Ausnahmen (D10). Jede Ausnahme steht hier mit Begruendung und Ablaufdatum; "exp:" laesst Trivy
+# sie nach dem Datum selbst wieder melden. Danach Zeile loeschen (Fix liegt vor) oder neu begruendet verlaengern.
+# Ohne Eintrag bricht ein behebbarer CRITICAL- oder HIGH-Fund (--ignore-unfixed) die CI.
+# Format: CVE-JJJJ-NNNN exp:JJJJ-MM-TT   (Begruendung als Kommentar in der Zeile davor)

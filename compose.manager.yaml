@@ -1,0 +1,93 @@
+name: moni-manager
+
+services:
+  moni-manager:
+    image: ${MONI_MANAGER_IMAGE:-ghcr.io/anonym-rgath/moni-manager:2.0.0}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - /etc/hostname:/host/etc/hostname:ro
+      - moni-manager-data:/data
+    environment:
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
+      - HOST_ETC=/host/etc
+      - HOST_ROOT=/host/root
+      - DOCKER_API_BASE=http://docker-socket-proxy:2375
+      - MONI_SECRET_KEY=${MONI_SECRET_KEY:?MONI_SECRET_KEY muss gesetzt sein (python -m moni.cli secret generate)}
+      - API_CORS_ORIGINS=${API_CORS_ORIGINS:-}
+      - DOCKER_STATS_TIMEOUT=${DOCKER_STATS_TIMEOUT:-2.5}
+      - DOCKER_INSPECT_TIMEOUT=${DOCKER_INSPECT_TIMEOUT:-1.0}
+      - MAX_DOCKER_WORKERS=${MAX_DOCKER_WORKERS:-8}
+      - MONI_COLLECT_INTERVAL=${MONI_COLLECT_INTERVAL:-15}
+      - MONI_POLL_TIMEOUT=${MONI_POLL_TIMEOUT:-10}
+      - MONI_RETENTION_RAW_HOURS=${MONI_RETENTION_RAW_HOURS:-48}
+      - MONI_RETENTION_MINUTE_DAYS=${MONI_RETENTION_MINUTE_DAYS:-30}
+      - MONI_RETENTION_HOUR_DAYS=${MONI_RETENTION_HOUR_DAYS:-365}
+      - MONI_SESSION_IDLE_MINUTES=${MONI_SESSION_IDLE_MINUTES:-60}
+      - MONI_SESSION_MAX_HOURS=${MONI_SESSION_MAX_HOURS:-12}
+      - MONI_TLS=${MONI_TLS:-on}
+      - MONI_TRUSTED_PROXIES=${MONI_TRUSTED_PROXIES:-}
+      - MONI_MANAGER_HOSTNAMES=${MONI_MANAGER_HOSTNAMES:-}
+      - MONI_HTTPS_PORT=${MONI_HTTPS_PORT:-8443}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Standardmäßig nur localhost. 443 = HTTPS (MONI_TLS=on), 80 leitet dann auf https um bzw. ist bei MONI_TLS=off der Proxy-Eingang.
+    ports:
+      - "${MONI_MANAGER_BIND:-127.0.0.1}:${MONI_HTTPS_PORT:-8443}:443"
+      - "${MONI_MANAGER_BIND:-127.0.0.1}:8080:80"
+    networks:
+      - default
+      - socket-proxy
+
+  docker-socket-proxy:
+    image: wollomatic/socket-proxy:1.13.2@sha256:ff95d6ff6c27853005ef85eb8f4ab5923dc3d2f1e055f98fb6aeeaceec3fe848
+    restart: unless-stopped
+    # Allowlist statt Bereichsfreigabe (D4): nur Liste, Inspect und Stats von Containern; kein logs/archive/exec, keine anderen Methoden.
+    # Nur der Moni-Dienst darf verbinden. Die Gruppe muss die Docker-Socket-Gruppe sein: DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+    user: "65534:${DOCKER_GID:?DOCKER_GID setzen: stat -c %g /var/run/docker.sock (Docker Desktop auf macOS: 0)}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - '-listenip=0.0.0.0'
+      - '-allowfrom=moni-manager'
+      - '-allowGET=^/(v[0-9.]+/)?containers/(json|[a-zA-Z0-9][a-zA-Z0-9_.-]*/(json|stats))$'
+      - '-allowhealthcheck'
+      - '-watchdoginterval=60'
+      - '-stoponwatchdog'
+    healthcheck:
+      test: ["CMD", "./healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy
+
+networks:
+  socket-proxy:
+    internal: true
+
+volumes:
+  moni-manager-data:

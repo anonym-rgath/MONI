@@ -1,141 +1,41 @@
 #!/usr/bin/env bash
-
-# Linux Monitor - Redeploy-Script nach git pull
-# ==========================================
-# Workflow:
-#   1. git pull (Fast-Forward, bricht bei Konflikt ab)
-#   2. .env aus .env.example pruefen/ergaenzen
-#   3. linux-monitor neu bauen + neu starten
-#   4. Status anzeigen
-#   5. Smoke-/Security-Check ausfuehren
-#
-# Optional: --force erzwingt Container-Recreate, auch wenn Image-Hash gleich
-# bleibt. Nuetzlich falls Compose den Build aus Cache nicht als "neu" erkennt.
-# Optional: --no-smoke ueberspringt den Smoke-/Security-Check.
-
+# Aktualisieren: redeploy.sh agent|manager [--local] [--force] [--no-smoke]
+# Zieht das Image (pull) und startet neu; es wird nie gebaut.
+# --local: kein pull, nutzt MONI_AGENT_IMAGE bzw. MONI_MANAGER_IMAGE wie gesetzt (lokal gebautes Image).
 set -Eeuo pipefail
-
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-cd "$ROOT_DIR"
+# shellcheck source=scripts/_rolle.sh
+source "$SCRIPT_DIR/_rolle.sh"
+rolle_waehlen "$@"
+shift
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-FORCE_RECREATE=""
-RUN_SMOKE=1
-
+LOCAL=0; FORCE=(); SMOKE=1
 for arg in "$@"; do
     case "$arg" in
-        --force|--force-recreate)
-            FORCE_RECREATE="--force-recreate"
-            ;;
-        --no-smoke)
-            RUN_SMOKE=0
-            ;;
-        *)
-            echo -e "${RED}Unbekanntes Flag: $arg${NC}"
-            echo "Nutzung: $0 [--force] [--no-smoke]"
-            exit 1
-            ;;
+        --local) LOCAL=1 ;;
+        --force|--force-recreate) FORCE=(--force-recreate) ;;
+        --no-smoke) SMOKE=0 ;;
+        *) echo "Unbekanntes Flag: $arg" >&2; rolle_hilfe ;;
     esac
 done
 
-echo ""
-echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}   Linux Monitor Redeploy${NC}"
-echo -e "${GREEN}============================================${NC}"
-echo ""
-
-if ! command -v docker >/dev/null 2>&1; then
-    echo -e "${RED}Docker nicht installiert!${NC}"
-    exit 1
-fi
-
-if ! docker compose version >/dev/null 2>&1; then
-    echo -e "${RED}Docker Compose Plugin nicht installiert!${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}[1/5] git pull (--ff-only)...${NC}"
-if ! git pull --ff-only; then
-    echo ""
-    echo -e "${RED}git pull fehlgeschlagen.${NC}"
-    echo "Wenn lokale Commits ungepushte Aenderungen enthalten oder der Branch divergiert ist,"
-    echo "manuell pruefen mit: git status / git log --oneline --branches"
-    exit 1
-fi
-
-echo ""
-echo -e "${YELLOW}[2/5] .env pruefen...${NC}"
-if [ ! -f "$ROOT_DIR/.env" ]; then
-    if [ ! -f "$ROOT_DIR/.env.example" ]; then
-        echo -e "${RED}Fehler: .env.example fehlt im Repo-Root: $ROOT_DIR/.env.example${NC}"
-        echo "Bitte .env.example committen/pullen oder manuell eine .env im Repo-Root anlegen."
-        exit 1
-    fi
-
-    echo -e "${YELLOW}Erstelle .env aus .env.example...${NC}"
-    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
-    echo -e "${YELLOW}Bitte pruefe .env vor dem produktiven Einsatz.${NC}"
-fi
-
-if [ -f "$ROOT_DIR/.env.example" ]; then
-    added_env_keys=0
-    while IFS= read -r env_line; do
-        case "$env_line" in
-            ""|\#*) continue ;;
-        esac
-
-        env_key="${env_line%%=*}"
-        if ! grep -qE "^[[:space:]]*${env_key}=" "$ROOT_DIR/.env"; then
-            echo "$env_line" >> "$ROOT_DIR/.env"
-            added_env_keys=1
-        fi
-    done < "$ROOT_DIR/.env.example"
-
-    if [ "$added_env_keys" -eq 1 ]; then
-        echo -e "${YELLOW}Fehlende Werte aus .env.example wurden in .env ergaenzt.${NC}"
-    else
-        echo "  .env ist vollstaendig."
-    fi
-fi
-
-MONITOR_HOST="$(sed -n 's/^MONITOR_HOST=//p' "$ROOT_DIR/.env" | tail -n 1)"
-if [ -z "$MONITOR_HOST" ] || [ "$MONITOR_HOST" = "monitor.example.com" ]; then
-    echo -e "${RED}Fehler: MONITOR_HOST ist nicht fuer den produktiven Betrieb gesetzt.${NC}"
-    echo "Bitte in .env die echte Domain setzen, z. B.:"
-    echo "  MONITOR_HOST=monitor.sau-index.de"
-    exit 1
-fi
-
-if grep -qE '^[[:space:]]*MONITOR_PORT=' "$ROOT_DIR/.env"; then
-    echo -e "${YELLOW}Hinweis: MONITOR_PORT ist veraltet und wird ignoriert.${NC}"
-    echo "Der Container hoert intern immer auf Port 80; Traefik routet ebenfalls auf Port 80."
-fi
-
-echo ""
-echo -e "${YELLOW}[3/5] linux-monitor neu bauen + starten...${NC}"
-if [ -n "$FORCE_RECREATE" ]; then
-    echo "  (force-recreate aktiv)"
-fi
-
-docker compose up -d --build $FORCE_RECREATE linux-monitor
-
-echo ""
-echo -e "${YELLOW}[4/5] Status:${NC}"
-docker compose ps docker-socket-proxy linux-monitor
-
-echo ""
-if [ "$RUN_SMOKE" -eq 1 ]; then
-    echo -e "${YELLOW}[5/5] Smoke-/Security-Check:${NC}"
-    "$ROOT_DIR/scripts/smoke.sh"
+env_pruefen
+if [ "$LOCAL" = 1 ]; then
+    img="MONI_$(echo "$ROLLE" | tr "[:lower:]" "[:upper:]")_IMAGE"
+    # wie DOCKER_GID in _rolle.sh: nur diesen einen Schluessel aus .env pruefen, nichts ausgeben
+    [ -n "${!img:-}" ] || grep -qE "^[[:space:]]*${img}=." .env 2>/dev/null || warn "--local, aber $img ist nicht gesetzt: Compose nutzt das Standard-Image"
+    echo -e "${YELLOW}[1/3] --local: kein pull, nutze das gesetzte Image${NC}"
 else
-    echo -e "${YELLOW}[5/5] Smoke-/Security-Check uebersprungen (--no-smoke).${NC}"
+    echo -e "${YELLOW}[1/3] Image ziehen...${NC}"
+    compose pull
 fi
-
-echo ""
+echo -e "${YELLOW}[2/3] Neu starten...${NC}"
+compose up -d ${FORCE[@]+"${FORCE[@]}"}
+compose ps
+if [ "$SMOKE" = 1 ]; then
+    echo -e "${YELLOW}[3/3] Smoke-/Security-Check${NC}"
+    "$SCRIPT_DIR/smoke.sh" "$ROLLE"
+else
+    echo -e "${YELLOW}[3/3] Smoke-Check uebersprungen (--no-smoke)${NC}"
+fi
 echo -e "${GREEN}Redeploy fertig.${NC}"
-echo ""

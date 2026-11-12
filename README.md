@@ -1,249 +1,88 @@
-# Linux Monitor
+# Moni
 
-> Schlankes Echtzeit-Monitoring-Dashboard fuer beliebige Linux-Hosts: Host-Metriken
-> und Docker-Container-Status, ausgeliefert als ein einzelner, gehaerteter Container.
+> Quelloffenes Monitoring für Linux-Hosts und ihre Docker-Container: Ein schlanker **Agent** misst pro Host, ein
+> **Manager** sammelt, speichert Verläufe, alarmiert und bietet eine Weboberfläche. Alles läuft als gehärtete
+> Container mit Docker Compose.
 
 [![CI](https://github.com/anonym-rgath/MONI/actions/workflows/ci.yml/badge.svg)](https://github.com/anonym-rgath/MONI/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Das Projekt enthaelt ausschliesslich den Monitor selbst (Frontend, Backend,
-Betriebs-Skripte). Infrastruktur wie Traefik, Cloudflare Tunnel, DNS oder
-Backups liegt im separaten Projekt `PI-SETUP`.
+## Was Moni ist
 
----
-
-## Inhaltsverzeichnis
-
-- [Features](#features)
-- [Architektur](#architektur)
-- [Voraussetzungen](#voraussetzungen)
-- [Konfiguration](#konfiguration)
-- [API](#api)
-- [Betrieb](#betrieb)
-- [Sicherheit](#sicherheit)
-- [Entwicklung & Tests](#entwicklung--tests)
-- [Projektstruktur](#projektstruktur)
-- [Lizenz](#lizenz)
-
----
-
-## Features
-
-**Host-Metriken**
-
-- CPU: Auslastung, Kernanzahl, aktueller Takt
-- RAM inkl. Swap
-- Disk (Root-Dateisystem)
-- Load Average (1 / 5 / 15 Minuten)
-- Temperatur (Thermal Zone)
-- Uptime, laufende Prozesse, Hostname
-
-**Docker-Container** (pro Container)
-
-- Status und Health
-- CPU- und RAM-Nutzung
-- Netzwerk-Durchsatz (rx / tx)
-- Uptime und Restart-Count
-
-**Dashboard**
-
-- Live-Aktualisierung mit waehlbarem Intervall (2 / 3 / 5 / 10 s)
-- CPU- und RAM-Verlaufscharts
-- Reliability-Strip: aggregierte Alerts (Schwellen fuer CPU/RAM/Disk/Temperatur,
-  gestoppte oder unhealthy Container, Docker-API-Status)
-
-**Robuste API**
-
-- Lesefehler werden ueber `available`-Flags und eine `warnings`-Liste sichtbar
-  gemacht, statt sie als falsche Nullwerte zu kaschieren.
-
----
-
-## Architektur
-
-Alles laeuft in **einem** Multi-Stage-Image. Nginx liefert das statische
-React-Build aus und reverse-proxyt `/api` an das FastAPI-Backend; beide Prozesse
-werden von Supervisor verwaltet. Der Docker-Socket wird niemals direkt in den
-Monitor gemountet, sondern nur lesend ueber einen restriktiven Proxy erreichbar
-gemacht, der zentral in `PI-SETUP` betrieben wird.
+- **Agent** (`moni-agent`): Messdienst ohne Oberfläche auf jedem Host. Er liefert CPU, Speicher, Dateisysteme,
+  Netzwerk, Temperatur und den Status der Docker-Container über eine verschlüsselte, tokengeschützte API und im
+  Prometheus-Format (`/metrics`).
+- **Manager** (`moni-manager`): fragt mehrere Agents ab, speichert Verläufe in SQLite (Aufbewahrung einstellbar),
+  wertet Alarmregeln aus (Webhook, E-Mail) und zeigt alles in einer Weboberfläche mit Login, Pflicht-2FA, optional OIDC und
+  Rollen (Admin, Betrachter).
+- Manager und Agent sprechen per **mTLS** miteinander (eigene CA, Kopplung per Kopplungscode). Hinter einem
+  Reverse-Proxy oder Cloudflare Tunnel funktioniert auch ein Token-Modus.
+- Docker wird nur über einen **Socket-Proxy mit enger Allowlist** angesprochen, nie über den Socket selbst.
+  Die Container laufen `read_only`, ohne Capabilities und ohne neue Rechte.
+- Images für amd64 und arm64 auf GHCR, signiert (cosign) und mit SBOM.
 
 ```
-Browser ──HTTPS──▶ Cloudflare Access ──▶ Traefik ──▶ linux-monitor (:80, nginx)
-                                                        ├── /      ▶ React-Build (statisch)
-                                                        └── /api   ▶ uvicorn :8001 (FastAPI)
-                                                                       ├── /proc, /sys, /etc/hostname  (read-only)
-                                                                       └── docker-socket-proxy :2375   (in PI-SETUP, internes Netz)
-                                                                              └── /var/run/docker.sock  (read-only, POST=0)
+ Browser ──HTTPS──▶ ┌───────────────┐   mTLS, Abruf alle 15 s   ┌──────────────┐
+                    │    Manager    │ ────────────────────────▶ │ Agent Host A │
+ Prometheus ──────▶ │ UI, SQLite,   │                           └──────────────┘
+ (Token)            │ Alarme        │   mTLS                    ┌──────────────┐
+                    │               │ ────────────────────────▶ │ Agent Host B │
+                    └──────┬────────┘                           └──────────────┘
+                           └─▶ Webhook / E-Mail
 ```
 
-| Komponente            | Aufgabe                                                        |
-| --------------------- | -------------------------------------------------------------- |
-| `frontend/`           | React-Dashboard (CRA + CRACO + Tailwind)                       |
-| `backend/`            | FastAPI-Backend, liest `/proc`, `/sys` und die Docker-API      |
-| `nginx`               | Statische Auslieferung + Reverse-Proxy + Security-Header       |
-| `docker-socket-proxy` | Read-only Zugriff auf den Docker-Socket – **extern, Teil von `PI-SETUP`** |
+Der Manager misst seinen eigenen Host direkt mit, ein Agent dort ist nicht nötig.
 
----
+## Schnellstart
 
-## Voraussetzungen
+Voraussetzung: Linux mit Docker und Compose-Plugin. Prüfen Sie vor dem ersten Start die
+[Signatur der Images](docs/installation.md#signatur-der-images-prüfen).
 
-- Docker und das `docker compose`-Plugin
-- Zwei externe Docker-Netzwerke, von der Infrastruktur (`PI-SETUP`) bereitgestellt:
-  - `traefik-network` – Routing am Edge
-  - `socket-proxy-network` – interner Zugriff auf den Docker-Socket-Proxy
-- Ein laufender `docker-socket-proxy` (Teil von `PI-SETUP`), erreichbar als
-  `docker-socket-proxy:2375` im `socket-proxy-network`
-- Fuer den produktiven Betrieb: Traefik als Reverse-Proxy und Cloudflare Access
-  als Authentisierung am Edge (siehe [Sicherheit](#sicherheit))
+Tragen Sie in `.env` außerdem `DOCKER_GID=<Wert>` ein (`stat -c %g /var/run/docker.sock`, Docker Desktop auf macOS: `0`),
+damit auch eigene `docker compose`-Aufrufe funktionieren; die Skripte setzen es selbst.
 
----
-
-## Konfiguration
-
-Alle Werte werden ueber `.env` gesetzt (Vorlage: `.env.example`).
-
-| Variable                    | Pflicht | Default                          | Beschreibung                                              |
-| --------------------------- | :-----: | -------------------------------- | --------------------------------------------------------- |
-| `MONITOR_HOST`              |   ja    | –                                | Domain, auf die Traefik den Monitor routet                |
-| `TRAEFIK_ENTRYPOINT`        |   ja    | `web`                            | Traefik-EntryPoint                                        |
-| `API_CORS_ORIGINS`          |  nein   | leer                             | CORS-Origin-Liste fuer direkte API-Zugriffe (Dev)         |
-
-**Optionale Feintuning-Parameter** (Defaults greifen, wenn nicht gesetzt):
-
-| Variable                 | Default | Beschreibung                                  |
-| ------------------------ | ------- | --------------------------------------------- |
-| `DOCKER_STATS_TIMEOUT`   | `2.5`   | Timeout (Sek.) je Docker-Stats-Abfrage        |
-| `DOCKER_INSPECT_TIMEOUT` | `1.0`   | Timeout (Sek.) je Container-Inspect           |
-| `MAX_DOCKER_WORKERS`     | `8`     | Parallele Worker fuer Container-Metriken      |
-
-> `MONITOR_PORT` ist veraltet und wird ignoriert. Der Container hoert intern
-> immer auf Port 80; Traefik routet ebenfalls auf Port 80.
-
----
-
-## API
-
-Alle Endpunkte liegen unter dem Praefix `/api`.
-
-| Methode | Pfad                      | Beschreibung                                      |
-| ------- | ------------------------- | ------------------------------------------------- |
-| `GET`   | `/api/`                   | Health-Check (`{"status": "live"}`)               |
-| `GET`   | `/api/metrics/host`       | Host-Metriken inkl. `warnings`                    |
-| `GET`   | `/api/metrics/containers` | Liste aller Docker-Container                      |
-| `GET`   | `/api/metrics/all`        | Kombiniert: `host`, `containers`, `docker`-Status |
-
-Host-Metriken tragen pro Block ein `available`-Flag und melden Lesefehler
-gesammelt in `host.warnings`, z. B.:
-
-```json
-{
-  "memory": { "usage_percent": 24.5, "available": true },
-  "temperature": { "celsius": 0.0, "available": false },
-  "warnings": ["Temperatur nicht lesbar"]
-}
-```
-
----
-
-## Betrieb
-
-| Skript                  | Zweck                                                                        |
-| ----------------------- | ---------------------------------------------------------------------------- |
-| `scripts/start.sh`      | Image bauen und Monitor starten                                              |
-| `scripts/redeploy.sh`   | `git pull --ff-only`, neu bauen, starten und Smoke-Check ausfuehren          |
-| `scripts/stop.sh`       | Monitor stoppen                                                              |
-| `scripts/logs.sh`       | Logs verfolgen                                                               |
-| `scripts/smoke.sh`      | Nach-Deploy-Check: API, Frontend, Security-Header, Proxy-Block, Haertung     |
-| `scripts/diagnose.sh`   | Traefik-/Routing-/Container-Diagnose bei 404 oder fehlender Erreichbarkeit   |
-
-```bash
-./scripts/redeploy.sh            # Standard: pull + build + smoke
-./scripts/redeploy.sh --force    # Container-Recreate erzwingen
-./scripts/redeploy.sh --no-smoke # Smoke-Check ueberspringen
-```
-
-`scripts/smoke.sh` sollte nach jedem Deployment gruen durchlaufen. Es prueft die
-Compose-Konfiguration, alle API-Endpunkte, die statische Frontend-Auslieferung,
-die Security-Header, den POST-Block des Docker-Socket-Proxys und die
-Runtime-Haertung des `linux-monitor`-Containers.
-
----
-
-## Sicherheit
-
-**Authentisierung am Edge.** Der Monitor bringt bewusst keine eigene Login-Maske
-mit. Authentisierung erfolgt ueber **Cloudflare Access**, das auf den kompletten
-Host-Pfad `/*` angewendet werden muss, damit sowohl statische Assets als auch
-API-Aufrufe geschuetzt sind.
-
-**Container-Haertung** (per `scripts/smoke.sh` verifiziert):
-
-- Non-root-Betrieb als User `app`
-- `read_only`-Root-Dateisystem, beschreibbarer Pfad nur als `tmpfs` (`/tmp`)
-- `cap_drop: ALL` und `no-new-privileges`
-- Base-Images per `@sha256`-Digest gepinnt (Dependabot haelt sie aktuell)
-- HTTP-Security-Header: Content-Security-Policy, X-Content-Type-Options,
-  Referrer-Policy, X-Frame-Options, Permissions-Policy
-
-**Docker-Socket.** Der Socket wird nicht direkt in den Monitor gemountet. Der
-Zugriff laeuft ausschliesslich ueber den `docker-socket-proxy` (`POST=0`,
-read-only Socket-Mount), der zentral in `PI-SETUP` betrieben und nur ueber das
-interne `socket-proxy-network` erreichbar ist. `scripts/smoke.sh` verifiziert
-diese Absicherung nach jedem Deploy.
-
----
-
-## Entwicklung & Tests
-
-Backend-Unit-Tests (pytest) decken die nicht-triviale Parsing- und Rechenlogik ab
-(`/proc`-Parsing, Docker-Stats-Auswertung, Aggregation, API-Struktur):
-
-```bash
-cd backend
-python -m pip install -r requirements-dev.txt
-python -m pytest tests/ -v
-```
-
-> Die Test-Abhaengigkeiten setzen **Python 3.10+** voraus (pytest 9). Die CI
-> laeuft auf Python 3.11; das Laufzeit-Image nutzt Python 3.14.
-
-Die **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) laeuft bei
-jedem Push und Pull Request:
-
-1. **Backend-Tests** mit pytest
-2. **Image-Build** (deckt `yarn build` inkl. ESLint und `pip install` ab)
-3. **Boot-Smoke**: Container starten und `/api/` pruefen
-
-Damit erhalten auch die woechentlichen **Dependabot**-PRs
-([`.github/dependabot.yml`](.github/dependabot.yml)) automatisch ein Build-Gate.
-
----
-
-## Projektstruktur
+**Manager:**
 
 ```
-.
-├── backend/
-│   ├── server.py                # FastAPI-App: Host- und Container-Metriken
-│   ├── requirements-docker.txt  # Laufzeit-Abhaengigkeiten
-│   ├── requirements-dev.txt     # Test-Abhaengigkeiten
-│   └── tests/                   # pytest-Unit-Tests
-├── frontend/                    # React-Dashboard (CRA + CRACO + Tailwind)
-│   ├── src/
-│   └── package.json
-├── scripts/                     # Betriebs-Skripte (start/stop/redeploy/smoke/...)
-├── .github/
-│   ├── workflows/ci.yml         # CI: Tests + Image-Build + Boot-Smoke
-│   └── dependabot.yml
-├── Dockerfile                   # Multi-Stage-Image (nginx + supervisor + uvicorn)
-├── compose.yaml                 # Monitor-Service (Socket-Proxy + Netze: PI-SETUP)
-├── .env.example
-└── LICENSE
+git clone https://github.com/anonym-rgath/MONI.git && cd MONI
+cp .env.example .env && chmod 600 .env
+docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.0 python -m moni.cli secret generate   # Ausgabe als MONI_SECRET_KEY in .env eintragen
+./scripts/start.sh manager
+docker compose -f compose.manager.yaml logs moni-manager | grep "Setup-Token"
 ```
 
----
+Dann `https://localhost:8443` öffnen (Browserwarnung wegen der eigenen CA), mit dem Setup-Token den ersten Admin anlegen
+und die 2FA einrichten. Den Master-Schlüssel sichern Sie getrennt von den Daten ([Backup](docs/backup.md)).
+
+**Agent koppeln** (auf dem zu überwachenden Host, mit `MONI_AGENT_BIND=0.0.0.0` in `.env`):
+
+```
+./scripts/start.sh agent
+docker compose -f compose.agent.yaml exec moni-agent python -m moni.cli pair code
+```
+
+Den ausgegebenen Kopplungscode fügen Sie im Manager unter **Verwaltung, Server, Server koppeln** ein.
+Details: [Installation](docs/installation.md) und [Kopplung](docs/kopplung.md).
+
+## Dokumentation
+
+| Thema | Seite |
+|---|---|
+| Voraussetzungen, Variablen, Signatur prüfen, Socket-Proxy | [Installation](docs/installation.md) |
+| Agent und Manager verbinden, Zertifikate, Token-Modus | [Kopplung](docs/kopplung.md) |
+| Reverse-Proxy, Traefik, Cloudflare Tunnel, OIDC | [Proxy](docs/proxy.md) |
+| Tokens, Fehlerformat, Metriken, OpenAPI | [API](docs/api.md) |
+| Regeln, Kanäle, Webhook mit HMAC | [Alarme](docs/alarme.md) |
+| Sicherung und Wiederherstellung | [Backup](docs/backup.md) |
+| Von 1.x und innerhalb von 2.x | [Upgrade](docs/upgrade.md) |
+| Skripte, Logs, Admin-Reset | [Betrieb](docs/betrieb.md) |
+| Release-Ablauf für Maintainer | [Release](docs/release.md) |
+| Änderungen je Version | [CHANGELOG](CHANGELOG.md) |
+
+## Sicherheit und Mitmachen
+
+Schwachstellen melden Sie vertraulich nach [SECURITY.md](SECURITY.md). Beiträge: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Lizenz
 
-Apache License 2.0. Copyright 2026 Robin Gathmann. Den vollstaendigen Lizenztext
-enthaelt die Datei [`LICENSE`](LICENSE).
+[Apache License 2.0](LICENSE)

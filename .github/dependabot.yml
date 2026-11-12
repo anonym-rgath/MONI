@@ -1,9 +1,10 @@
-# Dependabot-Konfiguration fuer MONI
+# Dependabot-Konfiguration für MONI
 # ----------------------------------
-# Drei Update-Streams: Python-Backend, NPM-Frontend, Docker-Base-Images.
+# Fünf Update-Streams: Python-Backend, NPM-Frontend, Docker-Base-Images, GitHub Actions
+# (per Commit-SHA gepinnt) und Images der Compose-Dateien.
 # Wochenrhythmus (sammelt PRs in einem Schwung), Major-Updates gruppiert,
-# Patches und Minor jeweils einzeln. Security-Updates laufen unabhaengig
-# vom Schedule sofort, sobald ein bekannter Fix verfuegbar ist.
+# Patches und Minor jeweils einzeln. Security-Updates laufen unabhängig
+# vom Schedule sofort, sobald ein bekannter Fix verfügbar ist.
 #
 # Auto-Merge bewusst NICHT eingerichtet. Jeder PR braucht manuelles Review,
 # damit Breaking-Changes nicht unbemerkt durchrutschen.
@@ -29,7 +30,7 @@ updates:
         update-types:
           - "major"
 
-  # --- Frontend: NPM/Yarn -------------------------------------------------
+  # --- Frontend: npm -------------------------------------------------
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
@@ -47,14 +48,40 @@ updates:
         patterns:
           - "react"
           - "react-dom"
-          - "react-scripts"
+          - "@types/react"
+          - "@types/react-dom"
+      vite:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "vitest"
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
+      eslint:
+        patterns:
+          - "eslint"
+          - "@eslint/*"
+          - "typescript-eslint"
+          - "eslint-plugin-*"
       frontend-major:
         update-types:
           - "major"
         exclude-patterns:
           - "react"
           - "react-dom"
-          - "react-scripts"
+          - "@types/react"
+          - "@types/react-dom"
+          - "vite"
+          - "@vitejs/*"
+          - "vitest"
+          - "tailwindcss"
+          - "@tailwindcss/*"
+          - "eslint"
+          - "@eslint/*"
+          - "typescript-eslint"
+          - "eslint-plugin-*"
 
   # --- Docker: Root Dockerfile -------------------------------------------
   - package-ecosystem: "docker"
@@ -69,3 +96,29 @@ updates:
     commit-message:
       prefix: "deps(docker)"
       include: "scope"
+
+  # --- GitHub Actions: Workflows (per Commit-SHA gepinnt) ---------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "deps(ci)"
+
+  # --- Docker Compose: Images in den compose-Dateien -----------------------
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(compose)"

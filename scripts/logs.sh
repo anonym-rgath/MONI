@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-
+# Logs folgen: logs.sh agent|manager [Compose-Optionen/Dienste]
 set -Eeuo pipefail
-
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-cd "$ROOT_DIR"
+# shellcheck source=scripts/_rolle.sh
+source "$SCRIPT_DIR/_rolle.sh"
+# Rohe Logs, nicht weitergeben - zum Teilen diagnose.sh nutzen
+rolle_waehlen "$@"
+shift
 
-# Linux Monitor - Logs anzeigen
-# ==========================
-
-echo "Zeige Linux-Monitor-Logs (STRG+C zum Beenden)..."
-echo ""
-
-docker compose logs -f "$@"
+# Nur damit Compose die Datei aufloest: diese Skripte duerfen nie `up` ausfuehren
+[ "$ROLLE" = manager ] && export MONI_SECRET_KEY="${MONI_SECRET_KEY:-unbenutzt}"
+compose logs -f "$@"

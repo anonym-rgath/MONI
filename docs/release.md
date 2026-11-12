@@ -1,0 +1,97 @@
+# Release (für Maintainer)
+
+Ein Release entsteht, wenn jemand ein Tag `vX.Y.Z` pusht (auch `vX.Y.Z-rc.1`). Der Ablauf steht in
+[`.github/workflows/release.yml`](../.github/workflows/release.yml). Die Änderungen jeder Version stehen im
+[CHANGELOG](../CHANGELOG.md).
+
+## Ablauf der Pipeline
+
+1. **verify** (je Image `agent` und `manager`, je Plattform `amd64` und `arm64`): Versionen prüfen
+   (`scripts/ci/check_version.py`), Einzelbuild, Smoke (Imports im Container der Plattform) und Trivy
+   (`scripts/ci/trivy.sh`; behebbare CRITICAL/HIGH-Funde brechen ab). arm64 läuft unter QEMU. Alles
+   geschieht vor dem Push.
+2. **publish** (nur bei einem Tag, nach `verify`): Multi-Arch-Build und Push **nur per Digest, ohne Tags**, mit SBOM (SPDX) und
+   Provenance. Genau dieses Image wird je Plattform per Digest gezogen und erneut geprüft (Plattform, Smoke, Trivy).
+3. Danach mit **cosign** keyless (GitHub-OIDC) über den Digest signieren, mit `cosign verify` selbst prüfen.
+4. **Tags** setzen (`X.Y.Z`, `X.Y`, `X`, `latest`; Vorabversionen nur den eigenen Tag, ohne `latest`) per
+   `imagetools` auf denselben Index-Digest und den Digest gegenprüfen.
+5. **release**: GitHub-Release aus dem passenden Abschnitt von `CHANGELOG.md` (Vorabversionen als Pre-release).
+
+Ein Fehler vor Schritt 4 lässt keinen Tag zurück: Ein Nutzer, der `:2.0.0` zieht, bekommt nie ein ungeprüftes Image.
+
+**Trockenlauf im Pull Request:** Ändert ein PR `.github/workflows/release.yml`, das `Dockerfile` oder
+`backend/requirements-docker.txt`, läuft nur Job `verify` (bauen, Smoke, Trivy). Kein Login, kein Push, keine
+Signatur, kein Release.
+
+## Ein Release schneiden
+
+1. Version anheben, überall gleich: `backend/moni/__init__.py`, `frontend/package.json` (und `package-lock.json`), oberster
+   Abschnitt in `CHANGELOG.md`, die Image-Standards in `compose.agent.yaml` und `compose.manager.yaml`.
+2. **Im CHANGELOG-Abschnitt ein Datum eintragen** (`## [2.0.0] – 2026-12-01`). Mit einem Tag lehnt
+   `check_version.py` die Überschrift „unveröffentlicht“ ab.
+3. **OpenAPI neu erzeugen**, die Dokumente enthalten die Version ([API](api.md#openapi-neu-erzeugen)).
+4. `python3 scripts/ci/check_version.py` und die Tests lokal laufen lassen, per PR nach `main` mergen.
+5. Tag setzen und pushen: `git tag v2.0.0 && git push origin v2.0.0`. Prüfen Sie `check_version.py v2.0.0` vorher.
+6. Den Lauf unter **Actions, Release** beobachten. Danach die Signatur prüfen ([Installation](installation.md#signatur-der-images-prüfen)).
+
+Der Publish-Pfad (Schritt 2 bis 4 der Pipeline) läuft erst bei einem echten Tag und lässt sich im PR nicht
+üben. Er braucht auf dem Runner Docker ab Version 28 (`docker image inspect --platform`, `docker save --platform`
+in `scripts/ci/trivy.sh`), und `docker buildx imagetools` sowie `cosign` v3 bei SBOM- und Provenance-Manifesten
+sind dort zum ersten Mal im Einsatz. Tags sind geschützt und lassen sich nicht verschieben: Ein Workflow-Fehler
+im ersten Lauf würde `v2.0.0` verbrennen. Üben Sie ihn deshalb mit einer Vorabversion.
+
+## Probelauf mit `v2.0.0-rc.1`
+
+`check_version.py` und die Tag-Erzeugung (`docker/metadata-action`) kennen Vorabversionen: Es entsteht nur der eigene
+Tag (kein `X.Y`, `X`, `latest`), und das GitHub-Release wird als Pre-release angelegt.
+
+1. **Version auf `2.0.0-rc.1` setzen**, in allen fünf Quellen, die `check_version.py` prüft: `backend/moni/__init__.py`,
+   `frontend/package.json` (und `package-lock.json`), oberster Abschnitt in `CHANGELOG.md` (mit Datum, `## [2.0.0-rc.1] – <DATUM>`),
+   Image-Standards in `compose.agent.yaml` und `compose.manager.yaml`.
+2. **OpenAPI neu erzeugen** (`docs/api/openapi-agent.json`, `docs/api/openapi-manager.json`) mit den Befehlen aus
+   [API](api.md#openapi-neu-erzeugen), sonst schlägt `test_openapi_snapshot.py` fehl. Dann `python3 scripts/ci/check_version.py v2.0.0-rc.1`.
+3. Per PR nach `main` mergen (oder auf einem Branch bleiben und den Tag dort setzen), dann `git tag v2.0.0-rc.1 && git push origin v2.0.0-rc.1`.
+4. **Nach dem Lauf prüfen:**
+   - Alle Jobs grün, besonders `publish` (Pull per Digest, Trivy, `imagetools`).
+   - `cosign verify ghcr.io/anonym-rgath/moni-agent:2.0.0-rc.1 …` (und `moni-manager`) wie in der
+     [Installation](installation.md#signatur-der-images-prüfen), Tag entsprechend angepasst.
+   - Unter **Packages** existiert nur der Tag `2.0.0-rc.1`, kein `latest`, kein `2.0`, kein `2`.
+   - Das Release ist als **Pre-release** markiert.
+5. **Zurück auf `2.0.0`:** Alle fünf Quellen und die OpenAPI-Dateien wieder auf `2.0.0` setzen, CHANGELOG-Datum prüfen,
+   `check_version.py v2.0.0`, per PR mergen. Erst dann `v2.0.0` taggen.
+6. **Aufräumen:** Der Probelauf lässt ungetaggte Digests in GHCR zurück (Signaturen, SBOM- und Provenance-Manifeste).
+   Löschen Sie sie unter **Packages, Versions**, wenn sie stören. Den Tag `2.0.0-rc.1` und das Pre-release können Sie
+   löschen, sobald das Tag-Ruleset das erlaubt (es verbietet Löschen, siehe unten), sonst bleiben beide stehen.
+
+„Re-run failed jobs“ ist vor dem Setzen der Tags (Pipeline-Schritt 4) gefahrlos, etwa bei einem vorübergehenden
+Netzwerkfehler: Es existiert noch kein Tag, den jemand ziehen könnte.
+
+## Hinweise
+
+- **Fehlgeschlagener Scan:** Das Image liegt dann ohne Tag als Digest in GHCR. Löschen Sie die ungetaggte Version unter
+  **Packages, moni-agent bzw. moni-manager, Versions**, wenn sie stört. Nutzer sehen sie nicht.
+- **`latest`** zeigt auf das zuletzt getaggte Release (kein Vorab-Release). Ein Hotfix auf einer älteren Hauptversion
+  setzt `latest` auf diese Version zurück. Danach ist ein Release der neuesten Linie nötig oder `latest` manuell neu zu setzen.
+- Ein einmal veröffentlichtes Tag ändern Sie nicht. Bei einem Fehler erscheint eine neue Patch-Version.
+
+## Einmalige GitHub-Einrichtung
+
+Das erledigt der Repository-Admin einmal, nicht der Workflow:
+
+1. **GHCR-Pakete öffentlich:** Nach dem ersten Publish sind `moni-agent` und `moni-manager` privat. Unter
+   **Packages, Package settings, Change visibility** auf „public“ stellen, sonst kann niemand ohne Anmeldung ziehen.
+2. **Branch-Schutz für `main`:** Pull Request vorgeschrieben, die CI-Jobs („Backend unit tests“, „Frontend“, „Build images & smoke tests“) als
+   Pflicht-Checks, keine Force-Pushes.
+3. **Tag-Schutz:** Unter **Settings, Rules, Rulesets** zwei Tag-Rulesets für `refs/tags/v*` anlegen. Ein beliebiger Tag
+   löst sonst ein Release aus.
+   - `release-tags-anlegen`: Regel „Restrict creations“, Ausnahme nur für die Rolle Repository-Admin.
+   - `release-tags-unveraenderlich`: Regeln „Restrict updates“, „Restrict deletions“ und „Block force pushes“, ohne
+     Ausnahme. Auch Admins können einen Release-Tag dann weder verschieben noch löschen.
+4. **Private Vulnerability Reporting** einschalten (**Settings, Code security**), siehe [SECURITY.md](../SECURITY.md).
+5. **Labels für Dependabot** müssen existieren, sonst scheitert das Anlegen der PRs: `dependencies`, `backend`,
+   `frontend`, `docker`, `ci` (siehe `.github/dependabot.yml`).
+
+Stand im Repository `anonym-rgath/MONI` (2026-11-12): Branch-Schutz für `main` (Ruleset `main-protection`), beide
+Tag-Rulesets, Private Vulnerability Reporting und die Dependabot-Labels sind eingerichtet. Die CodeQL-Hinweise zu
+`py/full-ssrf` in `auth/oidc.py` und `manager/poller.py` sind mit Begründung als „Won't fix“ verworfen (siehe
+[SECURITY.md](../SECURITY.md)). Offen bis zum ersten Release: GHCR-Pakete auf „public“ stellen.
