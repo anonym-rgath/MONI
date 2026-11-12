@@ -12,4 +12,4 @@ compose up -d
 echo ""
 compose ps
 echo ""
-echo -e "${GREEN}Moni ${ROLLE} laeuft${NC} (https://127.0.0.1:${PORT}, Pruefung: ./scripts/smoke.sh ${ROLLE})"
+echo -e "${GREEN}Moni ${ROLLE} laeuft${NC} (${BASIS_URL}, Pruefung: ./scripts/smoke.sh ${ROLLE})"

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/_rolle.sh
 source "$SCRIPT_DIR/_rolle.sh"
 rolle_waehlen "$@"
+# Nur damit Compose die Datei aufloest: diese Skripte duerfen nie `up` ausfuehren
 [ "$ROLLE" = manager ] && export MONI_SECRET_KEY="${MONI_SECRET_KEY:-unbenutzt}"
 
 echo "Moni ${ROLLE} - Smoke/Security Check"
@@ -16,7 +17,7 @@ proxy="$(compose ps -q docker-socket-proxy)"
 [ -n "$proxy" ] || fail "docker-socket-proxy laeuft nicht"
 ok "Container laufen"
 
-url="https://127.0.0.1:${PORT}/api/v1"
+url="${BASIS_URL}/api/v1"
 for endpoint in health ready; do
     good=0
     for _ in $(seq 1 30); do
