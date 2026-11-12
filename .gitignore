@@ -16,3 +16,4 @@ frontend/.env.production.local
 *.log
 frontend/test-results/
 frontend/playwright-report/
+.trivy-scan.*

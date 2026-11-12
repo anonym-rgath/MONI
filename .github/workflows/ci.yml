@@ -46,6 +46,9 @@ jobs:
         run: python -m pytest tests/ -v
         working-directory: backend
 
+      - name: Dokumentation pruefen
+        run: python3 scripts/ci/check_docs.py
+
   frontend:
     name: Frontend (Lint, Typen, Tests, Build)
     runs-on: ubuntu-latest

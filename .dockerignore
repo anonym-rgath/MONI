@@ -14,3 +14,4 @@ backend/tests
 backend/.venv
 backend/.pytest_cache
 **/__pycache__
+.trivy-scan.*
