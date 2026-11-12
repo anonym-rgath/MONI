@@ -65,6 +65,16 @@ curl -k https://manager.example.org:8443/api/v1/ca.crt -o moni-ca.crt
 curl --cacert moni-ca.crt -H "Authorization: Bearer <TOKEN>" https://agent.example.org:9810/api/v1/info
 ```
 
+Der Abruf über `-k` ist *trust on first use*: Sie vertrauen dem ersten Download blind. Prüfen Sie den
+Fingerabdruck gegen die CA auf dem Manager-Host (weder Oberfläche noch CLI zeigen ihn an):
+
+```
+docker compose -f compose.manager.yaml exec -T moni-manager cat /data/tls/ca.crt | openssl x509 -noout -fingerprint -sha256
+openssl x509 -in moni-ca.crt -noout -fingerprint -sha256
+```
+
+Beide Zeilen müssen übereinstimmen.
+
 Vertrauen Sie dieser CA **nur gezielt per `--cacert`** (oder dem entsprechenden Parameter Ihres Clients), nie im
 System-Zertifikatsspeicher: Sie ist nur für Moni gedacht, und wer sie systemweit vertraut, vertraut ihr für jede
 Domain.

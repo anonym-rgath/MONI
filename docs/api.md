@@ -18,7 +18,7 @@ Skripte und Fremdsysteme senden einen API-Token als `Authorization: Bearer <TOKE
 curl -H "Authorization: Bearer <TOKEN>" https://manager.example.org:8443/api/v1/servers
 ```
 
-(`-k` bzw. `--cacert` je nach Zertifikat, siehe [Kopplung](kopplung.md#ca-des-managers).) Die Weboberfläche des
+(`-k` bzw. `--cacert` je nach Zertifikat, siehe [Kopplung](kopplung.md#ca-des-managers); `-k` prüft nichts und ist nur zum Ausprobieren gedacht, den CA-Download dort prüfen Sie per Fingerabdruck.) Die Weboberfläche des
 Managers nutzt stattdessen ein Session-Cookie mit CSRF-Schutz. `GET /api/v1/health` ist ohne Anmeldung erreichbar
 und liefert nur `ok`.
 

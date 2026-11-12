@@ -35,13 +35,17 @@ Der Manager misst seinen eigenen Host direkt mit, ein Agent dort ist nicht nöti
 
 ## Schnellstart
 
-Voraussetzung: Linux mit Docker und Compose-Plugin.
+Voraussetzung: Linux mit Docker und Compose-Plugin. Prüfen Sie vor dem ersten Start die
+[Signatur der Images](docs/installation.md#signatur-der-images-prüfen).
+
+Tragen Sie in `.env` außerdem `DOCKER_GID=<Wert>` ein (`stat -c %g /var/run/docker.sock`, Docker Desktop auf macOS: `0`),
+damit auch eigene `docker compose`-Aufrufe funktionieren; die Skripte setzen es selbst.
 
 **Manager:**
 
 ```
 git clone https://github.com/anonym-rgath/MONI.git && cd MONI
-cp .env.example .env
+cp .env.example .env && chmod 600 .env
 docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.0 python -m moni.cli secret generate   # Ausgabe als MONI_SECRET_KEY in .env eintragen
 ./scripts/start.sh manager
 docker compose -f compose.manager.yaml logs moni-manager | grep "Setup-Token"

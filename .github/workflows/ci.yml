@@ -43,7 +43,7 @@ jobs:
         run: pip install -r backend/requirements-dev.txt
 
       - name: Run pytest
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v -W error::DeprecationWarning
         working-directory: backend
 
       - name: Dokumentation pruefen
@@ -208,7 +208,6 @@ jobs:
 
       - name: Manager smoke test
         env:
-          COMPOSE_PROJECT_NAME: moni-manager
           MONI_COLLECT_INTERVAL: "5"  # nur CI: der E2E-Alarm braucht kurze Takte (Ausfall nach 2 x 5 s)
         run: |
           set -euo pipefail
@@ -252,7 +251,7 @@ jobs:
         run: |
           set -euo pipefail
           agent() { docker compose -f compose.agent.yaml "$@"; }
-          manager() { MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml "$@"; }
+          manager() { MONI_SECRET_KEY=ci-platzhalter docker compose -f compose.manager.yaml "$@"; }
           # Agent-Stack (Standardprojekt) und Manager-Stack laufen noch; Manager ans Agent-Netz hängen
           AGENT_CID=$(agent ps -q moni-agent)
           MANAGER_CID=$(manager ps -q moni-manager)
@@ -294,7 +293,7 @@ jobs:
       - name: Alarmkanal
         run: |
           set -euo pipefail
-          manager() { MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml "$@"; }
+          manager() { MONI_SECRET_KEY=ci-platzhalter docker compose -f compose.manager.yaml "$@"; }
           # Runner-Adresse aus Sicht des Managers = Gateway seines Compose-Netzes; der Empfänger bindet nur dort, nie 0.0.0.0
           HOOK_HOST=$(docker network inspect moni-manager_default -f '{{(index .IPAM.Config 0).Gateway}}')
           test -n "$HOOK_HOST"
@@ -316,7 +315,7 @@ jobs:
           python3 scripts/ci/e2e_alert.py https://127.0.0.1:8443 "$RUNNER_TEMP/ci-recovery" 9912 ci-agent \
             --stop-cmd "docker compose -f compose.agent.yaml stop moni-agent" \
             --start-cmd "docker compose -f compose.agent.yaml start moni-agent"
-          MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml logs > manager.log
+          MONI_SECRET_KEY=ci-platzhalter docker compose -f compose.manager.yaml logs > manager.log
           if grep -qF "ci-hmac-geheim-5f2c" manager.log; then echo "FAIL: HMAC-Secret im Manager-Log"; exit 1; fi
 
       - name: Set up Node
@@ -327,7 +326,7 @@ jobs:
       - name: Oberfläche im Browser
         run: |
           set -euo pipefail
-          manager() { MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml "$@"; }
+          manager() { MONI_SECRET_KEY=ci-platzhalter docker compose -f compose.manager.yaml "$@"; }
           # Zugangsdaten nur über Umgebungsvariablen, vorher maskieren; nie ausgeben
           MONI_EMAIL=$(python3 -c "import sys; sys.path.insert(0,'scripts/ci'); import _moni; print(_moni.EMAIL)")
           MONI_PASSWORD=$(python3 -c "import sys; sys.path.insert(0,'scripts/ci'); import _moni; print(_moni.PASSWORD)")
@@ -355,7 +354,6 @@ jobs:
       - name: Manager logs
         if: always()
         env:
-          COMPOSE_PROJECT_NAME: moni-manager
           MONI_SECRET_KEY: ci-platzhalter  # nur damit compose die Datei auflöst
         run: docker compose -f compose.manager.yaml logs
 
@@ -366,6 +364,5 @@ jobs:
       - name: Manager cleanup
         if: always()
         env:
-          COMPOSE_PROJECT_NAME: moni-manager
           MONI_SECRET_KEY: ci-platzhalter
         run: docker compose -f compose.manager.yaml down -v

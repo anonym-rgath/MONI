@@ -26,8 +26,7 @@ rolle_waehlen() {
     cd "$ROOT_DIR" || exit 1
     COMPOSE_FILE="compose.${ROLLE}.yaml"
     SERVICE="moni-${ROLLE}"
-    # Beide Stacks liegen im selben Verzeichnis: der Manager bekommt ein eigenes Projekt (wie in der CI)
-    [ "$ROLLE" = manager ] && export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-moni-manager}"
+    # Projektname steht in der Compose-Datei (name:), Agent und Manager kommen sich so nicht in die Quere
     command -v docker >/dev/null 2>&1 || fail "docker ist nicht installiert"
     docker compose version >/dev/null 2>&1 || fail "Docker Compose Plugin ist nicht installiert"
     # Gruppe des Docker-Sockets fuer den Socket-Proxy; Docker Desktop (macOS): 0

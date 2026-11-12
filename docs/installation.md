@@ -19,9 +19,13 @@ Den Agent mit dem Manager zu verbinden steht in [Kopplung](kopplung.md).
 git clone https://github.com/anonym-rgath/MONI.git
 cd MONI
 cp .env.example .env
+chmod 600 .env
 ```
 
 `.env` enthält Geheimnisse und gehört nie in ein Repository. Compose liest sie automatisch.
+Tragen Sie dort außerdem `DOCKER_GID=<Wert>` ein (Linux: `stat -c %g /var/run/docker.sock`, Docker Desktop auf macOS: `0`,
+siehe [`DOCKER_GID`](#docker_gid)). Die Skripte setzen den Wert selbst; mit dem Eintrag funktionieren auch Ihre
+eigenen `docker compose`-Aufrufe (`exec`, `logs`, `cp`), die den Wert sonst ebenfalls verlangen.
 
 ## Signatur der Images prüfen
 
@@ -100,8 +104,9 @@ MONI_PUBLIC_URL=https://agent.example.org:9810
 und lassen den Port 9810 per Firewall nur vom Manager zu. `MONI_PUBLIC_URL` wird in den Kopplungscode
 eingebettet; ohne sie geben Sie die URL beim Koppeln selbst an. Weiter mit [Kopplung](kopplung.md).
 
-Manager und Agent auf demselben Host sind möglich. Die Skripte geben dem Manager ein eigenes Compose-Projekt
-(`moni-manager`), damit sich beide Stacks nicht in die Quere kommen.
+Manager und Agent auf demselben Host sind möglich. Die Compose-Dateien tragen feste Projektnamen
+(`moni-manager` und `moni-agent`), damit sich beide Stacks nicht in die Quere kommen und `docker compose -f compose.<rolle>.yaml …`
+immer den richtigen Stack trifft.
 
 ## Docker-Socket und Socket-Proxy
 

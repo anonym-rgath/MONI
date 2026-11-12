@@ -1,3 +1,5 @@
+name: moni-agent
+
 services:
   moni-agent:
     image: ${MONI_AGENT_IMAGE:-ghcr.io/anonym-rgath/moni-agent:2.0.0}

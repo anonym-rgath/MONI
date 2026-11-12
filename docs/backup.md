@@ -43,7 +43,7 @@ Das sichert nur die Datenbank. Für ein vollständiges Backup brauchen Sie zusä
 
 ```
 ./scripts/stop.sh manager
-docker volume ls | grep moni-manager-data       # Name des Volumes, meist moni-manager_moni-manager-data
+docker volume ls | grep moni-manager-data       # Name des Volumes: moni-manager_moni-manager-data
 docker run --rm --user root -v moni-manager_moni-manager-data:/data:ro -v "$PWD":/backup \
   --entrypoint tar ghcr.io/anonym-rgath/moni-manager:2.0.0 czf /backup/moni-data-$(date +%F).tgz -C /data .
 ./scripts/start.sh manager
@@ -55,8 +55,16 @@ Die Archivdatei enthält verschlüsselte Geheimnisse, aber auch den HTTPS-Schlü
 ## Wiederherstellen
 
 1. Manager stoppen: `./scripts/stop.sh manager`.
-2. `MONI_SECRET_KEY` in `.env` auf den Schlüssel setzen, der zum Backup gehört.
-3. Volume-Inhalt zurückspielen. Beim Archiv:
+2. **Aktuellen Stand sichern**, bevor Sie etwas überschreiben (das Zurückspielen löscht den Volume-Inhalt, ein
+   falsches Archiv oder Datum wäre sonst nicht mehr rückgängig zu machen):
+
+   ```
+   docker run --rm --user root -v moni-manager_moni-manager-data:/data:ro -v "$PWD":/backup \
+     --entrypoint tar ghcr.io/anonym-rgath/moni-manager:2.0.0 czf /backup/moni-vor-restore-$(date +%F-%H%M).tgz -C /data .
+   ```
+
+3. `MONI_SECRET_KEY` in `.env` auf den Schlüssel setzen, der zum Backup gehört.
+4. Volume-Inhalt zurückspielen. Beim Archiv:
 
    ```
    docker run --rm --user root -v moni-manager_moni-manager-data:/data -v "$PWD":/backup \
@@ -66,7 +74,7 @@ Die Archivdatei enthält verschlüsselte Geheimnisse, aber auch den HTTPS-Schlü
 
    Bei nur einer Datenbankdatei kopieren Sie sie als `/data/moni.db` hinein und entfernen vorher `moni.db-wal`
    und `moni.db-shm`, falls vorhanden. `/data/tls/` muss aus demselben Stand stammen.
-4. `./scripts/start.sh manager`, dann `./scripts/smoke.sh manager`. Migrationen laufen beim Start, falls das
+5. `./scripts/start.sh manager`, dann `./scripts/smoke.sh manager`. Migrationen laufen beim Start, falls das
    Backup von einer älteren Moni-Version stammt.
 
 Eine Datenbank, die neuer ist als die Moni-Version, lehnt der Manager ab („Datenbank-Version … ist neuer“): Starten Sie dann
