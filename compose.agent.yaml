@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
     # Allowlist statt Bereichsfreigabe (D4): nur Liste, Inspect und Stats von Containern; kein logs/archive/exec, keine anderen Methoden.
     # Nur der Moni-Dienst darf verbinden. Die Gruppe muss die Docker-Socket-Gruppe sein: DOCKER_GID=$(stat -c %g /var/run/docker.sock)
-    user: "65534:${DOCKER_GID:-999}"
+    user: "65534:${DOCKER_GID:?DOCKER_GID setzen: stat -c %g /var/run/docker.sock (Docker Desktop auf macOS: 0)}"
     read_only: true
     cap_drop:
       - ALL

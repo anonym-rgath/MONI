@@ -172,6 +172,9 @@ jobs:
           PY
           python3 -c "import json; s=json.load(open('snap.json')); n=sum(c['stats_available'] for c in s['containers']); assert n>0, 'keine Container-Metriken'; print('OK', n, 'Container mit Metriken')"
 
+      - name: Betriebsskripte
+        run: scripts/selftest.sh
+
       - name: Manager smoke test
         env:
           COMPOSE_PROJECT_NAME: moni-manager

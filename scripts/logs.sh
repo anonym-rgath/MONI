@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-
+# Logs folgen: logs.sh agent|manager [Compose-Optionen/Dienste]
 set -Eeuo pipefail
-
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-cd "$ROOT_DIR"
+# shellcheck source=scripts/_rolle.sh
+source "$SCRIPT_DIR/_rolle.sh"
+rolle_waehlen "$@"
+shift
 
-# Linux Monitor - Logs anzeigen
-# ==========================
-
-echo "Zeige Linux-Monitor-Logs (STRG+C zum Beenden)..."
-echo ""
-
-docker compose logs -f "$@"
+[ "$ROLLE" = manager ] && export MONI_SECRET_KEY="${MONI_SECRET_KEY:-unbenutzt}"
+compose logs -f "$@"

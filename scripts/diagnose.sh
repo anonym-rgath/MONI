@@ -1,84 +1,26 @@
 #!/usr/bin/env bash
-
+# Diagnose ohne Geheimnisse: diagnose.sh agent|manager
+# Gibt nie die Umgebung der Container oder `compose config` aus (enthaelt MONI_SECRET_KEY).
 set -Eeuo pipefail
-
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-cd "$ROOT_DIR"
+# shellcheck source=scripts/_rolle.sh
+source "$SCRIPT_DIR/_rolle.sh"
+rolle_waehlen "$@"
+[ "$ROLLE" = manager ] && export MONI_SECRET_KEY="${MONI_SECRET_KEY:-unbenutzt}"
 
-echo "Linux Monitor - Diagnose"
-echo "====================="
+maskieren() { sed -E '/token|secret|password|code=|pair-v1|bearer/I s/.*/[maskiert]/'; }
+
+echo "Moni ${ROLLE} - Diagnose"
+echo "======================="
 echo ""
-
-if [ -f "$ROOT_DIR/.env" ]; then
-    echo ".env:"
-    sed -n 's/^\(MONITOR_HOST\|TRAEFIK_ENTRYPOINT\)=/\1=/p' "$ROOT_DIR/.env"
-else
-    echo ".env fehlt"
-fi
-
+echo "Version:"
+compose exec -T "$SERVICE" python -c 'import moni; print(moni.__version__)' 2>&1 | maskieren || true
 echo ""
-echo "Compose labels:"
-docker compose config 2>/dev/null | sed -n '/labels:/,/networks:/p'
-
+echo "ready:"
+curl -sSk -w ' (HTTP %{http_code})\n' "https://127.0.0.1:${PORT}/api/v1/ready" 2>&1 | maskieren || true
 echo ""
-echo "Services:"
-docker compose ps
-
+echo "Dienste:"
+compose ps 2>&1 | maskieren || true
 echo ""
-echo "linux-monitor Netzwerke:"
-docker inspect linux-monitor --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true
-
-echo ""
-echo "linux-monitor Traefik Labels:"
-docker inspect linux-monitor --format '{{range $k, $v := .Config.Labels}}{{println $k "=" $v}}{{end}}' 2>/dev/null \
-    | sort \
-    | sed -n '/traefik/p' || true
-
-echo ""
-echo "Interner Healthcheck:"
-docker compose exec -T linux-monitor curl -fsS -D - http://127.0.0.1/api/ || true
-
-echo ""
-echo "Host-Header-Test im Container:"
-MONITOR_HOST="$(sed -n 's/^MONITOR_HOST=//p' "$ROOT_DIR/.env" 2>/dev/null | tail -n 1)"
-if [ -n "$MONITOR_HOST" ]; then
-    docker compose exec -T linux-monitor curl -fsS -H "Host: $MONITOR_HOST" -D - http://127.0.0.1/ | head -n 20 || true
-else
-    echo "MONITOR_HOST leer, Host-Header-Test uebersprungen"
-fi
-
-echo ""
-echo "Traefik Host-Header-Test auf dem Host:"
-if [ -n "$MONITOR_HOST" ]; then
-    TRAEFIK_INDEX="/tmp/linux-monitor-traefik-index.html"
-    TRAEFIK_HEADERS="/tmp/linux-monitor-traefik-headers.txt"
-
-    http_code="$(
-        curl -sS -H "Host: $MONITOR_HOST" -D "$TRAEFIK_HEADERS" \
-            http://127.0.0.1/ -o "$TRAEFIK_INDEX" -w '%{http_code}' || true
-    )"
-    sed -n '1,20p' "$TRAEFIK_HEADERS" 2>/dev/null || true
-    echo "HTTP Status: ${http_code:-unbekannt}"
-
-    STATIC_ASSET="$(sed -n 's/.*src="\(\/static\/js\/[^"]*\.js\)".*/\1/p' "$TRAEFIK_INDEX" 2>/dev/null | head -n 1)"
-    if [ -n "$STATIC_ASSET" ]; then
-        echo ""
-        echo "Traefik Static-Asset-Test auf dem Host ($STATIC_ASSET):"
-        curl -sS -H "Host: $MONITOR_HOST" -D - "http://127.0.0.1$STATIC_ASSET" -o /dev/null | head -n 20 || true
-    else
-        echo ""
-        echo "Kein statisches JS-Asset im Traefik-Response gefunden."
-    fi
-else
-    echo "MONITOR_HOST leer, Traefik Host-Header-Test uebersprungen"
-fi
-
-echo ""
-echo "Hinweis:"
-echo "Wenn die internen Checks 200 liefern, aber extern 404 kommt, liegt der Fehler vor linux-monitor:"
-echo "- falscher Hostname"
-echo "- falscher Traefik EntryPoint"
-echo "- linux-monitor nicht im traefik-network"
-echo "- Traefik liest den Docker Provider/Labels nicht"
-echo "- Cloudflare Tunnel/Access routet nicht alle Pfade, insbesondere /static/* und /api/*"
+echo "Letzte 50 Logzeilen:"
+compose logs --tail 50 2>&1 | maskieren || true

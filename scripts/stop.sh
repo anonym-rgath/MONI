@@ -1,45 +1,12 @@
 #!/usr/bin/env bash
-
+# Moni stoppen: stop.sh agent|manager (Daten-Volumes bleiben erhalten)
 set -Eeuo pipefail
-
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-cd "$ROOT_DIR"
+# shellcheck source=scripts/_rolle.sh
+source "$SCRIPT_DIR/_rolle.sh"
+rolle_waehlen "$@"
 
-# Farben für Output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-echo ""
-echo -e "${YELLOW}============================================${NC}"
-echo -e "${YELLOW}   Linux Monitor - Stop Script${NC}"
-echo -e "${YELLOW}============================================${NC}"
-echo ""
-
-# Prüfe ob Docker installiert ist
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}Fehler: Docker ist nicht installiert!${NC}"
-    exit 1
-fi
-
-# Prüfe ob Docker Compose Plugin vorhanden ist
-if ! docker compose version &> /dev/null; then
-    echo -e "${RED}Fehler: Docker Compose Plugin ist nicht installiert!${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}Stoppe alle Services...${NC}"
-echo ""
-
-docker compose down
-
-echo ""
-echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}   Linux Monitor gestoppt${NC}"
-echo -e "${GREEN}============================================${NC}"
-echo ""
-echo "Zum erneuten Starten:"
-echo "  ./scripts/start.sh"
-echo ""
+# Der Manager-Schluessel wird zum Aufloesen der Datei gebraucht, nicht benutzt
+[ "$ROLLE" = manager ] && export MONI_SECRET_KEY="${MONI_SECRET_KEY:-unbenutzt}"
+compose down
+echo -e "${GREEN}Moni ${ROLLE} gestoppt.${NC} Neu starten: ./scripts/start.sh ${ROLLE}"
