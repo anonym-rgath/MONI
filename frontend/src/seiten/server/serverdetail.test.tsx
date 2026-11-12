@@ -19,7 +19,7 @@ vi.mock('./Diagramm', async (original) => {
 
 const punkte = (...werte: number[]): Verlaufspunkt[] => werte.map((w, i) => [new Date(Date.UTC(2026, 10, 11, 9, i)).toISOString(), w])
 
-interface Daten { server?: Server; snapshot?: Snapshot | null; regeln?: Regel[]; alarme?: Alarm[]; verlauf?: (metric: string, label: string | null) => Verlaufspunkt[] }
+interface Daten { fehler?: (metric: string) => boolean; server?: Server; snapshot?: Snapshot | null; regeln?: Regel[]; alarme?: Alarm[]; verlauf?: (metric: string, label: string | null) => Verlaufspunkt[] }
 const anfragen: URL[] = []
 
 function daten(d: Daten = {}) {
@@ -33,6 +33,7 @@ function daten(d: Daten = {}) {
     http.get(`${BASIS}/servers/${s.id}/history`, ({ request }) => {
       const u = new URL(request.url)
       anfragen.push(u)
+      if (d.fehler?.(u.searchParams.get('metric')!)) return problem(500, 'Verlauf kaputt')
       const pts = d.verlauf ? d.verlauf(u.searchParams.get('metric')!, u.searchParams.get('label')) : punkte(20, 60, 100)
       return HttpResponse.json({ resolution: 'raw', series: pts.length ? [{ labels: {}, points: pts }] : [] })
     }),
@@ -94,6 +95,32 @@ describe('Verlauf', () => {
     await waitFor(() => expect(anfragen.some((u) => u.searchParams.get('metric') === 'moni_network_receive_bytes' && u.searchParams.get('label') === 'interface:eth0')).toBe(true))
     expect(anfragen.some((u) => u.searchParams.get('label') === 'interface:lo')).toBe(false)
     expect(anfragen.some((u) => u.searchParams.get('metric') === 'moni_network_transmit_bytes' && u.searchParams.get('label') === 'interface:eth0')).toBe(true)
+  })
+})
+
+describe('Diagramm-Details', () => {
+  test('Spitze stammt aus dem Maximum, Ø aus dem Mittelwert', async () => {
+    const stufen: Verlaufspunkt[] = [
+      [new Date(Date.UTC(2026, 10, 11, 9, 0)).toISOString(), 10, 40, 70],
+      [new Date(Date.UTC(2026, 10, 11, 9, 1)).toISOString(), 20, 60, 90],
+    ]
+    await zeige({ regeln: [], verlauf: (m) => (m === 'moni_host_cpu_usage_percent' ? stufen : []) })
+    expect(await screen.findByText('Ø 50 %, Spitze 90 %')).toBeInTheDocument()
+  })
+
+  test('Zusammenfassung bleibt, wenn eine Reihe ausfällt', async () => {
+    await zeige({ fehler: (m) => m === 'moni_network_transmit_bytes' })
+    const figur = (await screen.findByRole('heading', { level: 3, name: /Netzwerk/ })).closest('figure')!
+    expect(await within(figur).findByRole('alert')).toHaveTextContent('Verlauf kaputt')
+    expect(figur.textContent).toMatch(/empfangen: Ø/)
+  })
+
+  test('Legende zeigt das Strichmuster der zweiten Reihe', async () => {
+    await zeige()
+    const figur = (await screen.findByRole('heading', { level: 3, name: /Netzwerk/ })).closest('figure')!
+    const eintraege = await within(figur).findAllByRole('listitem')
+    expect(eintraege.map((e) => e.textContent)).toEqual(['empfangen', 'gesendet'])
+    expect(eintraege.map((e) => e.querySelector('line')!.getAttribute('stroke-dasharray'))).toEqual([null, '6 4'])
   })
 })
 
@@ -210,14 +237,20 @@ describe('Serverdetail', () => {
 
   test('Kopplungsfehler zeigt den Hinweis auf pair reset', async () => {
     await zeige({ server: { ...serverSau, status: 'error', security: 'mtls', last_error: 'Zertifikat abgelehnt' } })
-    expect(await screen.findByText('Zertifikat abgelehnt')).toBeInTheDocument()
+    expect(await screen.findByText(/Zertifikat abgelehnt/)).toBeInTheDocument()
     expect(screen.getByText('python -m moni.cli pair reset')).toBeInTheDocument()
     expect(screen.getByText(/Agent zurücksetzen mit/)).toBeInTheDocument()
   })
 
+  test('last_error erscheint einmal', async () => {
+    await zeige({ server: { ...serverSau, status: 'error', security: 'mtls', last_error: 'Zertifikat abgelehnt' } })
+    await screen.findByText(/Zertifikat abgelehnt/)
+    expect(screen.getAllByText(/Zertifikat abgelehnt/)).toHaveLength(1)
+  })
+
   test('Token-Server mit Fehler bekommt den Hinweis nicht', async () => {
     await zeige({ server: { ...serverSau, status: 'error', security: 'token', last_error: 'Timeout' } })
-    expect(await screen.findByText('Timeout')).toBeInTheDocument()
+    expect(await screen.findByText(/Timeout/)).toBeInTheDocument()
     expect(screen.queryByText(/pair reset/)).not.toBeInTheDocument()
   })
 

@@ -9,11 +9,10 @@ import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
 import { Ladezustand } from '../../ui/Ladezustand'
 import { Leerzustand } from '../../ui/Leerzustand'
+import { fehlertext, Meldung, Rueckfrage } from '../../ui/Meldungen'
 import { useTitel } from '../../ui/useTitel'
 import { Erinnerung } from './Erinnerung'
 import { KanalFormular } from './KanalFormular'
-
-const fehlertext = (e: unknown) => (e instanceof ApiFehler ? e.detail : t('fehler.allgemein'))
 
 function ziel(k: Kanal): string {
   if (k.kind === 'webhook') return k.url_hint ?? ''
@@ -60,10 +59,11 @@ export function Kanaele() {
   const [bearbeite, setBearbeite] = useState<Kanal | 'neu' | null>(null)
   const [loesche, setLoesche] = useState<Kanal | null>(null)
   const [meldung, setMeldung] = useState('')
-  const entfernen = useMutation({
-    mutationFn: (k: Kanal) => api.delete(`/alert-channels/${k.id}`),
-    onSuccess: async () => { setLoesche(null); await qc.invalidateQueries({ queryKey: schluessel.kanaele }); setMeldung(t('alarme.kanalGeloescht')) },
-  })
+  async function entfernen(k: Kanal) {
+    await api.delete(`/alert-channels/${k.id}`)
+    await qc.invalidateQueries({ queryKey: schluessel.kanaele })
+    setMeldung(t('alarme.kanalGeloescht'))
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,13 +72,13 @@ export function Kanaele() {
           <h2 id="kanaele-h" className="m-0 text-[1.0625rem] font-semibold">{t('alarme.kanaele')}</h2>
           <Knopf art="haupt" onClick={() => { setMeldung(''); setBearbeite('neu') }}>{t('alarme.kanalAnlegen')}</Knopf>
         </div>
-        <div role="status">{meldung && <p className="m-0 rounded-lg bg-surface-2 px-3 py-2.5 text-sm">{meldung}</p>}</div>
+        <Meldung text={meldung} />
         {kanaele.isError && <Hinweis art="fehler">{fehlertext(kanaele.error)}</Hinweis>}
         {kanaele.isPending && <Ladezustand text={t('alarme.laden')} />}
         {kanaele.data?.length === 0 && <Leerzustand text={t('alarme.kanalLeer')} />}
         <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,22rem),1fr))] gap-4 p-0">
           {kanaele.data?.map((k) => (
-            <Karte key={k.id} kanal={k} onBearbeiten={() => { setMeldung(''); setBearbeite(k) }} onLoeschen={() => { setMeldung(''); entfernen.reset(); setLoesche(k) }} />
+            <Karte key={k.id} kanal={k} onBearbeiten={() => { setMeldung(''); setBearbeite(k) }} onLoeschen={() => { setMeldung(''); setLoesche(k) }} />
           ))}
         </ul>
       </section>
@@ -88,18 +88,8 @@ export function Kanaele() {
         {bearbeite && <KanalFormular kanal={bearbeite === 'neu' ? null : bearbeite} onFertig={() => { setBearbeite(null); setMeldung(t('alarme.gespeichert')) }} />}
         <Knopf onClick={() => setBearbeite(null)}>{t('alarme.abbrechen')}</Knopf>
       </Dialog>
-      <Dialog titel={t('alarme.kanalLoeschenTitel')} offen={loesche !== null} onClose={() => setLoesche(null)}>
-        {loesche && (
-          <>
-            <p className="m-0">{t('alarme.kanalLoeschenText', { name: loesche.name })}</p>
-            {entfernen.error && <Hinweis art="fehler">{fehlertext(entfernen.error)}</Hinweis>}
-            <div className="flex flex-wrap gap-2">
-              <Knopf art="haupt" disabled={entfernen.isPending} onClick={() => entfernen.mutate(loesche)}>{t('alarme.loeschen')}</Knopf>
-              <Knopf onClick={() => setLoesche(null)}>{t('alarme.abbrechen')}</Knopf>
-            </div>
-          </>
-        )}
-      </Dialog>
+      <Rueckfrage titel={t('alarme.kanalLoeschenTitel')} text={loesche ? t('alarme.kanalLoeschenText', { name: loesche.name }) : ''} aktion={t('alarme.loeschen')}
+        offen={loesche !== null} onClose={() => setLoesche(null)} onBestaetigen={() => entfernen(loesche!)} />
     </div>
   )
 }

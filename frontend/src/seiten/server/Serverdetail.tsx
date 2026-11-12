@@ -6,6 +6,7 @@ import { t } from '../../texte/de'
 import { Hinweis } from '../../ui/Hinweis'
 import { Ladezustand } from '../../ui/Ladezustand'
 import { Leerzustand } from '../../ui/Leerzustand'
+import { fehlertext, Meldung } from '../../ui/Meldungen'
 import { Statusmarke } from '../../ui/Statusmarke'
 import { useTitel } from '../../ui/useTitel'
 import { lokal, sekundenSeit, useJetzt, vor } from '../../ui/Zeit'
@@ -58,7 +59,7 @@ function Detail({ id }: { id: number }) {
         {h1}
         {server.isPending && <Ladezustand text={t('server.laden')} />}
         {server.isError && (
-          <Leerzustand text={fehlt ? t('server.nichtGefunden') : server.error instanceof ApiFehler ? server.error.detail : t('fehler.allgemein')}>
+          <Leerzustand text={fehlt ? t('server.nichtGefunden') : fehlertext(server.error)}>
             <Link to="/" className="text-accent underline underline-offset-3">{t('server.zurUebersicht')}</Link>
           </Leerzustand>
         )}
@@ -98,9 +99,9 @@ function Detail({ id }: { id: number }) {
             : s.enabled ? t('server.keineProbleme') : t('server.ausgeschaltet')}
         </p>
         <p className="m-0 text-sm text-muted">{meta}</p>
-        <div role="status">{meldung && <p className="m-0 rounded-lg bg-surface-2 px-3 py-2.5 text-sm">{meldung}</p>}</div>
+        <Meldung text={meldung} />
         {server.isError && <Hinweis art="fehler">{t('uebersicht.managerFehler')}</Hinweis>}{/* alte Daten bleiben stehen, wie in der Übersicht */}
-        {s.last_error && <Hinweis art="fehler">{s.last_error}</Hinweis>}
+        {s.last_error && !problem?.text.includes(s.last_error) && <Hinweis art="fehler">{s.last_error}</Hinweis>}{/* steht der Fehler schon in der Problemzeile, nicht doppelt */}
         {s.last_error && s.security === 'mtls' && (
           <Hinweis>{t('server.pairVor')}<code className="num">{t('server.pairBefehl')}</code>{t('server.pairNach')}</Hinweis>
         )}

@@ -229,14 +229,34 @@ describe('Kanäle', () => {
     aufzeichnen('patch', '/alert-channels/6', () => HttpResponse.json(kanalEmail))
     await user.click(within(dialog).getByRole('button', { name: 'Speichern' }))
     await waitFor(() => expect(letzte().body).toBeTruthy())
-    expect(letzte().body).toMatchObject({ host: 'smtp.example.org', port: 2525, security: 'starttls', to: ['a@example.org', 'b@example.org'], min_severity: 'critical', enabled: true })
-    expect(letzte().body).not.toHaveProperty('password')
+    expect(letzte().body).toEqual({ port: 2525 }) // nur Geändertes: das Audit nennt sonst auch unveränderte Felder
 
     await user.click(within(karte).getByRole('button', { name: /bearbeiten/i }))
     const zweiter = await screen.findByRole('dialog')
     await user.type(within(zweiter).getByLabelText('Passwort'), 'neues-passwort')
     await user.click(within(zweiter).getByRole('button', { name: 'Speichern' }))
-    await waitFor(() => expect(letzte().body).toHaveProperty('password', 'neues-passwort'))
+    await waitFor(() => expect(letzte().body).toEqual({ password: 'neues-passwort' }))
+  })
+
+  test('Kanal-PATCH sendet nur geänderte Felder; ohne Änderung entfällt die Anfrage', async () => {
+    daten()
+    const user = userEvent.setup()
+    await zeige('/alarme/kanaele')
+    const karte = (await screen.findByRole('heading', { level: 3, name: 'E-Mail Bereitschaft' })).closest('li')!
+    aufzeichnen('patch', '/alert-channels/6', () => HttpResponse.json(kanalEmail))
+    await user.click(within(karte).getByRole('button', { name: /bearbeiten/i }))
+    let dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(anfragen.some((a) => a.methode === 'PATCH')).toBe(false)
+
+    await user.click(within(karte).getByRole('button', { name: /bearbeiten/i }))
+    dialog = await screen.findByRole('dialog')
+    await user.clear(within(dialog).getByLabelText('Name'))
+    await user.type(within(dialog).getByLabelText('Name'), 'Neu')
+    await user.clear(within(dialog).getByLabelText('Benutzer'))
+    await user.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+    await waitFor(() => expect(letzte().body).toEqual({ name: 'Neu', username: null }))
   })
 
   test('Webhook anlegen: URL und optionales Secret; leeres Secret entfällt', async () => {
@@ -286,6 +306,16 @@ describe('Kanäle', () => {
     await user.click(screen.getByRole('button', { name: 'Erinnerung speichern' }))
     await waitFor(() => expect(letzte().body).toEqual({ remind_minutes: 60 }))
     await waitFor(() => expect(screen.getAllByRole('status').some((s) => s.textContent === 'Erinnerung gespeichert.')).toBe(true))
+  })
+})
+
+describe('Erinnerung laden', () => {
+  test('Fehler beim Laden der Erinnerungs-Einstellung wird angezeigt', async () => {
+    daten()
+    server.use(http.get(`${BASIS}/alert-settings`, () => problem(500, 'Einstellung nicht lesbar')))
+    await zeige('/alarme/kanaele')
+    const hinweis = await screen.findByRole('alert')
+    expect(hinweis).toHaveTextContent('Einstellung nicht lesbar')
   })
 })
 

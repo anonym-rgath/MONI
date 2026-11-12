@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { schluessel } from '../../api/abfragen'
-import { ApiFehler, api } from '../../api/client'
+import { api } from '../../api/client'
 import type { Server } from '../../api/typen'
 import { t } from '../../texte/de'
-import { Dialog } from '../../ui/Dialog'
 import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
+import { fehlertext, Rueckfrage } from '../../ui/Meldungen'
 import { lokal } from '../../ui/Zeit'
 import { StummDialog } from './StummDialog'
 
@@ -26,9 +26,8 @@ export function Aktionen({ server, stumm, onMeldung }: { server: Server; stumm: 
   })
   const schalten = useMutation({
     mutationFn: (enabled: boolean) => api.patch(`/servers/${server.id}`, { enabled }),
-    onSuccess: async (_, enabled) => { setAusOffen(false); await neu(); onMeldung(t(enabled ? 'server.aktiviertMeldung' : 'server.deaktiviertMeldung')) },
+    onSuccess: async (_, enabled) => { await neu(); onMeldung(t(enabled ? 'server.aktiviertMeldung' : 'server.deaktiviertMeldung')) },
   })
-  const text = (e: Error) => (e instanceof ApiFehler ? e.detail : t('fehler.allgemein'))
   const fehler = ausOffen ? aufheben.error : (aufheben.error ?? schalten.error)
 
   return (
@@ -41,18 +40,12 @@ export function Aktionen({ server, stumm, onMeldung }: { server: Server; stumm: 
           ? <Knopf onClick={() => setAusOffen(true)}>{t('server.deaktivieren')}</Knopf>
           : <Knopf disabled={schalten.isPending} onClick={() => schalten.mutate(true)}>{t('server.aktivieren')}</Knopf>}
       </div>
-      {fehler && <Hinweis art="fehler">{text(fehler)}</Hinweis>}
+      {fehler && <Hinweis art="fehler">{fehlertext(fehler)}</Hinweis>}
 
       <StummDialog serverId={server.id} offen={stummOffen} onClose={() => setStummOffen(false)}
         onErfolg={(bis) => { setStummOffen(false); onMeldung(t('server.stummGesetzt', { zeit: lokal(bis, Date.now()) })) }} />
-      <Dialog titel={t('server.deaktivierenTitel')} offen={ausOffen} onClose={() => setAusOffen(false)}>
-        <p className="m-0">{t('server.deaktivierenText', { name: server.name })}</p>
-        {schalten.error && <Hinweis art="fehler">{text(schalten.error)}</Hinweis>}
-        <div className="flex flex-wrap gap-2">
-          <Knopf art="haupt" disabled={schalten.isPending} onClick={() => schalten.mutate(false)}>{t('server.deaktivieren')}</Knopf>
-          <Knopf onClick={() => setAusOffen(false)}>{t('server.abbrechen')}</Knopf>
-        </div>
-      </Dialog>
+      <Rueckfrage titel={t('server.deaktivierenTitel')} text={t('server.deaktivierenText', { name: server.name })} aktion={t('server.deaktivieren')}
+        offen={ausOffen} onClose={() => setAusOffen(false)} onBestaetigen={async () => { await schalten.mutateAsync(false) }} />
     </div>
   )
 }

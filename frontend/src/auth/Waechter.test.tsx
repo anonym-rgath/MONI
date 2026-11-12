@@ -7,6 +7,7 @@ import { describe, expect, test } from 'vitest'
 import { sitzungAdmin, sitzungBetrachter, sitzungEnroll, sitzungMfa } from '../test/fixtures'
 import { zeigeApp } from '../test/render'
 import { server, sitzungAntwort } from '../test/server'
+import { t } from '../texte/de'
 
 const ort = () => screen.getByTestId('ort').textContent
 const h1 = (name: string) => screen.findByRole('heading', { level: 1, name })
@@ -43,6 +44,13 @@ describe('Routenwächter', () => {
     zeigeApp('/verwaltung/benutzer')
     expect(await h1('Keine Berechtigung')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { level: 1, name: 'Benutzer' })).not.toBeInTheDocument()
+  })
+
+  test('Keine Berechtigung setzt document.title', async () => {
+    server.use(sitzungAntwort(sitzungBetrachter))
+    zeigeApp('/verwaltung/benutzer')
+    await h1(t('waechter.keineBerechtigung'))
+    expect(document.title).toBe(`${t('waechter.keineBerechtigung')} – ${t('app.titel')}`)
   })
 
   test('Admin sieht die Verwaltung', async () => {

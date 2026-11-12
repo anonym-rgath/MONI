@@ -1,13 +1,14 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { schluessel, useRegeln, useServer } from '../../api/abfragen'
-import { ApiFehler, api } from '../../api/client'
+import { api } from '../../api/client'
 import type { Regel } from '../../api/typen'
 import { useSitzung } from '../../auth/Sitzung'
 import { t } from '../../texte/de'
 import { Dialog } from '../../ui/Dialog'
 import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
+import { fehlertext, Meldung, Rueckfrage } from '../../ui/Meldungen'
 import { Tabelle, Zeilenkopf, Zelle } from '../../ui/Tabelle'
 import { useTitel } from '../../ui/useTitel'
 import { dauer } from '../../ui/Zeit'
@@ -25,19 +26,16 @@ export function Regeln() {
   const [bearbeite, setBearbeite] = useState<Regel | 'neu' | null>(null)
   const [loesche, setLoesche] = useState<Regel | null>(null)
   const [meldung, setMeldung] = useState('')
-  const entfernen = useMutation({
-    mutationFn: (r: Regel) => api.delete(`/alert-rules/${r.id}`),
-    onSuccess: async () => {
-      setLoesche(null)
-      await Promise.all([qc.invalidateQueries({ queryKey: schluessel.regeln }), qc.invalidateQueries({ queryKey: schluessel.alarme })])
-      setMeldung(t('alarme.regelGeloescht'))
-    },
-  })
+  async function entfernen(r: Regel) {
+    await api.delete(`/alert-rules/${r.id}`)
+    await Promise.all([qc.invalidateQueries({ queryKey: schluessel.regeln }), qc.invalidateQueries({ queryKey: schluessel.alarme })])
+    setMeldung(t('alarme.regelGeloescht'))
+  }
 
   return (
     <div className="flex flex-col gap-3">
-      <div role="status">{meldung && <p className="m-0 rounded-lg bg-surface-2 px-3 py-2.5 text-sm">{meldung}</p>}</div>
-      {regeln.isError && <Hinweis art="fehler">{regeln.error instanceof ApiFehler ? regeln.error.detail : t('fehler.allgemein')}</Hinweis>}
+      <Meldung text={meldung} />
+      {regeln.isError && <Hinweis art="fehler">{fehlertext(regeln.error)}</Hinweis>}
       <Tabelle id="regeln-h" titel={t('alarme.regeln')} kopf={[...KOPF.map((k) => t(k)), ...(admin ? [t('alarme.spAktionen')] : [])]}
         aktion={admin && <Knopf art="haupt" onClick={() => { setMeldung(''); setBearbeite('neu') }}>{t('alarme.regelAnlegen')}</Knopf>}>
         {(regeln.isPending || regeln.data?.length === 0) && (
@@ -56,7 +54,7 @@ export function Regeln() {
               <td className="px-4 py-1.5">
                 <div className="flex gap-2">
                   <Knopf onClick={() => { setMeldung(''); setBearbeite(r) }}>{t('alarme.bearbeiten')}<span className="sr-only"> {r.name}</span></Knopf>
-                  <Knopf onClick={() => { setMeldung(''); entfernen.reset(); setLoesche(r) }}>{t('alarme.loeschen')}<span className="sr-only"> {r.name}</span></Knopf>
+                  <Knopf onClick={() => { setMeldung(''); setLoesche(r) }}>{t('alarme.loeschen')}<span className="sr-only"> {r.name}</span></Knopf>
                 </div>
               </td>
             )}
@@ -68,18 +66,8 @@ export function Regeln() {
         {bearbeite && <RegelFormular regel={bearbeite === 'neu' ? null : bearbeite} onFertig={() => { setBearbeite(null); setMeldung(t('alarme.gespeichert')) }} />}
         <Knopf onClick={() => setBearbeite(null)}>{t('alarme.abbrechen')}</Knopf>
       </Dialog>
-      <Dialog titel={t('alarme.loeschenTitel')} offen={loesche !== null} onClose={() => setLoesche(null)}>
-        {loesche && (
-          <>
-            <p className="m-0">{t('alarme.loeschenText', { name: loesche.name })}</p>
-            {entfernen.error && <Hinweis art="fehler">{entfernen.error instanceof ApiFehler ? entfernen.error.detail : t('fehler.allgemein')}</Hinweis>}
-            <div className="flex flex-wrap gap-2">
-              <Knopf art="haupt" disabled={entfernen.isPending} onClick={() => entfernen.mutate(loesche)}>{t('alarme.loeschen')}</Knopf>
-              <Knopf onClick={() => setLoesche(null)}>{t('alarme.abbrechen')}</Knopf>
-            </div>
-          </>
-        )}
-      </Dialog>
+      <Rueckfrage titel={t('alarme.loeschenTitel')} text={loesche ? t('alarme.loeschenText', { name: loesche.name }) : ''} aktion={t('alarme.loeschen')}
+        offen={loesche !== null} onClose={() => setLoesche(null)} onBestaetigen={() => entfernen(loesche!)} />
     </div>
   )
 }

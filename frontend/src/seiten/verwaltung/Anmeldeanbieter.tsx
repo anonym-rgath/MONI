@@ -9,12 +9,10 @@ import { Feld } from '../../ui/Feld'
 import { Formular } from '../../ui/Formular'
 import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
+import { fehlertext, Meldung, Rueckfrage } from '../../ui/Meldungen'
 import { Ladezustand } from '../../ui/Ladezustand'
 import { Leerzustand } from '../../ui/Leerzustand'
 import { AnbieterFormular } from './AnbieterFormular'
-import { fehlertext } from './hilfen'
-import { Meldung } from './Meldung'
-import { Rueckfrage } from './Rueckfrage'
 
 const redirectUri = (basis: string, id: string) => `${basis}/api/v1/auth/oidc/callback/${id}`
 

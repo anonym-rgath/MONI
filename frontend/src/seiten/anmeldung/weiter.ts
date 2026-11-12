@@ -14,6 +14,8 @@ export function useNachSchritt() {
   const weiter = sicheresZiel(params.get('weiter'))
   return async (stage: Exclude<Stage, 'none'>) => {
     await qc.invalidateQueries({ queryKey: schluessel.sitzung })
+    // Die Benachrichtigung der Abfrage kommt einen Takt später; erst danach trägt der Kontext die neue Stage, und der Wächter sieht sie.
+    await new Promise((fertig) => setTimeout(fertig))
     const ziel = stage === 'full' ? (weiter ?? '/') : `${START[stage]}${weiter ? `?weiter=${encodeURIComponent(weiter)}` : ''}`
     void navigate(ziel, { replace: true })
   }

@@ -5,6 +5,8 @@ import { api } from '../../api/client'
 import { t } from '../../texte/de'
 import { Feld } from '../../ui/Feld'
 import { Formular } from '../../ui/Formular'
+import { Hinweis } from '../../ui/Hinweis'
+import { fehlertext, Meldung } from '../../ui/Meldungen'
 
 // Nur auf der Kanäle-Seite (Admins): GET und PUT /alert-settings sind Admin-Endpunkte.
 export function Erinnerung() {
@@ -24,11 +26,12 @@ export function Erinnerung() {
 
   return (
     <section className="flex max-w-lg flex-col gap-3">
+      {einstellung.isError && <Hinweis art="fehler">{fehlertext(einstellung.error)}</Hinweis>}
       <Formular onSubmit={senden} absenden={t('alarme.erinnerungSpeichern')}>
         <Feld label={t('alarme.erinnerung')} hinweis={t('alarme.erinnerungHinweis')} type="number" inputMode="numeric" min={0} max={10080} step={1}
           value={wert} onChange={(e) => { setEingabe(e.target.value); setMeldung('') }} disabled={einstellung.isPending} required />
       </Formular>
-      <div role="status">{meldung && <p className="m-0 rounded-lg bg-surface-2 px-3 py-2.5 text-sm">{meldung}</p>}</div>
+      <Meldung text={meldung} />
     </section>
   )
 }

@@ -2,10 +2,11 @@ import { useAudit } from '../../api/abfragen'
 import { t, type TextSchluessel } from '../../texte/de'
 import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
+import { fehlertext } from '../../ui/Meldungen'
 import { Ladezustand } from '../../ui/Ladezustand'
 import { Leerzustand } from '../../ui/Leerzustand'
 import { Tabelle, Zelle } from '../../ui/Tabelle'
-import { fehlertext, zeitpunkt } from './hilfen'
+import { zeitpunkt } from './hilfen'
 
 const SPALTEN: TextSchluessel[] = ['verwaltung.spZeit', 'verwaltung.spAkteur', 'verwaltung.spAktion', 'verwaltung.spZiel', 'verwaltung.spIp', 'verwaltung.spDetails']
 const ohne = () => t('verwaltung.ohne')

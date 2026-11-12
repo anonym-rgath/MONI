@@ -1,8 +1,8 @@
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { ApiFehler } from '../api/client'
 import { t } from '../texte/de'
 import { Hinweis } from './Hinweis'
 import { Knopf } from './Knopf'
+import { fehlertext } from './Meldungen'
 
 // Sperrt den Absende-Knopf während der Anfrage, zeigt ApiFehler.detail oben; die Eingaben gehören den Kindern und bleiben stehen.
 export function Formular({ onSubmit, absenden, children }: { onSubmit: () => Promise<void> | void; absenden: string; children: ReactNode }) {
@@ -19,7 +19,7 @@ export function Formular({ onSubmit, absenden, children }: { onSubmit: () => Pro
     try {
       await onSubmit()
     } catch (err) {
-      setFehler(err instanceof ApiFehler ? err.detail : t('fehler.allgemein'))
+      setFehler(fehlertext(err))
     } finally {
       sperre.current = false
       setLaeuft(false)

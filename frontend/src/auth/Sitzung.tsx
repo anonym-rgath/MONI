@@ -1,7 +1,6 @@
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
-import { useLocation } from 'react-router'
 import { erzeugeQueryClient, schluessel } from '../api/abfragen'
 import { ApiFehler, api, setzeAblauf, setzeCsrf } from '../api/client'
 import type { Session, SitzungBenutzer, Stage } from '../api/typen'
@@ -19,6 +18,7 @@ interface SitzungWert {
   erneutVersuchen: () => void
   abmelden: () => Promise<void>
 }
+const ABMELDE_FRIST_MS = 10_000
 const Kontext = createContext<SitzungWert | null>(null)
 
 // Open-Redirect-Schutz: nur Pfade innerhalb dieser Anwendung.
@@ -48,10 +48,6 @@ export function SitzungProvider({ children }: { children: ReactNode }) {
 
 function Innen({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
-  // Bei jedem Ortswechsel neu rendern: so trägt der Kontext schon die frische Sitzung, wenn nach einem Anmeldeschritt
-  // navigiert wird (die Benachrichtigung der Abfrage käme erst einen Takt später, der Wächter sähe sonst die alte Stage).
-  useLocation()
-
   const q = useQuery({
     queryKey: schluessel.sitzung,
     retry: false, // Fehler sofort zeigen, Wiederholen übernimmt der Knopf
@@ -90,16 +86,23 @@ function Innen({ children }: { children: ReactNode }) {
     aktiv.current = 'none'
   }, [qc])
 
+  const abmeldend = useRef(false) // ein 401 während des Abmeldens (auch auf den Logout selbst) ist kein Ablauf
   useEffect(() => {
-    setzeAblauf(() => { if (aktiv.current !== 'none') beenden('abgelaufen') })
+    setzeAblauf(() => { if (aktiv.current !== 'none' && !abmeldend.current) beenden('abgelaufen') })
     return () => setzeAblauf(() => {})
   }, [beenden])
 
   const abmelden = useCallback(async () => {
+    abmeldend.current = true
+    const abbruch = new AbortController()
+    const frist = setTimeout(() => abbruch.abort(), ABMELDE_FRIST_MS)
     try {
-      await api.post('/auth/logout')
+      await api.post('/auth/logout', undefined, { signal: abbruch.signal })
     } catch {
       /* die Sitzung wird lokal in jedem Fall verworfen */
+    } finally {
+      clearTimeout(frist)
+      abmeldend.current = false
     }
     beenden('abgemeldet')
   }, [beenden])

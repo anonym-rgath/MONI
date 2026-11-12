@@ -1,10 +1,10 @@
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { defaultScheduler, notifyManager } from '@tanstack/react-query'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { useEffect } from 'react'
 import { useLocation } from 'react-router'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { sitzungAdmin, sitzungEnroll, sitzungMfa } from '../test/fixtures'
 import { Sonde, zeigeApp } from '../test/render'
 import { problem, server, sitzungAntwort } from '../test/server'
@@ -160,6 +160,51 @@ describe('Sitzung', () => {
     server.use(sitzungAntwort(sitzungAdmin), http.post('/api/v1/auth/logout', () => HttpResponse.error()))
     zeigeApp('/')
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Abmelden' }))
+    await waitFor(() => expect(ort()).toBe('/login'))
+    expect(await h1('Anmelden')).toBeInTheDocument()
+  })
+
+  test('abmelden während laufender Abfrage zeigt keine „Sitzung abgelaufen“-Meldung', async () => {
+    let abgelaufen = false // die Übersicht selbst fragt /alerts ab; der 401 soll erst während des Logouts kommen
+    server.use(sitzungAntwort(sitzungAdmin),
+      http.get('/api/v1/alerts', () => (abgelaufen ? problem(401, 'Nicht angemeldet') : HttpResponse.json([]))),
+      http.post('/api/v1/auth/logout', async () => { await delay(150); return new HttpResponse(null, { status: 204 }) }))
+    const user = userEvent.setup()
+    zeigeApp('/', <Sonde />)
+    await h1('Übersicht')
+    await user.click(screen.getByRole('button', { name: 'Abmelden' }))
+    abgelaufen = true
+    await user.click(screen.getByRole('button', { name: 'Anfrage auslösen' })) // 401 trifft ein, während der Logout noch läuft
+    await h1('Anmelden')
+    await new Promise((r) => setTimeout(r, 300))
+    expect(ort()).toBe('/login')
+    expect(screen.queryByText(/Sitzung ist abgelaufen/)).not.toBeInTheDocument()
+  })
+
+  test('401 auf den Logout-Aufruf selbst endet abgemeldet ohne Fehlerseite', async () => {
+    server.use(sitzungAntwort(sitzungAdmin), http.post('/api/v1/auth/logout', () => problem(401, 'Nicht angemeldet')))
+    zeigeApp('/')
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Abmelden' }))
+    expect(await h1('Anmelden')).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(ort()).toBe('/login')
+    expect(screen.queryByText(/Sitzung ist abgelaufen/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  test('abmelden hängt → nach 10 s lokal abgemeldet', async () => {
+    server.use(sitzungAntwort(sitzungAdmin), http.post('/api/v1/auth/logout', async () => { await delay('infinite') }))
+    zeigeApp('/')
+    const knopf = await screen.findByRole('button', { name: 'Abmelden' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      fireEvent.click(knopf)
+      await vi.advanceTimersByTimeAsync(9_000)
+      expect(ort()).toBe('/')
+      await vi.advanceTimersByTimeAsync(1_500)
+    } finally {
+      vi.useRealTimers()
+    }
     await waitFor(() => expect(ort()).toBe('/login'))
     expect(await h1('Anmelden')).toBeInTheDocument()
   })

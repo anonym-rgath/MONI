@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router'
 import type { Stage } from '../api/typen'
 import { t } from '../texte/de'
+import { useTitel } from '../ui/useTitel'
 import { sicheresZiel, useSitzung } from './Sitzung'
 
 const START: Record<Stage, string> = {
@@ -9,6 +10,11 @@ const START: Record<Stage, string> = {
   mfa: '/login/zweiter-faktor',
   enroll: '/einrichtung/zwei-faktor',
   full: '/',
+}
+
+function KeineBerechtigung() {
+  useTitel(t('waechter.keineBerechtigung'))
+  return <h1 tabIndex={-1} className="text-[1.625rem] leading-tight font-semibold">{t('waechter.keineBerechtigung')}</h1>
 }
 
 // Lässt nur durch, wenn die Sitzung genau in der verlangten Stage ist; sonst geht es zur passenden Seite der echten Stage.
@@ -36,6 +42,6 @@ export function Geschuetzt({ stage, rolle, offen = false, children }: { stage: S
     const abfrage = [s.stage === 'none' && s.ende === 'abgelaufen' ? 'abgelaufen=1' : '', behalten ? `weiter=${encodeURIComponent(behalten)}` : ''].filter(Boolean).join('&')
     return <Navigate to={abfrage ? `${START[s.stage]}?${abfrage}` : START[s.stage]} replace />
   }
-  if (rolle && s.user?.role !== rolle) return <h1 tabIndex={-1} className="text-[1.625rem] leading-tight font-semibold">{t('waechter.keineBerechtigung')}</h1>
+  if (rolle && s.user?.role !== rolle) return <KeineBerechtigung />
   return children
 }

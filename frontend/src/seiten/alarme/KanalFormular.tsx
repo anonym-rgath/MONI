@@ -36,8 +36,13 @@ export function KanalFormular({ kanal, onFertig }: { kanal: Kanal | null; onFert
       ? { ...gemeinsam, ...(url && { url }), ...(hmac && { hmac_secret: hmac }) }
       : { ...gemeinsam, host: host.trim(), port: Number(port), security: sicherheit, from_addr: absender.trim(), to: zeilen(an),
           username: benutzer ? benutzer : bearbeiten ? null : undefined, ...(passwort && { password: passwort }) }
-    if (kanal) await api.patch(`/alert-channels/${kanal.id}`, nutzlast)
-    else await api.post('/alert-channels', { ...nutzlast, kind: art })
+    if (kanal) {
+      // PATCH nur mit Geändertem, sonst nennt das Audit auch unveränderte Felder; ohne Änderung entfällt die Anfrage (der Manager lehnt leere Änderungen ab).
+      const alt: Record<string, unknown> = { name: kanal.name, min_severity: kanal.min_severity, enabled: kanal.enabled,
+        host: c.host, port: c.port, security: c.security, from_addr: c.from_addr, to: c.to, username: c.username ?? null }
+      const geaendert = Object.fromEntries(Object.entries(nutzlast).filter(([k, v]) => v !== undefined && (!(k in alt) || JSON.stringify(v) !== JSON.stringify(alt[k]))))
+      if (Object.keys(geaendert).length > 0) await api.patch(`/alert-channels/${kanal.id}`, geaendert)
+    } else await api.post('/alert-channels', { ...nutzlast, kind: art })
     await qc.invalidateQueries({ queryKey: schluessel.kanaele })
     onFertig()
   }

@@ -1,4 +1,4 @@
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { afterEach, describe, expect, test } from 'vitest'
 import { server, problem } from '../test/server'
 import { ApiFehler, api, setzeCsrf } from './client'
@@ -28,6 +28,16 @@ describe('API-Client', () => {
     await api.patch('/servers/3', { enabled: false })
     expect(await api.delete('/servers/3')).toBeUndefined()
     expect(gesehen).toEqual({ get: null, patch: 'geheim-1', body: '{"enabled":false}', delete: 'geheim-1' })
+  })
+
+  test('AbortSignal wird an fetch durchgereicht: Abbruch ergibt ApiFehler 0', async () => {
+    server.use(http.get('/api/v1/servers', async () => { await delay('infinite') }))
+    const ac = new AbortController()
+    const p = api.get('/servers', undefined, { signal: ac.signal })
+    ac.abort()
+    await expect(p).rejects.toMatchObject({ status: 0 })
+    const bereits = AbortSignal.abort()
+    await expect(api.post('/auth/logout', undefined, { signal: bereits })).rejects.toMatchObject({ status: 0 })
   })
 
   test('Parameter werden angehängt, Listen wiederholt', async () => {

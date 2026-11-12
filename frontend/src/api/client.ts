@@ -26,7 +26,9 @@ type Param = string | number | boolean | undefined | readonly string[]
 
 const unerwartet = (status: number) => new ApiFehler(status, t('fehler.unerwartet', { status }))
 
-async function anfrage<T>(methode: string, pfad: string, body?: unknown, params?: Record<string, Param>): Promise<T> {
+interface Optionen { signal?: AbortSignal }
+
+async function anfrage<T>(methode: string, pfad: string, body?: unknown, params?: Record<string, Param>, opt?: Optionen): Promise<T> {
   // jsdom/Node-fetch brauchen eine absolute URL; im Browser ist sie gleich dem relativen Pfad (gleicher Ursprung).
   const url = new URL(BASIS + pfad, location.origin)
   for (const [k, v] of Object.entries(params ?? {})) {
@@ -39,7 +41,7 @@ async function anfrage<T>(methode: string, pfad: string, body?: unknown, params?
 
   let res: Response
   try {
-    res = await fetch(url, { method: methode, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) })
+    res = await fetch(url, { method: methode, headers, credentials: 'same-origin', signal: opt?.signal, body: body === undefined ? undefined : JSON.stringify(body) })
   } catch {
     throw new ApiFehler(0, t('fehler.netzwerk'))
   }
@@ -63,9 +65,9 @@ async function anfrage<T>(methode: string, pfad: string, body?: unknown, params?
 }
 
 export const api = {
-  get: <T>(pfad: string, params?: Record<string, Param>) => anfrage<T>('GET', pfad, undefined, params),
-  post: <T>(pfad: string, body?: unknown) => anfrage<T>('POST', pfad, body),
-  put: <T>(pfad: string, body?: unknown) => anfrage<T>('PUT', pfad, body),
-  patch: <T>(pfad: string, body?: unknown) => anfrage<T>('PATCH', pfad, body),
-  delete: (pfad: string) => anfrage<void>('DELETE', pfad),
+  get: <T>(pfad: string, params?: Record<string, Param>, opt?: Optionen) => anfrage<T>('GET', pfad, undefined, params, opt),
+  post: <T>(pfad: string, body?: unknown, opt?: Optionen) => anfrage<T>('POST', pfad, body, undefined, opt),
+  put: <T>(pfad: string, body?: unknown, opt?: Optionen) => anfrage<T>('PUT', pfad, body, undefined, opt),
+  patch: <T>(pfad: string, body?: unknown, opt?: Optionen) => anfrage<T>('PATCH', pfad, body, undefined, opt),
+  delete: (pfad: string, opt?: Optionen) => anfrage<void>('DELETE', pfad, undefined, undefined, opt),
 }

@@ -8,15 +8,14 @@ import { t, type TextSchluessel } from '../../texte/de'
 import { Dialog } from '../../ui/Dialog'
 import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
+import { fehlertext, Meldung, Rueckfrage } from '../../ui/Meldungen'
 import { Ladezustand } from '../../ui/Ladezustand'
 import { Leerzustand } from '../../ui/Leerzustand'
 import { Statusmarke, type Ton } from '../../ui/Statusmarke'
 import { Tabelle, Zeilenkopf, Zelle } from '../../ui/Tabelle'
 import { AgentTokens } from './AgentTokens'
-import { fehlertext, tag } from './hilfen'
+import { tag } from './hilfen'
 import { Koppeln } from './Koppeln'
-import { Meldung } from './Meldung'
-import { Rueckfrage } from './Rueckfrage'
 
 const STATUS: Record<ServerEintrag['status'], { text: TextSchluessel; ton: Ton }> = {
   ok: { text: 'status.ok', ton: 'ok' }, unknown: { text: 'status.unbekannt', ton: 'neutral' },
