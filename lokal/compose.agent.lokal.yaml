@@ -1,0 +1,20 @@
+# Override für eine lokale Testumgebung mit Docker Desktop (macOS/Windows), nur zum Ausprobieren.
+# Nutzung: siehe lokal/README.md. Produktiv immer nur compose.agent.yaml verwenden.
+services:
+  moni-agent:
+    volumes: !override
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # Docker Desktop kennt keine rslave-Propagation; ohne sie sieht der Agent nur das Root-Dateisystem der Docker-VM.
+      - /:/host/root:ro
+      - /etc/hostname:/host/etc/hostname:ro
+      - moni-agent-data:/data
+    networks:
+      - default
+      - socket-proxy
+      - moni-lokal
+
+networks:
+  # Gemeinsames Netz, über das der Manager den Agent als https://moni-agent:9810 erreicht (vorher anlegen, siehe README).
+  moni-lokal:
+    external: true
