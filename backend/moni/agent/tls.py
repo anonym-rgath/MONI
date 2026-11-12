@@ -122,8 +122,9 @@ class TlsState:
         if not ok:  # außerhalb von except, damit kein __context__ mitläuft
             raise ValueError("Zertifikat passt nicht")
         # Reihenfolge für ensure(): pending_key.pem bleibt bis zum letzten Schritt, dann ersetzt er key.pem atomar
-        pki.write_private(self._p("ca.pem"), ca_pem)
+        # cert.pem vor ca.pem: bricht es dazwischen ab, bleibt der Agent ungekoppelt und ensure() kann neu koppeln lassen
         pki.write_private(self._p("cert.pem"), cert_pem)
+        pki.write_private(self._p("ca.pem"), ca_pem)
         self._p("pairing.json").unlink(missing_ok=True)
         os.replace(self._p("pending_key.pem"), self._p("key.pem"))
         self._load()

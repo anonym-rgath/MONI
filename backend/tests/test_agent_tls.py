@@ -235,3 +235,25 @@ def test_ensure_mismatched_pair_gives_german_hint(tmp_path):
     with pytest.raises(TlsError) as e:
         TlsState(tmp_path).ensure(NOW)
     assert "python -m moni.cli pair reset" in str(e.value) and not isinstance(e.value, ssl.SSLError)
+
+
+def test_install_crash_before_ca_leaves_agent_unpaired_and_repairable(tmp_path, monkeypatch):
+    st, ca, cert_pem, ca_pem = _paired_dir(tmp_path)
+    real_write = pki.write_private
+
+    def crash(path, data):
+        if path.name == "ca.pem":
+            raise OSError("Absturz")
+        real_write(path, data)
+    monkeypatch.setattr(pki, "write_private", crash)
+    with pytest.raises(OSError):
+        st.install(cert_pem, ca_pem, NOW)
+    monkeypatch.undo()
+    fresh = TlsState(tmp_path); fresh.ensure(NOW)
+    assert fresh.paired is False and not (tmp_path / "tls" / "pending_key.pem").exists()
+    cert = pki.load_cert(cert_pem)
+    _, fp, token = fresh.pairing_code("").split(":")
+    assert fp == pki.fingerprint(cert) and fresh.check_token(token)  # Kopplungs-Token und Code zum aktuellen Zertifikat
+    cert2 = _issue(ca, fresh.new_csr())  # erneute Kopplung klappt
+    fresh.install(cert2, ca_pem, NOW)
+    assert fresh.paired is True
