@@ -272,7 +272,8 @@ jobs:
           LINES_BEFORE=$(wc -l < agent.log)
           agent restart moni-agent
           ok=0
-          for _ in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health > agent-health.json 2>/dev/null && grep -q '"ok"' agent-health.json && { ok=1; break; }; sleep 1; done
+          # ready statt health: erst nach der ersten Messung liefert /snapshot Daten (sonst 503)
+          for _ in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/ready > agent-ready.json 2>/dev/null && grep -q '"ready"' agent-ready.json && { ok=1; break; }; sleep 1; done
           [ "$ok" = 1 ] || { echo "FAIL: Agent nach Neustart nicht erreichbar"; exit 1; }
           agent logs moni-agent > agent.log
           tail -n +"$((LINES_BEFORE + 1))" agent.log > after-restart.log
