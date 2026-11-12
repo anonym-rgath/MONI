@@ -193,21 +193,12 @@ class Poller:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.stats = PollStats()
-        self._abandoned: set[tuple[int, int]] = set()  # (Server, Zyklus) mit abgelaufenem Abruf
 
     def alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
     def _fetch(self, server, client, now: int):
-        """Läuft im Worker-Thread: misst Dauer und Erfolg des Abrufs."""
-        t0 = time.monotonic()
-        result = self._fetch_http(server, client, now)
-        if (server.id, now) not in self._abandoned:  # nach dem Timeout überschreibt ein Nachzügler nichts mehr
-            self.stats.record(server.name, time.monotonic() - t0)
-        return result
-
-    def _fetch_http(self, server, client, now: int):
-        """Nur HTTP, keine DB."""
+        """Läuft im Worker-Thread: nur HTTP, keine DB."""
         try:
             snaps = fetch_new(client, server.last_ts, now, self._settings.collect_interval_seconds)
             info = None
@@ -264,20 +255,28 @@ class Poller:
                 self._fail(store, server, now, "Ungültige Antwort vom Agent", fatal=True)
         conn.execute("RELEASE server")
 
+    def _timed(self, server, client, now: int):
+        """Worker schreibt nie Kennzahlen, er liefert nur die Dauer mit zurück."""
+        t0 = time.monotonic()
+        return self._fetch(server, client, now), time.monotonic() - t0
+
     def _fetch_all(self, jobs, now: int) -> dict:
         """Parallel, außerhalb jeder DB-Transaktion; Nachzügler blockieren den Zyklus nicht."""
         ex = ThreadPoolExecutor(max_workers=max(1, min(_MAX_WORKERS, len(jobs))))
         start = time.monotonic()
         try:
-            futs = {ex.submit(self._fetch, s, c, now): s for s, c in jobs}
+            futs = {ex.submit(self._timed, s, c, now): s for s, c in jobs}
             pending, end = set(futs), time.monotonic() + self._settings.poll_timeout_seconds * 3 + _GRACE
             while pending and not self._stop.is_set() and (left := end - time.monotonic()) > 0:
                 _, pending = wait(pending, timeout=min(left, 0.5))  # in Schritten, damit stop() greift
+            out = {}
             for f, s in futs.items():
                 if f in pending:
-                    self._abandoned.add((s.id, now))
-                    self.stats.record(s.name, time.monotonic() - start)
-            return {s.id: AgentError("Agent nicht erreichbar") if f in pending else f.result() for f, s in futs.items()}
+                    out[s.id], seconds = AgentError("Agent nicht erreichbar"), time.monotonic() - start
+                else:
+                    out[s.id], seconds = f.result()
+                self.stats.record(s.name, seconds)
+            return out
         finally:
             ex.shutdown(wait=False, cancel_futures=True)
 

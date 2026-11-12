@@ -4,6 +4,7 @@ import socket
 import sqlite3
 import threading
 import time
+from pathlib import Path
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -11,7 +12,7 @@ import pytest
 
 from conftest import raw
 from moni.config import Settings
-from moni.manager import alerting, db, poller as pmod, tsdb
+from moni.manager import alerting, db, poller as pmod, selfmetrics, tsdb
 from moni.manager.poller import AgentClient, AgentError, Poller
 from moni.manager.servers import ServerStore
 from moni.secretbox import SecretBox, generate_key
@@ -1100,6 +1101,8 @@ def test_store_side_failure_counts_as_error(poller, servers, agents):  # Fix-Run
     a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T)]})
     poller.poll_once(now=T + 10 * 3600)  # Zeitstempel unplausibel: Fehler entsteht erst beim Speichern
     assert servers.get(a).last_error == "Zeitstempel des Agents unplausibel" and _errs(poller, "a") == 1
+    assert 'moni_manager_server_up{server="a"} 0' in selfmetrics.render(
+        poller.stats.snapshot(), servers.list(), Path(poller._settings.db_path), "x")
 
 
 def test_local_failure_counts_as_error(poller, servers, local_collector):  # Fix-Runde 1
