@@ -109,7 +109,7 @@
   },
   "info": {
     "title": "Moni Agent",
-    "version": "2.0.0-rc.2"
+    "version": "2.0.0"
   },
   "openapi": "3.1.0",
   "paths": {

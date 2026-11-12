@@ -2,7 +2,7 @@ name: moni-agent
 
 services:
   moni-agent:
-    image: ${MONI_AGENT_IMAGE:-ghcr.io/anonym-rgath/moni-agent:2.0.0-rc.2}
+    image: ${MONI_AGENT_IMAGE:-ghcr.io/anonym-rgath/moni-agent:2.0.0}
     restart: unless-stopped
     read_only: true
     tmpfs:

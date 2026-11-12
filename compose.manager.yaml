@@ -2,7 +2,7 @@ name: moni-manager
 
 services:
   moni-manager:
-    image: ${MONI_MANAGER_IMAGE:-ghcr.io/anonym-rgath/moni-manager:2.0.0-rc.2}
+    image: ${MONI_MANAGER_IMAGE:-ghcr.io/anonym-rgath/moni-manager:2.0.0}
     restart: unless-stopped
     read_only: true
     tmpfs:

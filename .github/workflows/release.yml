@@ -131,10 +131,10 @@ jobs:
           # Titel und Beschreibung fest je Image, nicht aus der Repo-Beschreibung
           labels: |
             org.opencontainers.image.title=moni-${{ matrix.target }}
-            org.opencontainers.image.description=${{ matrix.target == 'agent' && 'Moni-Agent: misst einen Linux-Host mit Docker und stellt die Daten per verschlüsselter API bereit' || 'Moni-Manager: Zentrale mit Weboberfläche, Verlauf und Alarmen für mehrere Moni-Agents' }}
+            org.opencontainers.image.description=${{ matrix.target == 'agent' && 'Moni-Agent: misst einen Linux-Host mit Docker und stellt die Daten per verschlüsselter API bereit' || 'Moni-Manager: Zentrale mit Weboberfläche für Verlauf und Alarme mehrerer Moni-Agents' }}
           annotations: |
             org.opencontainers.image.title=moni-${{ matrix.target }}
-            org.opencontainers.image.description=${{ matrix.target == 'agent' && 'Moni-Agent: misst einen Linux-Host mit Docker und stellt die Daten per verschlüsselter API bereit' || 'Moni-Manager: Zentrale mit Weboberfläche, Verlauf und Alarmen für mehrere Moni-Agents' }}
+            org.opencontainers.image.description=${{ matrix.target == 'agent' && 'Moni-Agent: misst einen Linux-Host mit Docker und stellt die Daten per verschlüsselter API bereit' || 'Moni-Manager: Zentrale mit Weboberfläche für Verlauf und Alarme mehrerer Moni-Agents' }}
         env:
           # Index-Annotations: GHCR zeigt bei Multi-Arch-Images die Beschreibung aus dem Index
           DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
