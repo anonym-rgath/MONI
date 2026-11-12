@@ -1,17 +1,4 @@
 # Trivy-Ausnahmen (D10). Jede Ausnahme steht hier mit Begruendung und Ablaufdatum; "exp:" laesst Trivy
 # sie nach dem Datum selbst wieder melden. Danach Zeile loeschen (Fix liegt vor) oder neu begruendet verlaengern.
 # Ohne Eintrag bricht ein behebbarer CRITICAL- oder HIGH-Fund (--ignore-unfixed) die CI.
-
-# zlib1g (Debian 13): Fix 1.3.1-1+deb13u1 ist noch nicht im Basis-Image python:3.14-slim. Betroffen ist gzwrite()
-# der C-Bibliothek; Moni schreibt keine gzip-Dateien ueber diese API. Gueltig bis 2026-12-10, dann Basis-Image-Digest erneuern.
-CVE-2026-76844 exp:2026-12-10
-CVE-2026-85091 exp:2026-12-10
-
-# pip bringt eigene Kopien von msgpack, setuptools und urllib3 mit (pip/_vendor). Moni ruft pip zur Laufzeit nie
-# auf (kein Netzwerkzugriff, keine Installation); die Abhaengigkeiten kommen aus requirements-docker.txt.
-# Gueltig bis 2026-12-10, dann mit neuem Basis-Image (neuere pip-Version) erneut pruefen.
-CVE-2026-114613 exp:2026-12-10
-GHSA-6v7p-g79w-8964 exp:2026-12-10
-CVE-2025-47273 exp:2026-12-10
-CVE-2026-97687 exp:2026-12-10
-CVE-2026-97689 exp:2026-12-10
+# Format: CVE-JJJJ-NNNN exp:JJJJ-MM-TT   (Begruendung als Kommentar in der Zeile davor)

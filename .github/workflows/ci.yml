@@ -183,18 +183,20 @@ jobs:
           print("OK Socket-Proxy sperrt")
           PY
           # Ein fremder Container im Proxy-Netz (nicht "moni-agent") wird abgewiesen: das Agent-Image dient als Client
-          PROXY_NET=$(docker network ls --filter name=socket-proxy -q | head -n1)
+          # Netz genau dieses Stacks: das socket-proxy-Netz, an dem der Agent hängt
+          PROXY_NET=$(docker inspect --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$(docker compose -f compose.agent.yaml ps -q moni-agent)" | tr ' ' '\n' | grep 'socket-proxy$' | head -n1)
           test -n "$PROXY_NET"
+          # Nur HTTP 403 gilt als bestanden; Verbindungsfehler, Timeout oder 2xx (Proxy aus, falscher Name) sind FAIL
           docker run --rm -i --network "$PROXY_NET" --entrypoint python moni-agent:ci - <<'PY'
           import urllib.error, urllib.request
           try:
               r = urllib.request.urlopen("http://docker-socket-proxy:2375/containers/json", timeout=10)
-              raise SystemExit(f"FAIL: fremder Client erhielt HTTP {r.status}")
           except urllib.error.HTTPError as e:
-              assert e.code == 403, e.code
-          except OSError as e:  # Verbindung abgewiesen oder zurückgesetzt
-              print("Verbindung abgewiesen:", type(e).__name__)
-          print("OK fremder Client abgewiesen")
+              if e.code != 403:
+                  raise SystemExit(f"FAIL: fremder Client erhielt HTTP {e.code}, erwartet 403")
+          else:
+              raise SystemExit(f"FAIL: fremder Client erhielt HTTP {r.status}")
+          print("OK fremder Client abgewiesen (403)")
           PY
           python3 -c "import json; s=json.load(open('snap.json')); n=sum(c['stats_available'] for c in s['containers']); assert n>0, 'keine Container-Metriken'; print('OK', n, 'Container mit Metriken')"
 
@@ -236,6 +238,7 @@ jobs:
           if grep -qF "$MONI_SECRET_KEY" manager.log; then echo "FAIL: MONI_SECRET_KEY im Log"; exit 1; fi
           if grep -qF "ci-smoke-Passwort-2026" manager.log; then echo "FAIL: Admin-Passwort im Log"; exit 1; fi
           # Auf die echten, noch unbenutzten Wiederherstellungscodes prüfen (nicht auf das Wort)
+          test -s "$RUNNER_TEMP/ci-recovery"
           while read -r code; do
             if grep -qF -- "$code" manager.log; then echo "FAIL: Wiederherstellungscode im Log"; exit 1; fi
           done < "$RUNNER_TEMP/ci-recovery"

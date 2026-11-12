@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Trivy-Scan eines lokalen Images: scripts/ci/trivy.sh IMAGE (D10).
 # Einzige Stelle fuer Trivy-Digest und -Flags; CI und Release-Workflow rufen dieses Skript.
-# Trivy laeuft als Container ohne Drittanbieter-Action, der Docker-Socket ist nur lesbar eingebunden.
+# Trivy laeuft als Container ohne Drittanbieter-Action, der Docker-Socket ist eingebunden (:ro schraenkt die API nicht ein, Trivy liest nur das Image).
 # Ausnahmen nur ueber .trivyignore (Begruendung und Ablaufdatum je Eintrag).
 set -Eeuo pipefail
 [ "$#" = 1 ] || { echo "Aufruf: $0 IMAGE" >&2; exit 2; }

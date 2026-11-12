@@ -75,6 +75,9 @@ def main(base: str, state_file: str, port: int) -> None:
     if json.loads(received[0][1]).get("event") != "test":
         fail("webhook prüfen", "event != test")
     srv.shutdown()
+    # Kanal wieder entfernen: sein Endpunkt ist nach dem Test tot und soll später keine Fehlzustellungen erzeugen
+    st, _ = c.call("DELETE", f"/api/v1/alert-channels/{ch['id']}", csrf=csrf)
+    expect("kanal löschen", st, 204)
     print("OK Alarmkanal")
 
 

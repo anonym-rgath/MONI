@@ -14,8 +14,14 @@ FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916
 
 WORKDIR /app
 
+# zlib1g-Fix (deb13u1) liegt noch nicht im Basis-Image; entfällt mit einem neueren Digest
+RUN apt-get update && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+# pip und setuptools werden zur Laufzeit nicht gebraucht; ohne sie entfallen ihre mitgelieferten Abhängigkeiten (Trivy)
 COPY backend/requirements-docker.txt ./backend/
-RUN pip install --no-cache-dir -r backend/requirements-docker.txt
+RUN pip install --no-cache-dir -r backend/requirements-docker.txt \
+    && pip uninstall -y pip setuptools
 
 COPY backend/moni /app/moni
 
@@ -46,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     supervisor \
     curl \
+    zlib1g \
     && sed -i 's|^user .*|# user directive disabled for non-root runtime;|' /etc/nginx/nginx.conf \
     && sed -i 's|^pid .*|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
     && sed -i 's|^[[:space:]]*error_log .*|error_log /dev/stderr warn;|' /etc/nginx/nginx.conf \
@@ -55,8 +62,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -f /etc/nginx/sites-enabled/default \
     && rm -rf /var/lib/apt/lists/*
 
+# pip und setuptools werden zur Laufzeit nicht gebraucht; ohne sie entfallen ihre mitgelieferten Abhängigkeiten (Trivy)
 COPY backend/requirements-docker.txt ./backend/
-RUN pip install --no-cache-dir -r backend/requirements-docker.txt
+RUN pip install --no-cache-dir -r backend/requirements-docker.txt \
+    && pip uninstall -y pip setuptools
 
 COPY backend/moni ./moni
 

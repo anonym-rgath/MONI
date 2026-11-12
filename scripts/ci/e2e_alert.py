@@ -59,6 +59,15 @@ def find_event(evs: list[dict], event: str, rule: str, server: str) -> dict | No
     return None
 
 
+def clean_resolve(payload: dict) -> bool:
+    """resolved ohne Sondergrund: der Schlüssel reason muss vorhanden und null sein."""
+    return "reason" in payload and payload["reason"] is None
+
+
+def sig_errors(evs: list[dict]) -> list[str]:
+    return [e["sig_err"] for e in evs if e["sig_err"]]
+
+
 def wait_for(label: str, seconds: int, check, interval: float = 2):
     """Ruft check() bis zur Frist auf, gibt das erste Ergebnis zurück, das nicht None/False ist."""
     end = time.time() + seconds
@@ -116,8 +125,8 @@ def main(base: str, state_file: str, port: int, agent: str, stop_cmd: str, start
         resolved = wait_for("Webhook resolved", 120, lambda: find_event(events, "resolved", RULE, agent))
         if resolved["sig_err"]:
             fail("webhook resolved prüfen", resolved["sig_err"])
-        if resolved["payload"].get("reason") is not None:
-            fail("webhook resolved prüfen", "reason nicht null")
+        if not clean_resolve(resolved["payload"]):
+            fail("webhook resolved prüfen", "reason fehlt oder nicht null")
         wait_for("Status ok nach Neustart", 120, lambda: (server() or {}).get("status") == "ok")
         after = points(sid)
         if after < before:
@@ -128,6 +137,8 @@ def main(base: str, state_file: str, port: int, agent: str, stop_cmd: str, start
         seen = {e["event"] for e in hist["entries"] if e["rule_name"] == RULE}
         if not {"firing", "resolved"} <= seen:
             fail("alarmverlauf", f"Ereignisse {sorted(seen)}")
+        if sig_errors(events):  # jeder empfangene Webhook, nicht nur firing/resolved
+            fail("webhooks prüfen", f"{len(sig_errors(events))} Anfrage(n) mit ungültiger Signatur: {sorted(set(sig_errors(events)))}")
         print("OK E2E-Alarm")
     finally:
         srv.shutdown()
@@ -145,8 +156,10 @@ def selftest() -> None:
     assert find_event(evs, "changed", RULE, "a") is None
     assert find_event(evs, "firing", RULE, "c") is None
     assert find_event([], "firing", RULE, "a") is None
-    assert ev("resolved", reason=None)["payload"].get("reason") is None
-    assert ev("resolved", reason="rule_deleted")["payload"].get("reason") is not None
+    assert clean_resolve(ev("resolved", reason=None)["payload"])
+    assert not clean_resolve(ev("resolved", reason="rule_deleted")["payload"])
+    assert not clean_resolve(ev("resolved")["payload"])  # reason fehlt
+    assert sig_errors(evs) == ["x"] and sig_errors([ev("firing")]) == []
 
 
 if __name__ == "__main__":
