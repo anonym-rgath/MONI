@@ -1090,3 +1090,37 @@ def test_renew_respects_stop(paired_env, servers, monkeypatch):
     monkeypatch.setattr(pairing, "renew", first)
     p._renew_certs(paired_env.real)
     assert len(calls) == 1
+
+
+def _errs(p, name):
+    return p.stats.snapshot()["servers"][name]["errors"]
+
+
+def test_store_side_failure_counts_as_error(poller, servers, agents):  # Fix-Runde 1
+    a = add(servers, agents, "a", {"/api/v1/snapshot": [snap(T)]})
+    poller.poll_once(now=T + 10 * 3600)  # Zeitstempel unplausibel: Fehler entsteht erst beim Speichern
+    assert servers.get(a).last_error == "Zeitstempel des Agents unplausibel" and _errs(poller, "a") == 1
+
+
+def test_local_failure_counts_as_error(poller, servers, local_collector):  # Fix-Runde 1
+    servers.ensure_local("lokal")
+    poller.poll_once(now=int(time.time()) + 1000)  # Sammler ohne Daten: "keine neuen Daten"
+    assert _errs(poller, "lokal") == 1
+
+
+def test_hung_worker_counts_one_error_and_late_finish_changes_nothing(settings, box, servers, agents, monkeypatch):
+    release = threading.Event()
+    monkeypatch.setattr(pmod, "_GRACE", 0)
+    s = Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": settings.secret_key,
+                           "MONI_DATA_DIR": settings.data_dir, "MONI_POLL_TIMEOUT": "0.1"})
+    add(servers, agents, "a", {"/api/v1/snapshot": [lambda: release.wait(5) and snap(T)]})
+    p = Poller(s, box, StubCollector(), client_factory=agents.factory)
+    try:
+        p.poll_once(now=T)
+        before = p.stats.snapshot()["servers"]["a"]
+        release.set()
+        time.sleep(0.5)  # Nachzügler läuft zu Ende
+        assert before["errors"] == 1 and p.stats.snapshot()["servers"]["a"] == before
+    finally:
+        release.set()
+        p.close()

@@ -13,11 +13,17 @@ class PollStats:
         self._servers: dict[str, dict] = {}
         self._cycle: float | None = None
 
-    def record(self, server: str, seconds: float, ok: bool) -> None:
+    def _entry(self, server: str) -> dict:
+        return self._servers.setdefault(server, {"seconds": None, "errors": 0})
+
+    def record(self, server: str, seconds: float) -> None:
         with self._lock:
-            s = self._servers.setdefault(server, {"seconds": None, "errors": 0})
-            s["seconds"] = seconds
-            s["errors"] += 0 if ok else 1
+            self._entry(server)["seconds"] = seconds
+
+    def fail(self, server: str) -> None:
+        """Zählt je Statusfehler genau einmal; wird nur aus Poller._fail gerufen."""
+        with self._lock:
+            self._entry(server)["errors"] += 1
 
     def cycle(self, seconds: float) -> None:
         with self._lock:

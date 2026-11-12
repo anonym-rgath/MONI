@@ -193,6 +193,7 @@ class Poller:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.stats = PollStats()
+        self._abandoned: set[tuple[int, int]] = set()  # (Server, Zyklus) mit abgelaufenem Abruf
 
     def alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -201,7 +202,8 @@ class Poller:
         """Läuft im Worker-Thread: misst Dauer und Erfolg des Abrufs."""
         t0 = time.monotonic()
         result = self._fetch_http(server, client, now)
-        self.stats.record(server.name, time.monotonic() - t0, not isinstance(result, AgentError))
+        if (server.id, now) not in self._abandoned:  # nach dem Timeout überschreibt ein Nachzügler nichts mehr
+            self.stats.record(server.name, time.monotonic() - t0)
         return result
 
     def _fetch_http(self, server, client, now: int):
@@ -224,6 +226,7 @@ class Poller:
 
     def _fail(self, store: ServerStore, server, now: int, message: str, fatal: bool = False) -> None:
         status = store.record_failure(server.id, now, message, fatal=fatal)
+        self.stats.fail(server.name)
         # Warnung nur beim Statuswechsel, nicht alle 15 s
         log.log(logging.WARNING if status != server.status else logging.DEBUG,
                 "Abruf von %s fehlgeschlagen: %s (Status %s)", server.name, message, status)
@@ -271,8 +274,9 @@ class Poller:
             while pending and not self._stop.is_set() and (left := end - time.monotonic()) > 0:
                 _, pending = wait(pending, timeout=min(left, 0.5))  # in Schritten, damit stop() greift
             for f, s in futs.items():
-                if f in pending:  # hängender Worker meldet sich nie selbst
-                    self.stats.record(s.name, time.monotonic() - start, False)
+                if f in pending:
+                    self._abandoned.add((s.id, now))
+                    self.stats.record(s.name, time.monotonic() - start)
             return {s.id: AgentError("Agent nicht erreichbar") if f in pending else f.result() for f, s in futs.items()}
         finally:
             ex.shutdown(wait=False, cancel_futures=True)

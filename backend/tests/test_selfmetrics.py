@@ -38,8 +38,9 @@ def test_metrics_requires_auth(mclient):
 def test_metrics_content(mgr_app, mclient, mauth):
     _servers(mgr_app, "b")
     st = mgr_app.state.poll_stats
-    st.record("lokal", 0.25, True)
-    st.record("b", 1.5, False)
+    st.record("lokal", 0.25)
+    st.record("b", 1.5)
+    st.fail("b")
     st.cycle(2.0)
     r = mclient.get("/api/v1/metrics", headers=mauth)
     assert r.status_code == 200 and r.headers["content-type"] == prometheus.CONTENT_TYPE
@@ -111,18 +112,7 @@ def test_agent_metrics_build_info(client, auth, measured):
     assert f'moni_build_info{{role="agent",version="{__version__}"}} 1' in t
 
 
-def test_poller_records_duration_and_errors(mgr_app):
-    from moni.manager.poller import AgentError, Poller
-    p = Poller.__new__(Poller)
-    from moni.manager.selfmetrics import PollStats
-    p.stats = PollStats()
-    p._settings = types.SimpleNamespace(collect_interval_seconds=15)
-    p._info_at = {}
-    srv = types.SimpleNamespace(id=1, name="b", last_ts=None)
-
-    class Bad:
-        def get(self, *a, **k):
-            raise AgentError("x")
-    p._fetch(srv, Bad(), 1000)
-    s = p.stats.snapshot()["servers"]["b"]
-    assert s["errors"] == 1 and s["seconds"] >= 0
+def test_metrics_viewer_may_read(mclient, make_user, login_cookie):
+    from moni.auth.sessions import COOKIE
+    mclient.cookies.set(COOKIE, login_cookie(make_user("viewer"))[0])
+    assert mclient.get("/api/v1/metrics").status_code == 200
