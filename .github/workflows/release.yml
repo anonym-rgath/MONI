@@ -1,0 +1,195 @@
+# Release-Workflow fuer MONI (D2, D3, D11, D14)
+# ---------------------------------------------
+# Tag vX.Y.Z (auch vX.Y.Z-rc.1) loest das Release aus; sonst passiert nichts. Auf Pull Requests, die
+# diese Datei, das Dockerfile oder requirements-docker.txt aendern, laeuft nur der Trockenlauf
+# (Job "verify"): bauen, Smoke, Trivy. Kein Login, kein Push, keine Signatur, kein Release.
+#   verify   je Target (agent, manager) und Plattform (amd64, arm64): Einzelbuild mit load, Smoke
+#            (Imports im Container der Plattform), Trivy (scripts/ci/trivy.sh). Alles vor dem Push.
+#            arm64 laeuft unter QEMU. Der Layer-Cache liegt je Target und Plattform im GHA-Cache.
+#   publish  nur Tag, nur nach verify: Multi-Arch-Build aus dem Cache von verify, Push nach GHCR
+#            mit SBOM (SPDX) und Provenance (mode=max), cosign keyless ueber den Digest,
+#            Selbstpruefung mit cosign verify. Tags nach D2: X.Y.Z, X.Y, X und latest; ein Pre-Release
+#            bekommt nur seinen eigenen Tag.
+#   release  nur Tag, nach publish beider Images: GitHub-Release mit dem CHANGELOG-Abschnitt.
+# Pruefen der Signatur: siehe CHANGELOG.md. Alle Actions per Commit-SHA gepinnt.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - Dockerfile
+      - backend/requirements-docker.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify ${{ matrix.target }} ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [agent, manager]
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Versionen pruefen
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            python3 scripts/ci/check_version.py "$GITHUB_REF_NAME"
+          else
+            python3 scripts/ci/check_version.py
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build ${{ matrix.target }} (linux/${{ matrix.arch }})
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: moni-${{ matrix.target }}:verify-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}
+
+      # Argon2id kommt aus cryptography (kein eigenes Paket); moni.auth.passwords importiert es. pip fehlt im Image.
+      - name: Smoke (Imports auf linux/${{ matrix.arch }})
+        run: |
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            "moni-${{ matrix.target }}:verify-${{ matrix.arch }}" \
+            python -c "import moni.app, moni.auth.passwords; print('OK Imports')"
+
+      - name: Trivy
+        run: scripts/ci/trivy.sh "moni-${{ matrix.target }}:verify-${{ matrix.arch }}"
+
+  publish:
+    name: Publish moni-${{ matrix.target }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [agent, manager]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Image-Name (klein geschrieben)
+        id: name
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: echo "image=ghcr.io/${OWNER,,}/moni-${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Image-Tags (D2)
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.name.outputs.image }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - name: Login GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Layer kommen aus dem Cache der verify-Jobs (gleicher Lauf, gleiche Scopes); ohne Treffer baut es neu.
+      - name: Build und Push (amd64, arm64)
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+          cache-from: |
+            type=gha,scope=${{ matrix.target }}-amd64
+            type=gha,scope=${{ matrix.target }}-arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+
+      - name: Signieren (Digest, keyless)
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+
+      - name: Signatur pruefen (Selbstpruefung, D3)
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REPO: ${{ github.repository }}
+        run: |
+          cosign verify "$IMAGE@$DIGEST" \
+            --certificate-identity-regexp "^https://github.com/${REPO//./\\.}/\\.github/workflows/release\\.yml@refs/tags/v" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+          echo "OK Signatur von $IMAGE@$DIGEST"
+
+  release:
+    name: GitHub-Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Versionen pruefen
+        run: python3 scripts/ci/check_version.py "$GITHUB_REF_NAME"
+
+      - name: Release-Notizen aus CHANGELOG.md
+        run: |
+          awk -v h="## [${GITHUB_REF_NAME#v}]" 'index($0, h) == 1 { f = 1; next } /^## \[/ { f = 0 } f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "FEHLER: kein CHANGELOG-Abschnitt fuer $GITHUB_REF_NAME"; exit 1; }
+
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=()
+          [[ "$GITHUB_REF_NAME" == *-* ]] && pre=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md "${pre[@]}"
