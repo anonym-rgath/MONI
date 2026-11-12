@@ -12,4 +12,5 @@ compose up -d
 echo ""
 compose ps
 echo ""
+BASIS_URL="$(laufende_url)" || BASIS_URL="(URL nicht ermittelbar)"
 echo -e "${GREEN}Moni ${ROLLE} laeuft${NC} (${BASIS_URL}, Pruefung: ./scripts/smoke.sh ${ROLLE})"

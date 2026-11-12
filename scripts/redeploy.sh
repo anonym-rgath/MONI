@@ -22,7 +22,7 @@ done
 env_pruefen
 if [ "$LOCAL" = 1 ]; then
     img="MONI_$(echo "$ROLLE" | tr "[:lower:]" "[:upper:]")_IMAGE"
-    [ -n "$(env_wert "$img")" ] || warn "--local, aber $img ist leer: Compose nutzt das Standard-Image"
+    [ -n "${!img:-}" ] || warn "--local, aber $img ist nicht gesetzt: Compose nutzt das Standard-Image"
     echo -e "${YELLOW}[1/3] --local: kein pull, nutze das gesetzte Image${NC}"
 else
     echo -e "${YELLOW}[1/3] Image ziehen...${NC}"

@@ -28,7 +28,6 @@ rolle_waehlen() {
     SERVICE="moni-${ROLLE}"
     # Beide Stacks liegen im selben Verzeichnis: der Manager bekommt ein eigenes Projekt (wie in der CI)
     [ "$ROLLE" = manager ] && export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-moni-manager}"
-    BASIS_URL="$(basis_url)"
     command -v docker >/dev/null 2>&1 || fail "docker ist nicht installiert"
     docker compose version >/dev/null 2>&1 || fail "Docker Compose Plugin ist nicht installiert"
     # Gruppe des Docker-Sockets fuer den Socket-Proxy; Docker Desktop (macOS): 0
@@ -41,28 +40,26 @@ rolle_waehlen() {
     [ -z "${DOCKER_GID:-}" ] || export DOCKER_GID
 }
 
-# Wert aus Umgebung oder .env (nur der angefragte Schluessel wird gelesen, nie ausgegeben)
-env_wert() {
-    local v="${!1:-}"
-    [ -n "$v" ] || v="$(sed -n "s/^[[:space:]]*$1=//p" .env 2>/dev/null | tail -n 1)"
-    echo "${v:-$2}"
+# Reine Abbildung: url_bauen <MONI_TLS-Wert> <host:port>; Schema aus MONI_TLS, Wildcard-Adressen -> 127.0.0.1
+url_bauen() {
+    local scheme=https host="${2%:*}" port="${2##*:}"
+    [ "$1" = off ] && scheme=http
+    case "$host" in 0.0.0.0|::|'[::]') host=127.0.0.1 ;; esac
+    echo "${scheme}://${host}:${port}"
 }
 
-# Basis-URL der API auf dem Host: Schema und Port je nach MONI_TLS, Bind 0.0.0.0 -> 127.0.0.1
-basis_url() {
-    local tls bind port scheme=https
-    tls="$(env_wert MONI_TLS on)"
-    if [ "$ROLLE" = agent ]; then
-        bind="$(env_wert MONI_AGENT_BIND 127.0.0.1)"; port=9810
-    else
-        bind="$(env_wert MONI_MANAGER_BIND 127.0.0.1)"; port="$(env_wert MONI_HTTPS_PORT 8443)"
-    fi
-    if [ "$tls" = off ]; then
-        scheme=http
-        [ "$ROLLE" = manager ] && port=8080  # Host-Port auf Container-Port 80
-    fi
-    [ "$bind" = 0.0.0.0 ] && bind=127.0.0.1
-    echo "${scheme}://${bind}:${port}"
+# Basis-URL aus dem laufenden Container: MONI_TLS (nur diese Variable) und veroeffentlichter Port.
+# Rueckgabe 1 mit deutscher Meldung, wenn der Container nicht laeuft.
+laufende_url() {
+    local cid tls cport hp
+    cid="$(compose ps -q "$SERVICE" 2>/dev/null)"
+    if [ -z "$cid" ]; then echo "$SERVICE laeuft nicht. Starte zuerst ./scripts/start.sh $ROLLE" >&2; return 1; fi
+    tls="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$cid" | grep -m1 '^MONI_TLS=' || true)"
+    tls="${tls#MONI_TLS=}"
+    if [ "$ROLLE" = agent ]; then cport=9810; elif [ "${tls:-on}" = off ]; then cport=80; else cport=443; fi
+    hp="$(compose port "$SERVICE" "$cport" 2>/dev/null | head -n 1 || true)"
+    if [ -z "$hp" ]; then echo "Kein veroeffentlichter Port fuer $SERVICE:$cport gefunden" >&2; return 1; fi
+    url_bauen "${tls:-on}" "$hp"
 }
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }

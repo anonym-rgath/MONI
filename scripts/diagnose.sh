@@ -19,7 +19,11 @@ echo "Version:"
 compose exec -T "$SERVICE" python -c 'import moni; print(moni.__version__)' 2>&1 | maskieren || true
 echo ""
 echo "ready:"
-curl -sSk -w ' (HTTP %{http_code})\n' "${BASIS_URL}/api/v1/ready" 2>&1 | maskieren || true
+if BASIS_URL="$(laufende_url)"; then
+    curl -sSk -w ' (HTTP %{http_code})\n' "${BASIS_URL}/api/v1/ready" 2>&1 | maskieren || true
+else
+    echo "nicht ermittelbar (Container laeuft nicht)"
+fi
 echo ""
 echo "Dienste:"
 compose ps 2>&1 | maskieren || true

@@ -17,6 +17,7 @@ proxy="$(compose ps -q docker-socket-proxy)"
 [ -n "$proxy" ] || fail "docker-socket-proxy laeuft nicht"
 ok "Container laufen"
 
+BASIS_URL="$(laufende_url)" || fail "Basis-URL nicht ermittelbar"
 url="${BASIS_URL}/api/v1"
 for endpoint in health ready; do
     good=0

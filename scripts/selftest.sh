@@ -21,14 +21,15 @@ if grep -qE 'moni_[A-Za-z0-9]{20,}|moni-pair-v1' "${TMPDIR:-/tmp}/moni-diagnose.
 grep -q 'ready' "${TMPDIR:-/tmp}/moni-diagnose.out" || fail "diagnose.sh nennt keinen Readiness-Status"
 echo "OK: diagnose.sh ohne Geheimnisse"
 
-# URL-Auswahl (kein Stack noetig)
+# URL-Abbildung: reine Funktion mit expliziten Argumenten, unabhaengig von der Umgebung des Aufrufers
 # shellcheck source=scripts/_rolle.sh
 source ./_rolle.sh
-url() { ROLLE="$1" basis_url; }
-[ "$(url agent)" = https://127.0.0.1:9810 ] || fail "URL agent Standard"
-[ "$(MONI_TLS=off url agent)" = http://127.0.0.1:9810 ] || fail "URL agent TLS off"
-[ "$(url manager)" = https://127.0.0.1:8443 ] || fail "URL manager Standard"
-[ "$(MONI_TLS=off url manager)" = http://127.0.0.1:8080 ] || fail "URL manager TLS off"
-[ "$(MONI_HTTPS_PORT=9443 MONI_MANAGER_BIND=0.0.0.0 url manager)" = https://127.0.0.1:9443 ] || fail "URL manager Port/Bind"
-[ "$(MONI_AGENT_BIND=10.0.0.5 url agent)" = https://10.0.0.5:9810 ] || fail "URL agent Bind"
-echo "OK: URL-Auswahl"
+[ "$(url_bauen on 0.0.0.0:9810)" = https://127.0.0.1:9810 ] || fail "url_bauen on 0.0.0.0"
+[ "$(url_bauen off 0.0.0.0:8080)" = http://127.0.0.1:8080 ] || fail "url_bauen off"
+[ "$(url_bauen on '[::]:8443')" = https://127.0.0.1:8443 ] || fail "url_bauen ::"
+[ "$(url_bauen on 10.0.0.5:9810)" = https://10.0.0.5:9810 ] || fail "url_bauen feste Adresse"
+echo "OK: URL-Abbildung"
+
+# Ableitung aus dem laufenden Agent (CI: TLS an, Standard-Bind)
+[ "$( (rolle_waehlen agent; laufende_url) )" = https://127.0.0.1:9810 ] || fail "laufende_url agent"
+echo "OK: URL aus laufendem Container"
