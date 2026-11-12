@@ -226,6 +226,14 @@ jobs:
           python3 -c "import json; s=[x for x in json.load(open('servers.json')) if x['is_local']]; assert len(s)==1 and s[0]['status']=='ok', s; open('local_id','w').write(str(s[0]['id'])); print('OK lokaler Server', s[0]['name'])"
           curl -fsSk -H "Authorization: Bearer $TOKEN" "https://127.0.0.1:8443/api/v1/servers/$(cat local_id)/history?metric=moni_host_memory_usage_percent" > history.json
           python3 -c "import json; n=sum(len(x['points']) for x in json.load(open('history.json'))['series']); assert n>=2, n; print('OK', n, 'Punkte')"
+          # 2.0.1: CLI im laufenden Container läuft in der Manager-Rolle und beschädigt die Datenbank nicht
+          for _ in 1 2 3; do docker compose -f compose.manager.yaml exec -T moni-manager python -m moni.cli user list > /dev/null; sleep 6; done
+          curl -fsSk -H "Authorization: Bearer $TOKEN" https://127.0.0.1:8443/api/v1/servers > /dev/null
+          docker compose -f compose.manager.yaml logs moni-manager > manager-db.log
+          if grep -qE "disk I/O error|database disk image is malformed" manager-db.log; then echo "FAIL: Datenbankfehler nach CLI-Aufrufen"; exit 1; fi
+          # Vorstufe der Beschädigung: ein CLI-Prozess hat -wal/-shm gelöscht, obwohl der Manager die DB offen hält
+          docker compose -f compose.manager.yaml exec -T moni-manager test -e /data/moni.db-shm || { echo "FAIL: moni.db-shm fehlt bei laufendem Manager"; exit 1; }
+          echo "OK CLI neben laufendem Manager"
           # Anmeldung: Setup-Token kommt aus dem Log (D9), Dateien statt Pipes in grep -q (R7)
           docker compose -f compose.manager.yaml logs > manager.log
           SETUP_TOKEN=$(grep -oE 'Setup-Token setup_[A-Za-z0-9_-]+' manager.log | head -n1 | cut -d' ' -f2)

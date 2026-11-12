@@ -48,7 +48,9 @@ def test_changelog_top_section_is_version():
     text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
     sections = re.split(r"(?m)^## \[", text)
     assert sections[1].startswith(f"{V}]")
-    assert "### Breaking Changes" in sections[1] and "/api/metrics" in sections[1]
+    # D1: Der Abschnitt 2.0.0 nennt die Breaking Changes gegenüber 1.x
+    v200 = next(s for s in sections if s.startswith("2.0.0]"))
+    assert "### Breaking Changes" in v200 and "/api/metrics" in v200
 
 
 def test_compose_images_pinned_to_version():
