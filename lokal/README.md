@@ -59,8 +59,11 @@ Status: `manager ps`, `agent ps`. Logs: `manager logs -f moni-manager`. Stoppen 
 Der Manager schreibt beim ersten Start ein einmaliges Setup-Token ins Log:
 
 ```
-manager logs moni-manager | grep -i setup
+manager logs moni-manager | grep -o 'Setup-Token [A-Za-z0-9_-]*' | tail -n1
 ```
+
+Ein einfaches `grep -i setup` träfe auch jede Browser-Anfrage an `/api/v1/setup` im Zugriffslog. Das Token ist ein
+Einmal-Geheimnis: nicht weitergeben, es gilt, bis der erste Admin angelegt ist.
 
 <https://localhost:8443> öffnen. Der Browser warnt, weil das Zertifikat von Monis eigener CA stammt; für den Test
 bestätigen. Setup-Token, E-Mail, Name und Passwort eingeben, dann 2FA mit einer Authenticator-App einrichten und die
@@ -71,7 +74,7 @@ Wiederherstellungscodes sichern.
 Der ungekoppelte Agent schreibt seinen Kopplungscode ins Log:
 
 ```
-agent logs moni-agent | grep moni-pair-v1
+agent logs moni-agent | grep -o 'moni-pair-v1:[A-Za-z0-9_:-]*' | tail -n1
 ```
 
 In der Oberfläche **Verwaltung → Server → Server koppeln**: Name frei wählen, URL `https://moni-agent:9810`, den Code
