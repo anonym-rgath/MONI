@@ -50,7 +50,7 @@ services:
     command:
       - '-listenip=0.0.0.0'
       - '-allowfrom=moni-agent'
-      - '-allowGET=/(v[0-9.]+/)?containers/(json|[a-zA-Z0-9_.-]+/(json|stats))'
+      - '-allowGET=^/(v[0-9.]+/)?containers/(json|[a-zA-Z0-9][a-zA-Z0-9_.-]*/(json|stats))$'
       - '-allowhealthcheck'
       - '-watchdoginterval=60'
       - '-stoponwatchdog'

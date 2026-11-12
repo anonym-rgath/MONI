@@ -10,7 +10,7 @@ COPY frontend/ .
 RUN npm run build
 
 # Agent-Image: nur der Messdienst (kein nginx, kein Frontend)
-FROM python:3.14-slim@sha256:c845af9399020c7e562969a13689e929074a10fd057acd1b1fad06a2fb068e97 AS agent
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS agent
 
 WORKDIR /app
 
@@ -38,7 +38,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["python", "-m", "moni"]
 
 # Manager-Image: nginx (Frontend + /api-Proxy) und Manager-Backend unter supervisord
-FROM python:3.14-slim@sha256:c845af9399020c7e562969a13689e929074a10fd057acd1b1fad06a2fb068e97 AS manager
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS manager
 
 WORKDIR /app
 

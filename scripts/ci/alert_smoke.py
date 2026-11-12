@@ -24,9 +24,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from _moni import Client, expect as _expect, fail as _fail, login_with_recovery, take_recovery
+from _moni import HMAC_SECRET as SECRET, Client, expect as _expect, fail as _fail, login_with_recovery, take_recovery, verify
 
-SECRET = "ci-hmac-geheim-5f2c"  # fester CI-Wert, die CI prüft, dass er nicht im Log steht
 received: list[tuple[dict, bytes]] = []
 got = threading.Event()
 
@@ -51,27 +50,6 @@ class Hook(BaseHTTPRequestHandler):
         pass
 
 
-def verify(headers: dict, body: bytes, now: float | None = None) -> str | None:
-    """Gibt einen Fehlertext zurück, None bei gültiger Anfrage."""
-    h = {k.lower(): v for k, v in headers.items()}
-    try:
-        ts = int(h["x-moni-timestamp"])
-        sig = h["x-moni-signature"]
-    except (KeyError, ValueError):
-        return "Signatur- oder Zeitstempel-Header fehlt"
-    want = "sha256=" + hmac.new(SECRET.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(sig, want):
-        return "HMAC-Signatur ungültig"
-    if abs((time.time() if now is None else now) - ts) > 300:
-        return "Zeitstempel außerhalb von 300 s"
-    try:
-        if json.loads(body).get("event") != "test":
-            return "event != test"
-    except ValueError:
-        return "Body kein JSON"
-    return None
-
-
 def main(base: str, state_file: str, port: int) -> None:
     host = os.environ.get("HOOK_HOST") or fail("Umgebung", "HOOK_HOST fehlt")
     bind = os.environ.get("HOOK_BIND") or host
@@ -94,6 +72,8 @@ def main(base: str, state_file: str, port: int) -> None:
     err = verify(*received[0])
     if err:
         fail("webhook prüfen", err)
+    if json.loads(received[0][1]).get("event") != "test":
+        fail("webhook prüfen", "event != test")
     srv.shutdown()
     print("OK Alarmkanal")
 

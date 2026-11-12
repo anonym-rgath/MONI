@@ -10,7 +10,11 @@
 #   4. Startet compose.manager.yaml (HTTPS) und prueft Health, Admin-Token, lokalen
 #      Server mit Verlauf, Geheimnis-freie Logs und die Container-Haertung.
 #   5. Koppelt den Agent per mTLS mit dem Manager (beide Netze verbunden).
-#   6. Laedt die Oberflaeche per Playwright im echten Browser (CSP, Tastatur, axe).
+#   6. Alarmkanal und E2E-Alarm: Agent stoppen löst "Server nicht erreichbar" echt aus (Webhook
+#      firing), Agent starten löst ihn (resolved), die Kopplung überlebt den Neustart.
+#   7. Lädt die Oberfläche per Playwright im echten Browser (CSP, Tastatur, axe).
+# Beide Images werden nach dem Build mit Trivy geprüft (scripts/ci/trivy.sh, CRITICAL/HIGH mit Fix;
+# Ausnahmen nur in .trivyignore). Alle Actions sind per Commit-SHA gepinnt, Dependabot hält sie aktuell.
 
 name: CI
 
@@ -28,10 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.14"
 
@@ -50,12 +54,12 @@ jobs:
         working-directory: frontend
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -83,16 +87,16 @@ jobs:
       MONI_MANAGER_IMAGE: moni-manager:ci
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Docker-Gruppe des Sockets
         run: echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build agent image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           target: agent
@@ -102,7 +106,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=agent
 
       - name: Build manager image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           target: manager
@@ -111,12 +115,18 @@ jobs:
           cache-from: type=gha,scope=manager
           cache-to: type=gha,mode=max,scope=manager
 
+      - name: Trivy
+        run: |
+          set -euo pipefail
+          scripts/ci/trivy.sh moni-agent:ci
+          scripts/ci/trivy.sh moni-manager:ci
+
       - name: Agent smoke test
         run: |
           set -euo pipefail
           docker compose -f compose.agent.yaml up -d
           ok=0
-          for i in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health > agent-health.json 2>/dev/null && grep -q '"ok"' agent-health.json && { ok=1; break; }; sleep 1; done
+          for _ in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health > agent-health.json 2>/dev/null && grep -q '"ok"' agent-health.json && { ok=1; break; }; sleep 1; done
           [ "$ok" = 1 ] || { echo "FAIL: /api/v1/health nicht erreichbar"; exit 1; }
           test "$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:9810/api/v1/snapshot)" = 401
           TOKEN=$(docker compose -f compose.agent.yaml exec -T moni-agent python -m moni.cli token create --name ci | tail -n1)
@@ -128,7 +138,7 @@ jobs:
           # Erst in Dateien schreiben: grep -q in einer Pipe kann unter pipefail per SIGPIPE falsch auswerten
           curl -fsSk -H "Authorization: Bearer $TOKEN" https://127.0.0.1:9810/metrics > metrics.txt
           grep -q '^moni_docker_up 1' metrics.txt
-          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.agent.yaml ps -q moni-agent))" = "app true [ALL]"
+          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' "$(docker compose -f compose.agent.yaml ps -q moni-agent)")" = "app true [ALL]"
           # Token darf nie im Log stehen (`!` allein würde set -e umgehen)
           docker compose -f compose.agent.yaml logs > smoke.log
           if grep -qF "$TOKEN" smoke.log; then echo "FAIL: Token im Log"; exit 1; fi
@@ -160,6 +170,8 @@ jobs:
               ("GET", f"/containers/{cid}/archive?path=/"): (403,),
               ("POST", f"/containers/{cid}/stop"): (403, 405),
               ("GET", "/images/json"): (403,),
+              ("GET", "/containers/../json"): (403, 404),
+              ("GET", "/containers/json/../../images/json"): (403, 404),
           }
           bad = []
           for (m, p), ok in want.items():
@@ -170,6 +182,20 @@ jobs:
           assert not bad, bad
           print("OK Socket-Proxy sperrt")
           PY
+          # Ein fremder Container im Proxy-Netz (nicht "moni-agent") wird abgewiesen: das Agent-Image dient als Client
+          PROXY_NET=$(docker network ls --filter name=socket-proxy -q | head -n1)
+          test -n "$PROXY_NET"
+          docker run --rm -i --network "$PROXY_NET" --entrypoint python moni-agent:ci - <<'PY'
+          import urllib.error, urllib.request
+          try:
+              r = urllib.request.urlopen("http://docker-socket-proxy:2375/containers/json", timeout=10)
+              raise SystemExit(f"FAIL: fremder Client erhielt HTTP {r.status}")
+          except urllib.error.HTTPError as e:
+              assert e.code == 403, e.code
+          except OSError as e:  # Verbindung abgewiesen oder zurückgesetzt
+              print("Verbindung abgewiesen:", type(e).__name__)
+          print("OK fremder Client abgewiesen")
+          PY
           python3 -c "import json; s=json.load(open('snap.json')); n=sum(c['stats_available'] for c in s['containers']); assert n>0, 'keine Container-Metriken'; print('OK', n, 'Container mit Metriken')"
 
       - name: Betriebsskripte
@@ -178,19 +204,20 @@ jobs:
       - name: Manager smoke test
         env:
           COMPOSE_PROJECT_NAME: moni-manager
+          MONI_COLLECT_INTERVAL: "5"  # nur CI: der E2E-Alarm braucht kurze Takte (Ausfall nach 2 x 5 s)
         run: |
           set -euo pipefail
           MONI_SECRET_KEY=$(docker run --rm moni-manager:ci python -m moni.cli secret generate)
           export MONI_SECRET_KEY
           docker compose -f compose.manager.yaml up -d
           ok=0
-          for i in $(seq 1 60); do curl -fsSk https://127.0.0.1:8443/api/v1/health > health.json 2>/dev/null && grep -q '"ok"' health.json && { ok=1; break; }; sleep 1; done
+          for _ in $(seq 1 60); do curl -fsSk https://127.0.0.1:8443/api/v1/health > health.json 2>/dev/null && grep -q '"ok"' health.json && { ok=1; break; }; sleep 1; done
           [ "$ok" = 1 ] || { echo "FAIL: Manager /api/v1/health nicht erreichbar"; exit 1; }
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 301
           test "$(curl -s -o /dev/null -w '%{redirect_url}' http://127.0.0.1:8080/)" = "https://127.0.0.1:8443/"
           test "$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/v1/servers)" = 401
           TOKEN=$(docker compose -f compose.manager.yaml exec -T moni-manager python -m moni.cli token create --name ci --scope admin | tail -n1)
-          sleep 35   # mindestens zwei Messungen abwarten (Takt 15 s)
+          sleep 15   # mindestens zwei Messungen abwarten (Takt 5 s)
           curl -fsSk -H "Authorization: Bearer $TOKEN" https://127.0.0.1:8443/api/v1/servers > servers.json
           python3 -c "import json; s=[x for x in json.load(open('servers.json')) if x['is_local']]; assert len(s)==1 and s[0]['status']=='ok', s; open('local_id','w').write(str(s[0]['id'])); print('OK lokaler Server', s[0]['name'])"
           curl -fsSk -H "Authorization: Bearer $TOKEN" "https://127.0.0.1:8443/api/v1/servers/$(cat local_id)/history?metric=moni_host_memory_usage_percent" > history.json
@@ -208,9 +235,12 @@ jobs:
           if grep -qF "$TOKEN" manager.log; then echo "FAIL: Token im Log"; exit 1; fi
           if grep -qF "$MONI_SECRET_KEY" manager.log; then echo "FAIL: MONI_SECRET_KEY im Log"; exit 1; fi
           if grep -qF "ci-smoke-Passwort-2026" manager.log; then echo "FAIL: Admin-Passwort im Log"; exit 1; fi
-          if grep -qiF "recovery" manager.log; then echo "FAIL: Wiederherstellungscode im Log"; exit 1; fi
+          # Auf die echten, noch unbenutzten Wiederherstellungscodes prüfen (nicht auf das Wort)
+          while read -r code; do
+            if grep -qF -- "$code" manager.log; then echo "FAIL: Wiederherstellungscode im Log"; exit 1; fi
+          done < "$RUNNER_TEMP/ci-recovery"
           if grep -qF "GEHEIMCODE123" manager.log; then echo "FAIL: OIDC-code im Log"; exit 1; fi
-          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' $(docker compose -f compose.manager.yaml ps -q moni-manager))" = "app true [ALL]"
+          test "$(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' "$(docker compose -f compose.manager.yaml ps -q moni-manager)")" = "app true [ALL]"
 
       - name: Kopplung (mTLS)
         run: |
@@ -233,6 +263,16 @@ jobs:
           # Das Kopplungs-Token wird nach der Kopplung nicht erneut geloggt (Zeilen nach "Agent gekoppelt")
           awk '/Agent gekoppelt/{f=1} f' agent.log > after-pairing.log
           if grep -qF "moni-pair-v1:" after-pairing.log; then echo "FAIL: Kopplungscode nach der Kopplung im Log"; exit 1; fi
+          # Auch nach einem Neustart des gekoppelten Agents wird der Code nicht erneut geloggt (nur neue Logzeilen prüfen)
+          LINES_BEFORE=$(wc -l < agent.log)
+          agent restart moni-agent
+          ok=0
+          for _ in $(seq 1 30); do curl -fsSk https://127.0.0.1:9810/api/v1/health > agent-health.json 2>/dev/null && grep -q '"ok"' agent-health.json && { ok=1; break; }; sleep 1; done
+          [ "$ok" = 1 ] || { echo "FAIL: Agent nach Neustart nicht erreichbar"; exit 1; }
+          agent logs moni-agent > agent.log
+          tail -n +"$((LINES_BEFORE + 1))" agent.log > after-restart.log
+          test -s after-restart.log
+          if grep -qF "moni-pair-v1:" after-restart.log; then echo "FAIL: Kopplungscode nach dem Neustart im Log"; exit 1; fi
           # Das Kopplungs-Token (3. Feld des Codes) darf auch im Manager-Log nicht stehen
           PAIR_TOKEN=$(echo "$CODE" | cut -d: -f3)
           test -n "$PAIR_TOKEN"
@@ -259,10 +299,24 @@ jobs:
           manager logs > manager.log
           if grep -qF "ci-hmac-geheim-5f2c" manager.log; then echo "FAIL: HMAC-Secret im Manager-Log"; exit 1; fi
 
+      - name: E2E Alarm
+        run: |
+          set -euo pipefail
+          # Manager-Stack läuft mit Takt 5 s (Schritt "Manager smoke test"); HOOK_HOST wie im Schritt "Alarmkanal"
+          HOOK_HOST=$(docker network inspect moni-manager_default -f '{{(index .IPAM.Config 0).Gateway}}')
+          test -n "$HOOK_HOST"
+          export HOOK_HOST
+          python3 scripts/ci/e2e_alert.py --selftest
+          python3 scripts/ci/e2e_alert.py https://127.0.0.1:8443 "$RUNNER_TEMP/ci-recovery" 9912 ci-agent \
+            --stop-cmd "docker compose -f compose.agent.yaml stop moni-agent" \
+            --start-cmd "docker compose -f compose.agent.yaml start moni-agent"
+          MONI_SECRET_KEY=ci-platzhalter COMPOSE_PROJECT_NAME=moni-manager docker compose -f compose.manager.yaml logs > manager.log
+          if grep -qF "ci-hmac-geheim-5f2c" manager.log; then echo "FAIL: HMAC-Secret im Manager-Log"; exit 1; fi
+
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24"
+          node-version: "26"
 
       - name: Oberfläche im Browser
         run: |

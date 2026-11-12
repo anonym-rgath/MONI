@@ -29,7 +29,7 @@ def main(base: str, pairing_code: str, agent_url: str, state_file: str) -> None:
     st, server = c.call("POST", "/api/v1/servers", {"name": "ci-agent", "pairing_code": pairing_code, "url": agent_url}, csrf=csrf)
     expect("server koppeln", st, 201)
     sid = server["id"]
-    deadline = time.time() + 60
+    deadline = time.time() + 60  # eigene Frist je Schritt
     while True:
         st, servers = c.call("GET", "/api/v1/servers")
         expect("servers lesen", st, 200)
@@ -39,6 +39,7 @@ def main(base: str, pairing_code: str, agent_url: str, state_file: str) -> None:
         if time.time() > deadline:
             fail("warten auf ok/mtls", f"status={cur and cur.get('status')}, security={cur and cur.get('security')}")
         time.sleep(2)
+    deadline = time.time() + 60
     while True:
         st, hist = c.call("GET", f"/api/v1/servers/{sid}/history?metric=moni_host_memory_usage_percent")
         expect("verlauf lesen", st, 200)

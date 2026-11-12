@@ -18,6 +18,7 @@ import time
 import urllib.error
 import urllib.request
 
+HMAC_SECRET = "ci-hmac-geheim-5f2c"  # fester CI-Wert des Webhook-Kanals, die CI prüft, dass er nicht im Log steht
 PASSWORD = "ci-smoke-Passwort-2026"  # fester CI-Wert, die CI prüft, dass er nicht im Log steht
 EMAIL = "ci-admin@example.org"
 
@@ -99,6 +100,22 @@ def login_with_recovery(c: Client, label: str, recovery_code: str) -> str:
     return sess["csrf_token"]
 
 
+def verify(headers: dict, body: bytes, now: float | None = None) -> str | None:
+    """Prüft HMAC und Zeitstempel eines Webhooks (ohne Moni-Code nachgerechnet). Gibt einen Fehlertext zurück, None bei gültig."""
+    h = {k.lower(): v for k, v in headers.items()}
+    try:
+        ts = int(h["x-moni-timestamp"])
+        sig = h["x-moni-signature"]
+    except (KeyError, ValueError):
+        return "Signatur- oder Zeitstempel-Header fehlt"
+    want = "sha256=" + hmac.new(HMAC_SECRET.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, want):
+        return "HMAC-Signatur ungültig"
+    if abs((time.time() if now is None else now) - ts) > 300:
+        return "Zeitstempel außerhalb von 300 s"
+    return None
+
+
 def take_recovery(path: str) -> str:
     """Nimmt den ersten Wiederherstellungscode aus der Datei (einmal nutzbar) und schreibt den Rest zurück."""
     with open(path) as f:
@@ -112,4 +129,5 @@ def take_recovery(path: str) -> str:
 def write_secret_file(path: str, text: str) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
+        os.fchmod(fd, 0o600)  # auch bei bereits vorhandener Datei mit anderen Rechten
         f.write(text)
