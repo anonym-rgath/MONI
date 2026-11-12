@@ -34,7 +34,7 @@ docker network create moni-lokal
 
 ```
 umask 077
-printf 'MONI_SECRET_KEY=%s\nDOCKER_GID=0\n' "$(docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.0 python -m moni.cli secret generate | tail -n1)" > lokal/.env
+printf 'MONI_SECRET_KEY=%s\nDOCKER_GID=0\n' "$(docker run --rm ghcr.io/anonym-rgath/moni-manager:2.0.1 python -m moni.cli secret generate | tail -n1)" > lokal/.env
 ```
 
 Damit die Befehle kurz bleiben, zwei Hilfsfunktionen für die aktuelle Shell:
