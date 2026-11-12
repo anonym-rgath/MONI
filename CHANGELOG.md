@@ -4,7 +4,7 @@ Das Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die V
 [Semantic Versioning](https://semver.org/lang/de/). Der oberste Abschnitt muss zur Version in
 `backend/moni/__init__.py` passen (`scripts/ci/check_version.py`).
 
-## [2.0.1] – unveröffentlicht
+## [2.0.1] – 2026-11-12
 
 ### Behoben
 
