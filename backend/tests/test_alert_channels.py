@@ -108,6 +108,40 @@ def test_webhook_total_timeout_covers_header_drip(webhook_server):
     assert 1 <= time.monotonic() - t0 <= 3.2
 
 
+def test_webhook_total_timeout_covers_tls_handshake_drip():
+    import socket
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        c, _ = srv.accept()
+        try:
+            c.recv(4096)
+            for b in b"\x16\x03\x03\x00\x40" + b"x" * 5:  # TLS-Satz mit 64 Byte, der nie fertig wird
+                c.send(bytes([b]))
+                if stop.wait(1):
+                    break
+        except OSError:
+            pass
+        finally:
+            c.close()
+
+    th = threading.Thread(target=serve, daemon=True)
+    th.start()
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(SendError) as ei:
+            send_webhook(f"https://127.0.0.1:{srv.getsockname()[1]}/h", {"a": 1}, None, timeout=2)
+        elapsed = time.monotonic() - t0
+    finally:
+        stop.set()
+        th.join(3)
+        srv.close()
+    assert str(ei.value) == "Webhook nicht erreichbar" and 1 <= elapsed <= 3.2
+
+
 def test_webhook_signature_verifiable_independently(webhook_server):
     send_webhook(webhook_server.url, {"a": 1}, "geheim")
     req = webhook_server.requests[0]
@@ -389,3 +423,15 @@ def test_store_drops_secrets_of_other_kind(conn, box):
     assert st.secrets(e.id) == {"password": "PW"}
     st.update(w.id, {"password": "PW2"})
     assert st.secrets(w.id) == {"url": _wh()["url"], "hmac": "H"}
+
+
+def test_connect_budget_expired_tries_no_address(webhook_server):
+    b = ac._Budget()
+    b.expire()
+    port = webhook_server.httpd.server_port
+    with pytest.raises(OSError):  # abgelaufen: kein Verbindungsversuch, auch nicht zur nächsten Adresse
+        ac._connect_tcp(b, ("127.0.0.1", port), 2)
+    assert webhook_server.requests == []
+    live = ac._Budget()
+    ac._connect_tcp(live, ("127.0.0.1", port), 2).close()
+    assert len(live.socks) == 1  # Socket steht vor dem Verbinden im Budget

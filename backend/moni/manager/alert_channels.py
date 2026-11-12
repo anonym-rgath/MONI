@@ -53,11 +53,36 @@ class _Budget:
             pass
 
 
+def _connect_tcp(budget, address, timeout, source_address=None):
+    """Wie socket.create_connection, aber jeder Socket steht vor dem Verbinden im Budget; nach Ablauf kein weiterer Versuch.
+    shortcut: getaddrinfo (DNS) lässt sich nicht abbrechen, die Gesamtfrist gilt erst danach; bei Bedarf Resolver-Timeout."""
+    err = OSError("keine Adresse")
+    for fam, typ, proto, _, sa in socket.getaddrinfo(address[0], address[1], type=socket.SOCK_STREAM):
+        if budget.expired:
+            raise TimeoutError
+        sock = socket.socket(fam, typ, proto)
+        sock.settimeout(timeout)
+        budget.add(sock)  # schon abgelaufen: sofort geschlossen, connect schlägt fehl
+        try:
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sa)
+            return sock
+        except OSError as e:
+            err = e
+            sock.close()
+    raise err
+
+
 def _conn(base, budget):
     class C(base):
         def connect(self):
-            super().connect()
-            budget.add(self.sock)
+            self.sock = _connect_tcp(budget, (self.host, self.port), self.timeout, self.source_address)
+            if base is http.client.HTTPSConnection:  # TLS-Handshake gehört ins Budget; Kontext und Prüfung unverändert
+                self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host,
+                                                      do_handshake_on_connect=False)
+                budget.add(self.sock)
+                self.sock.do_handshake()
     return C
 
 
