@@ -4,6 +4,7 @@ run, drop_rule und prune öffnen keine Transaktion und committen nie: der Aufruf
 Kein Netzwerk; den Versand übernimmt der Notifier aus alert_outbox.
 """
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import replace
@@ -12,6 +13,7 @@ from ..metrics_model import Sample, flatten
 from .alert_eval import Instance, Transition, evaluate, increase, instance_key, values_for
 from .alert_rules import Rule, RuleStore
 
+log = logging.getLogger("moni.manager.alerting")
 _RANK = {"warning": 0, "critical": 1}
 _REMIND_DEFAULT = 240
 _REMIND_MAX = 10080
@@ -32,7 +34,14 @@ def _tx(conn: sqlite3.Connection):
 
 def settings(conn: sqlite3.Connection) -> dict:
     r = conn.execute("SELECT value FROM meta WHERE key='alerting'").fetchone()
-    return {"remind_minutes": json.loads(r[0]).get("remind_minutes", _REMIND_DEFAULT) if r else _REMIND_DEFAULT}
+    try:
+        m = json.loads(r[0]).get("remind_minutes", _REMIND_DEFAULT) if r else _REMIND_DEFAULT
+        if not (isinstance(m, int) and not isinstance(m, bool) and 0 <= m <= _REMIND_MAX):
+            raise ValueError
+    except (ValueError, AttributeError):  # nur per Handarbeit in der DB erreichbar: nicht die Auswertung stoppen
+        log.warning("meta.alerting ist ungültig, Standardwerte werden verwendet")
+        m = _REMIND_DEFAULT
+    return {"remind_minutes": m}
 
 
 def save_settings(conn: sqlite3.Connection, remind_minutes) -> dict:
@@ -108,7 +117,7 @@ def _increase(conn, rule: Rule, server_id: int, now: int) -> dict[str, float]:
     return out
 
 
-def _values(conn, rule: Rule, srv: sqlite3.Row, now: int) -> dict[str, float] | None:
+def _values(conn, rule: Rule, srv: sqlite3.Row, now: int, snaps: dict) -> dict[str, float] | None:
     """D2; None heißt eingefroren."""
     if rule.metric == "moni_server_up":
         if srv["status"] == "unknown":
@@ -118,7 +127,9 @@ def _values(conn, rule: Rule, srv: sqlite3.Row, now: int) -> dict[str, float] | 
         return None
     if rule.func == "increase":
         return _increase(conn, rule, srv["id"], now)
-    return values_for(rule, flatten(json.loads(srv["last_snapshot"])))
+    if srv["id"] not in snaps:  # einmal je Server parsen, nicht je Regel
+        snaps[srv["id"]] = flatten(json.loads(srv["last_snapshot"]))
+    return values_for(rule, snaps[srv["id"]])
 
 
 def _apply(conn, rule: Rule, srv: sqlite3.Row, old: Instance | None, t: Transition, now: int, muted: bool,
@@ -139,8 +150,10 @@ def _apply(conn, rule: Rule, srv: sqlite3.Row, old: Instance | None, t: Transiti
             if event in ("changed", "resolved") and old.fired_at is not None:
                 prior = frozenset(x[0] for x in conn.execute(
                     "SELECT DISTINCT o.channel_id FROM alert_outbox o JOIN alert_events e ON e.id=o.event_id "
-                    "WHERE e.rule_id=? AND e.server_id=? AND e.key=? AND e.ts>=?",
-                    (rule.id, srv["id"], t.key, old.fired_at)))
+                    "WHERE e.rule_id=? AND e.server_id=? AND e.key=? AND e.id >= "
+                    "(SELECT MAX(id) FROM alert_events WHERE rule_id=? AND server_id=? AND key=? AND event='firing' "
+                    "AND id<?)",  # Anker ist die Ereignis-ID: robust gegen rückwärts springende Uhren
+                    (rule.id, srv["id"], t.key, rule.id, srv["id"], t.key, eid)))
             _queue(conn, eid, t.severity, channels, now, prior)
             if inst is not None and inst.state == "firing":
                 inst = replace(inst, last_notified=now)
@@ -164,7 +177,7 @@ def run(conn: sqlite3.Connection, now: int) -> int:
     srvs = conn.execute("SELECT id, name, status, last_snapshot, muted_until FROM servers "
                         "WHERE enabled=1 ORDER BY id").fetchall()
     channels = conn.execute("SELECT id, min_severity FROM alert_channels WHERE enabled=1 ORDER BY id").fetchall()
-    n = 0
+    n, snaps = 0, {}
     current: dict[tuple[int, int], dict[str, Instance]] = {}
     for r in conn.execute(_INSTANCES).fetchall():  # D11
         rule = by_id[r["rule_id"]]
@@ -182,7 +195,7 @@ def run(conn: sqlite3.Connection, now: int) -> int:
                 continue
             cur = current.get((rule.id, srv["id"]), {})
             muted = _muted(srv["muted_until"], now)
-            for t in evaluate(rule, _values(conn, rule, srv, now), cur, now, remind):
+            for t in evaluate(rule, _values(conn, rule, srv, now, snaps), cur, now, remind):
                 n += _apply(conn, rule, srv, cur.get(t.key), t, now, muted, channels)
     return n
 

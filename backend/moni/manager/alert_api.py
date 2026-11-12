@@ -168,7 +168,7 @@ def update_rule(request: Request, rule_id: Id, body: RulePatch, p: Principal = a
         raise HTTPException(422, "Mindestens ein Feld angeben")
     with db.request_conn(request) as conn:
         store = alert_rules.RuleStore(conn)
-        with store._tx():  # Lesen, Auflösen, Ändern und Audit gemeinsam oder gar nicht (P5-R17)
+        with store.transaction():  # Lesen, Auflösen, Ändern und Audit gemeinsam oder gar nicht (P5-R17)
             old = store.get(rule_id)
             if old is None:
                 raise HTTPException(404, "Regel nicht gefunden")
@@ -197,7 +197,7 @@ def update_rule(request: Request, rule_id: Id, body: RulePatch, p: Principal = a
 def delete_rule(request: Request, rule_id: Id, p: Principal = admin):
     with db.request_conn(request) as conn:
         store = alert_rules.RuleStore(conn)
-        with store._tx():  # Verlauf, Löschen und Audit gemeinsam oder gar nicht (P5-R9)
+        with store.transaction():  # Verlauf, Löschen und Audit gemeinsam oder gar nicht (P5-R9)
             old = store.get(rule_id)
             if old is None:
                 raise HTTPException(404, "Regel nicht gefunden")

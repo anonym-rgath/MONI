@@ -34,6 +34,18 @@ def test_migration_seeds_default_rules(conn):
     assert rules["Server nicht erreichbar"].warning is None and rules["Server nicht erreichbar"].metric == "moni_server_up"
     assert rules["Temperatur"].key_labels == ("zone", "id")
     assert rules["Container unhealthy"].critical is None and rules["Container unhealthy"].warning == 1
+    got = {n: (r.metric, r.func, r.window_seconds, r.op, r.warning, r.critical, r.for_seconds, r.key_labels,
+               r.require_prior_ok) for n, r in rules.items()}
+    assert got == {
+        "Server nicht erreichbar": ("moni_server_up", "value", None, "<", None, 1, 0, (), False),
+        "CPU-Auslastung": ("moni_host_cpu_usage_percent", "value", None, ">", 75, 85, 300, (), False),
+        "Arbeitsspeicher": ("moni_host_memory_usage_percent", "value", None, ">", 75, 85, 300, (), False),
+        "Dateisystem voll": ("moni_filesystem_usage_percent", "value", None, ">", 75, 85, 300, ("mountpoint",), False),
+        "Temperatur": ("moni_host_temperature_celsius", "value", None, ">", 65, 75, 120, ("zone", "id"), False),
+        "Container gestoppt": ("moni_container_up", "value", None, "<", None, 1, 60, ("name",), True),
+        "Container unhealthy": ("moni_container_healthy", "value", None, "<", 1, None, 120, ("name",), False),
+        "Restart-Schleife": ("moni_container_restarts", "increase", 600, ">=", None, 3, 0, ("name",), False),
+        "Docker-API nicht erreichbar": ("moni_docker_up", "value", None, "<", None, 1, 60, (), False)}
     assert all(r.enabled and r.server_id is None and r.label_filter == {} for r in rules.values())
 
 
@@ -44,7 +56,9 @@ def test_migration_seeds_default_rules(conn):
     ({"func": "increase", "window_seconds": None}, "Fenster"),
     ({"func": "increase", "window_seconds": 59}, "Fenster"),
     ({"func": "increase", "window_seconds": 86401}, "Fenster"),
-    ({"func": "median"}, "Fenster"),
+    ({"func": "median"}, "Unbekannte Funktion median"),
+    ({"key_labels": ["cpu\n"]}, "Labels"), ({"label_filter": {"cpu\n": "x"}}, "Labels"),
+    ({"label_filter": {k: "x" for k in "abcdef"}}, "Label-Filter"), ({"label_filter": {"a": "x" * 129}}, "Label-Filter"),
     ({"op": "!="}, "Vergleich"),
     ({"op": ">", "warning": 90, "critical": 80}, "Warnschwelle"),
     ({"op": "<", "warning": 1, "critical": 2}, "Warnschwelle"),
@@ -104,3 +118,20 @@ def test_no_commit_inside_foreign_transaction(conn):
     assert conn.in_transaction
     conn.rollback()
     assert len(RuleStore(conn).list()) == 9
+
+
+def test_transaction_is_public_and_commits(conn):
+    with RuleStore(conn).transaction():
+        conn.execute("UPDATE alert_rules SET enabled=0")
+    assert not conn.in_transaction and not any(r.enabled for r in RuleStore(conn).list())
+
+
+def test_non_unique_integrity_error_propagates(conn):
+    st = RuleStore(conn)
+    r = st.create(_data(), 1)
+    conn.execute("CREATE TRIGGER no_ins BEFORE INSERT ON alert_rules BEGIN SELECT RAISE(ABORT, 'kaputt'); END")
+    conn.execute("CREATE TRIGGER no_upd BEFORE UPDATE ON alert_rules BEGIN SELECT RAISE(ABORT, 'kaputt'); END")
+    for call in (lambda: st.create(_data(name="N"), 2), lambda: st.update(r.id, _data(name="M"), 2)):
+        with pytest.raises(sqlite3.IntegrityError, match="kaputt"):  # kein Conflict, wird weitergereicht
+            call()
+    assert not conn.in_transaction

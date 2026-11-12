@@ -56,7 +56,7 @@ def test_cli_rejects_token_argument(env):
 def test_cli_secret_reencrypt(env, capsys):
     assert add(env) == 0
     assert cli.main(["secret", "reencrypt"]) == 0
-    assert capsys.readouterr().out.strip().endswith("1")
+    assert capsys.readouterr().out.splitlines()[-1] == "Neu verschlüsselt: 1"
 
 
 def test_cli_secret_reencrypt_counts_users_and_is_atomic(env, capsys, monkeypatch):

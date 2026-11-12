@@ -380,3 +380,41 @@ def test_prune_retention(db_, servers, server, channel):
     alerting.prune(db_, T)
     assert [e["ts"] for e in events(db_)] == [recent, T]
     assert [o["event_id"] for o in outbox(db_)] == [ids[2]]
+
+
+def test_previous_channels_anchor_event_id(db_, servers, server, channel):
+    # Uhr lief zurück: ein früherer Vorfall hat ein größeres ts, aber eine kleinere Ereignis-ID
+    other = add_channel(db_, "other", "critical")
+    cpu = rule_id(db_, "CPU-Auslastung")
+    for ev, ts in (("firing", T + 5000), ("resolved", T + 5100)):
+        eid = alerting._event(db_, ts, cpu, "CPU-Auslastung", server, "web1", "{}", ev, "critical", 90, 85, None, False)
+        db_.execute("INSERT INTO alert_outbox (event_id, channel_id, status, attempts, next_try, created_at) "
+                    "VALUES (?, ?, 'sent', 1, 0, 0)", (eid, other))
+    set_snapshot(db_, servers, server, cpu=80)
+    alerting.run(db_, T)
+    alerting.run(db_, T + 300)
+    set_snapshot(db_, servers, server, cpu=10, ts=T + 315)
+    alerting.run(db_, T + 315)
+    res = events(db_)[-1]
+    assert res["event"] == "resolved"
+    assert [o["channel_id"] for o in outbox(db_) if o["event_id"] == res["id"]] == [channel]
+
+
+def test_snapshot_parsed_once_per_server(db_, servers, server, channel, monkeypatch):
+    set_snapshot(db_, servers, server, cpu=90)
+    snap = db_.execute("SELECT last_snapshot FROM servers").fetchone()[0]
+    real, calls = json.loads, []
+    monkeypatch.setattr(alerting.json, "loads", lambda s, *a, **k: (calls.append(s), real(s, *a, **k))[1])
+    alerting.run(db_, T)
+    assert len([c for c in calls if c == snap]) == 1  # neun Regeln, ein Server
+
+
+def test_broken_meta_alerting_skips_not_stops(db_, servers, server, channel, caplog):
+    for bad in ("kein json", "[1]", '{"remind_minutes": "x"}'):
+        db_.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('alerting', ?)", (bad,))
+        caplog.clear()
+        assert alerting.settings(db_) == {"remind_minutes": 240}
+        assert "meta.alerting" in caplog.text
+    set_snapshot(db_, servers, server, cpu=90)
+    alerting.run(db_, T)
+    assert alerting.run(db_, T + 300) == 1  # Regeln laufen mit Standardwerten

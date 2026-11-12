@@ -152,6 +152,9 @@ def test_mute_validation_and_audit(admin_client, server_id):
     for bad in (_iso(-timedelta(minutes=1)), _iso(timedelta(days=31)), "2999-01-01T00:00:00", "morgen"):
         assert admin_client.put(url, json={"until": bad}).status_code == 422, bad
     assert admin_client.put(f"{P}/servers/999999/mute", json={"until": _iso(timedelta(hours=1))}).status_code == 404
+    naive = (datetime.now() + timedelta(hours=1)).replace(microsecond=0).isoformat()  # in Reichweite, nur ohne Zone
+    r = admin_client.put(url, json={"until": naive})
+    assert r.status_code == 422 and "Zeitzone" in r.json()["detail"]
     until = _iso(timedelta(hours=2))
     r = admin_client.put(url, json={"until": until})
     assert r.status_code == 200 and r.json()["muted_until"] == until and r.json()["id"] == server_id

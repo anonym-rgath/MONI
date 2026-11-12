@@ -7,7 +7,7 @@ from moni.manager import db
 
 def test_fresh_migrate(tmp_path):
     p = tmp_path / "moni.db"
-    assert db.migrate(p) == 4
+    assert db.migrate(p) == 5
     c = db.connect(p)
     assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -22,30 +22,30 @@ def test_fresh_migrate(tmp_path):
 
 def test_migrate_is_idempotent(tmp_path):
     p = tmp_path / "moni.db"; db.migrate(p)
-    assert db.migrate(p) == 4 and not list(tmp_path.glob("moni.db.bak-*"))
+    assert db.migrate(p) == 5 and not list(tmp_path.glob("moni.db.bak-*"))
 
 
 def _bad_dir(tmp_path, monkeypatch, sql):
     bad = tmp_path / "mig"; bad.mkdir()
     for f in db.MIGRATIONS_DIR.glob("*.sql"):
         (bad / f.name).write_text(f.read_text())
-    (bad / "0005_x.sql").write_text(sql)
+    (bad / "0006_x.sql").write_text(sql)
     monkeypatch.setattr(db, "MIGRATIONS_DIR", bad)
 
 
 def test_backup_before_upgrade_and_failed_migration_keeps_state(tmp_path, monkeypatch):
     p = tmp_path / "moni.db"; db.migrate(p)
     _bad_dir(tmp_path, monkeypatch, "CREATE TABLE x (a INT); SELEC kaputt;")
-    with pytest.raises(RuntimeError, match="Migration 5"):
+    with pytest.raises(RuntimeError, match="Migration 6"):
         db.migrate(p)
     c = db.connect(p)
-    assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert c.execute("PRAGMA user_version").fetchone()[0] == 5
     assert "x" not in {r[0] for r in c.execute("SELECT name FROM sqlite_master")}
     c.close()
-    baks = list(tmp_path.glob("moni.db.bak-v4-*"))
+    baks = list(tmp_path.glob("moni.db.bak-v5-*"))
     assert len(baks) == 1
     b = sqlite3.connect(baks[0])
-    assert b.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert b.execute("PRAGMA user_version").fetchone()[0] == 5
     b.close()
     assert not list(tmp_path.glob("*.tmp"))
 
@@ -54,9 +54,9 @@ def test_crash_loop_creates_only_one_backup(tmp_path, monkeypatch):
     p = tmp_path / "moni.db"; db.migrate(p)
     _bad_dir(tmp_path, monkeypatch, "SELEC kaputt;")
     for _ in range(2):
-        with pytest.raises(RuntimeError, match="Migration 5"):
+        with pytest.raises(RuntimeError, match="Migration 6"):
             db.migrate(p)
-    assert len(list(tmp_path.glob("moni.db.bak-v4-*"))) == 1
+    assert len(list(tmp_path.glob("moni.db.bak-v5-*"))) == 1
 
 
 def test_table_rebuild_migration_keeps_child_rows(tmp_path, monkeypatch):
@@ -70,7 +70,7 @@ def test_table_rebuild_migration_keeps_child_rows(tmp_path, monkeypatch):
              "CREATE TABLE servers_new (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL); "
              "INSERT INTO servers_new SELECT id, name, created_at FROM servers; DROP TABLE servers; "
              "ALTER TABLE servers_new RENAME TO servers;")
-    assert db.migrate(p) == 5
+    assert db.migrate(p) == 6
     c = db.connect(p)
     assert c.execute("SELECT count(*) FROM series").fetchone()[0] == 1
     assert c.execute("SELECT count(*) FROM samples_raw").fetchone()[0] == 1
@@ -83,7 +83,7 @@ def test_foreign_key_violation_rolls_back(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="Fremdschlüssel"):
         db.migrate(p)
     c = db.connect(p)
-    assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert c.execute("PRAGMA user_version").fetchone()[0] == 5
     assert c.execute("SELECT count(*) FROM series").fetchone()[0] == 0
     c.close()
 
@@ -112,12 +112,12 @@ def test_concurrent_migrate_applies_once(tmp_path, monkeypatch):  # Final 3
 
     def racing(current):  # die CLI migriert zwischen Versionsabfrage und Schritt
         monkeypatch.setattr(db, "_pending", real)
-        assert db.migrate(p) == 5
+        assert db.migrate(p) == 6
         return real(current)
 
     monkeypatch.setattr(db, "_pending", racing)
-    assert db.migrate(p) == 5
-    assert len(list(tmp_path.glob("moni.db.bak-v4-*"))) == 1
+    assert db.migrate(p) == 6
+    assert len(list(tmp_path.glob("moni.db.bak-v5-*"))) == 1
 
 
 def test_db_and_backup_files_are_private(tmp_path, monkeypatch):  # Final 11
@@ -128,7 +128,7 @@ def test_db_and_backup_files_are_private(tmp_path, monkeypatch):  # Final 11
         p = tmp_path / "moni.db"; db.migrate(p)
         c = db.connect(p); c.execute("CREATE TABLE IF NOT EXISTS t (a)"); c.commit()
         _bad_dir(tmp_path, monkeypatch, "CREATE TABLE x (a INT);")
-        assert db.migrate(p) == 5
+        assert db.migrate(p) == 6
         modes = {f.name: oct(stat.S_IMODE(f.stat().st_mode))
                  for f in (p, *tmp_path.glob("moni.db-*"), *tmp_path.glob("moni.db.bak-*"))}
         c.close()
@@ -151,9 +151,16 @@ def test_migration_v4_keeps_existing_data(tmp_path, monkeypatch):
     c.execute("INSERT INTO users (email, name, role, kind, created_at) VALUES ('a@b.c', 'A', 'admin', 'local', 0)")
     c.commit(); c.close()
     monkeypatch.setattr(db, "MIGRATIONS_DIR", full)
-    assert db.migrate(p) == 4
+    assert db.migrate(p) == 5
     c = db.connect(p)
     assert c.execute("SELECT name, muted_until FROM servers").fetchall()[0][:] == ("s", None)
     assert c.execute("SELECT count(*) FROM users").fetchone()[0] == 1
     assert c.execute("SELECT count(*) FROM alert_rules").fetchone()[0] == 9
+    c.close()
+
+
+def test_migration_0005_creates_index(tmp_path):
+    p = tmp_path / "moni.db"; db.migrate(p)
+    c = db.connect(p)
+    assert "alert_outbox_event_id" in {r[1] for r in c.execute("PRAGMA index_list(alert_outbox)")}
     c.close()

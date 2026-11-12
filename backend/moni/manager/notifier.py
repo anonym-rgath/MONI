@@ -91,7 +91,7 @@ class Notifier:
             conn.close()
 
     def run_once(self, now: int) -> int:
-        done = 0
+        done, t0 = 0, time.monotonic()
         while self._unsaved:
             try:
                 self._persist(self._unsaved[0], now)
@@ -105,8 +105,8 @@ class Notifier:
             if self._stop.is_set():
                 break  # Rest bleibt pending
             self._send(item, manager_name)
-            try:
-                self._persist(item, now)
+            try:  # Backoff zählt ab dem Versuch dieses Eintrags, nicht ab Batch-Beginn
+                self._persist(item, now + int(time.monotonic() - t0))
             except Exception as e:  # ohne Festhalten nicht weitersenden
                 log.error("Ergebnis der Benachrichtigung nicht gespeichert (%s)", type(e).__name__)
                 if item["error"] is None and item["channel"] is not None:

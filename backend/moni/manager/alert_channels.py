@@ -40,6 +40,8 @@ class SendError(Exception):
 # nie aus der Exception selbst; so kann auch ein künftiger Fehler ohne festen Text nichts preisgeben.
 _SEND_TEXTS = {t: t for t in ("Webhook nicht erreichbar", "SMTP-Anmeldung fehlgeschlagen", "SMTP-Server nicht erreichbar",
                               "SMTP-Server lehnt Nachricht ab", "TLS-Prüfung fehlgeschlagen",
+                              "SMTP-Server unterstützt SMTPUTF8 nicht",
+                              "SMTP-Server bietet keine passende Anmeldemethode an",
                               *(f"Webhook antwortet mit HTTP {n}" for n in range(100, 600)))}
 
 
@@ -143,6 +145,8 @@ class ChannelStore:
     def _build(self, v: dict, sec: dict, old_host: str | None = None) -> tuple:
         """Prüft die zusammengeführten Werte und liefert (name, config, secret_enc, min_severity, enabled)."""
         _check_name(v.get("name"))
+        keep = ("url", "hmac") if v["kind"] == "webhook" else ("password",)
+        sec = {k: x for k, x in sec.items() if k in keep}  # nie Geheimnisse der anderen Kanal-Art speichern
         if v.get("min_severity") not in _SEVERITIES:
             raise ValueError("Mindest-Schwere muss warning oder critical sein")
         if not isinstance(v.get("enabled"), bool):
@@ -273,9 +277,17 @@ def send_webhook(url: str, body: dict, hmac_secret: str | None, timeout: float =
         ts = int(time.time())
         headers.update({"X-Moni-Timestamp": str(ts), "X-Moni-Signature": sign(hmac_secret, ts, raw)})
     err = None
+    deadline = time.monotonic() + timeout  # Gesamtfrist; timeout allein gilt je Socket-Operation
     try:
         with _OPENER.open(urllib.request.Request(url, raw, headers, method="POST"), timeout=timeout) as resp:
-            resp.read(65536)  # Antwort wird nur gelesen und verworfen
+            left = 65536  # Antwort wird nur gelesen und verworfen
+            while left > 0:
+                if time.monotonic() > deadline:
+                    raise TimeoutError
+                chunk = resp.read1(min(left, 4096))
+                if not chunk:
+                    break
+                left -= len(chunk)
     except urllib.error.HTTPError as e:
         err = f"Webhook antwortet mit HTTP {e.code}"
         e.close()
@@ -289,7 +301,7 @@ def send_email(cfg: dict, password: str | None, subject: str, text: str, timeout
     msg = EmailMessage()
     msg["From"], msg["To"] = cfg["from_addr"], ", ".join(cfg["to"])
     msg["Subject"] = " ".join(subject.split())  # keine Zeilenumbrüche im Betreff
-    msg["Date"], msg["Message-ID"] = formatdate(localtime=False), make_msgid()
+    msg["Date"], msg["Message-ID"] = formatdate(localtime=False), make_msgid(domain=cfg["from_addr"].rpartition("@")[2])  # getfqdn() würde bei langsamem DNS blockieren
     msg.set_content(text)
     ctx = ssl.create_default_context()
     err, stage, smtp = None, "connect", None
@@ -314,12 +326,17 @@ def send_email(cfg: dict, password: str | None, subject: str, text: str, timeout
     except ssl.SSLError:
         err = "TLS-Prüfung fehlgeschlagen"
     except smtplib.SMTPNotSupportedError:
-        err = "SMTP-Anmeldung fehlgeschlagen" if stage == "login" else "TLS-Prüfung fehlgeschlagen"
+        err = {"login": "SMTP-Server bietet keine passende Anmeldemethode an",
+               "send": "SMTP-Server unterstützt SMTPUTF8 nicht"}.get(stage, "TLS-Prüfung fehlgeschlagen")
     except smtplib.SMTPAuthenticationError:
         err = "SMTP-Anmeldung fehlgeschlagen"
     except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError):
         err = "SMTP-Server lehnt Nachricht ab"
-    except Exception:  # OSError, Timeout, sonstige SMTPException
+    except smtplib.SMTPServerDisconnected:
+        err = "SMTP-Server nicht erreichbar"
+    except smtplib.SMTPException:  # beim Login: smtplib findet keine passende Methode
+        err = "SMTP-Server bietet keine passende Anmeldemethode an" if stage == "login" else "SMTP-Server nicht erreichbar"
+    except Exception:  # OSError, Timeout
         err = "SMTP-Server nicht erreichbar"
     finally:
         if smtp is not None:

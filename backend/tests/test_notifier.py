@@ -238,3 +238,19 @@ def test_broken_channel_does_not_block_others(conn, settings, box, caplog):
     assert [c[0] for c in calls] == ["gut"]
     assert rows[0]["status"] == "pending" and rows[0]["attempts"] == 1 and rows[0]["last_error"] == "Versand fehlgeschlagen"
     assert rows[1]["status"] == "sent"
+
+
+def test_next_try_per_item(conn, settings, box, monkeypatch):
+    from types import SimpleNamespace
+    add(conn, box)
+    conn.execute("INSERT INTO alert_outbox (event_id, channel_id, next_try, created_at) VALUES (1, 1, 0, 0)")
+    conn.commit()
+    clock = [0.0]
+    monkeypatch.setattr("moni.manager.notifier.time", SimpleNamespace(monotonic=lambda: clock[0], time=lambda: clock[0]))
+
+    def slow_fail(channel, secrets, event, manager_name):
+        clock[0] += 100  # jeder Versuch dauert 100 s
+        raise SendError("Webhook nicht erreichbar")
+
+    Notifier(settings, box, slow_fail).run_once(1000)
+    assert [r[0] for r in conn.execute("SELECT next_try FROM alert_outbox ORDER BY id")] == [1160, 1260]

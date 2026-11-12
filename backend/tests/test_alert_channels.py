@@ -4,6 +4,7 @@ import json
 import smtplib
 import ssl
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 
@@ -43,6 +44,18 @@ class _Server:
                 if b == "slow":
                     threading.Event().wait(2)
                     return
+                if b == "drip":  # Kopf sofort, Rumpf 1 Byte pro Sekunde
+                    self.send_response(200)
+                    self.send_header("Content-Length", "100")
+                    self.end_headers()
+                    try:
+                        for _ in range(8):
+                            self.wfile.write(b"x")
+                            self.wfile.flush()
+                            threading.Event().wait(1)
+                    except OSError:
+                        pass
+                    return
                 if b == "redirect":
                     self.send_response(302)
                     self.send_header("Location", "http://127.0.0.1:1/x")
@@ -67,6 +80,15 @@ def webhook_server():
     yield s
     s.httpd.shutdown()
     s.httpd.server_close()
+
+
+def test_webhook_total_timeout(webhook_server):
+    webhook_server.behaviour = "drip"
+    t0 = time.monotonic()
+    with pytest.raises(SendError) as ei:
+        send_webhook(webhook_server.url, {"a": 1}, None, timeout=2)
+    assert str(ei.value) == "Webhook nicht erreichbar" and ac.error_text(ei.value) == str(ei.value)
+    assert 1 <= time.monotonic() - t0 <= 3.2
 
 
 def test_webhook_signature_verifiable_independently(webhook_server):
@@ -156,10 +178,13 @@ def test_email_tls_uses_smtp_ssl_with_context_and_no_starttls(fake_smtp):
 
 @pytest.mark.parametrize("stage,exc,msg", [
     ("login", smtplib.SMTPAuthenticationError(535, b"GEHEIM"), "SMTP-Anmeldung fehlgeschlagen"),
-    ("login", smtplib.SMTPNotSupportedError("GEHEIM"), "SMTP-Anmeldung fehlgeschlagen"),
+    ("login", smtplib.SMTPNotSupportedError("GEHEIM"), "SMTP-Server bietet keine passende Anmeldemethode an"),
     ("send", smtplib.SMTPRecipientsRefused({"a": (550, b"GEHEIM")}), "SMTP-Server lehnt Nachricht ab"),
     ("send", smtplib.SMTPSenderRefused(550, b"GEHEIM", "x"), "SMTP-Server lehnt Nachricht ab"),
     ("send", smtplib.SMTPDataError(554, b"GEHEIM"), "SMTP-Server lehnt Nachricht ab"),
+    ("login", smtplib.SMTPException("GEHEIM"), "SMTP-Server bietet keine passende Anmeldemethode an"),
+    ("login", smtplib.SMTPServerDisconnected("GEHEIM"), "SMTP-Server nicht erreichbar"),
+    ("send", smtplib.SMTPNotSupportedError("GEHEIM"), "SMTP-Server unterstützt SMTPUTF8 nicht"),
     ("starttls", smtplib.SMTPNotSupportedError("GEHEIM"), "TLS-Prüfung fehlgeschlagen"),
     ("starttls", ssl.SSLCertVerificationError("GEHEIM"), "TLS-Prüfung fehlgeschlagen"),
     ("starttls", ssl.SSLError("GEHEIM"), "TLS-Prüfung fehlgeschlagen"),
@@ -316,7 +341,7 @@ def test_cli_reencrypt_counts_channels(tmp_path, monkeypatch, capsys):
     c = db.connect(tmp_path / "moni.db")
     ChannelStore(c, SecretBox(os.environ["MONI_SECRET_KEY"])).create(_wh(), 1)
     assert cli.main(["secret", "reencrypt"]) == 0
-    assert capsys.readouterr().out.strip().endswith("1")
+    assert capsys.readouterr().out == "Neu verschlüsselt: 1\n"
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -327,3 +352,13 @@ def test_cli_reencrypt_counts_channels(tmp_path, monkeypatch, capsys):
 ])
 def test_error_text_only_from_fixed_list(text, expected):
     assert ac.error_text(SendError(text)) == expected
+
+
+def test_store_drops_secrets_of_other_kind(conn, box):
+    st = ChannelStore(conn, box)
+    w = st.create(_wh(hmac_secret="H", password="PW"), 1)
+    assert st.secrets(w.id) == {"url": _wh()["url"], "hmac": "H"}
+    e = st.create({**_em(), "name": "mail", "password": "PW", "url": "https://x.example.org/", "hmac_secret": "H"}, 1)
+    assert st.secrets(e.id) == {"password": "PW"}
+    st.update(w.id, {"password": "PW2"})
+    assert st.secrets(w.id) == {"url": _wh()["url"], "hmac": "H"}

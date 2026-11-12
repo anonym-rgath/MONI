@@ -10,7 +10,7 @@ from ..auth.users import Conflict
 from ..metrics_model import HELP
 
 KNOWN_METRICS = frozenset(HELP) | {"moni_server_up"}
-_LABEL = re.compile(r"^[a-z_]+$")
+_LABEL = re.compile(r"[a-z_]+")
 _OPS = (">", ">=", "<", "<=")
 
 
@@ -59,7 +59,9 @@ def validate(data: dict) -> dict:
     if op not in _OPS:
         raise ValueError("Vergleich muss >, >=, < oder <= sein")
     func, window = data.get("func", "value"), data.get("window_seconds")
-    if func not in ("value", "increase") or (func == "increase") != (window is not None) \
+    if func not in ("value", "increase"):
+        raise ValueError(f"Unbekannte Funktion {func}" if isinstance(func, str) and len(func) <= 32 else "Unbekannte Funktion")
+    if (func == "increase") != (window is not None) \
             or (window is not None and not (_int(window) and 60 <= window <= 86400)):
         raise ValueError("Fenster nur bei increase (60 bis 86400 Sekunden)")
     warn, crit = data.get("warning"), data.get("critical")
@@ -76,7 +78,9 @@ def validate(data: dict) -> dict:
     if not isinstance(keys, (list, tuple)) or not isinstance(filt, dict):
         raise ValueError("Labels: höchstens 5, nur [a-z_]+")
     keys = list(dict.fromkeys(keys))
-    if len(keys) > 5 or not all(isinstance(k, str) and _LABEL.match(k) for k in (*keys, *filt)) \
+    if len(filt) > 5 or any(isinstance(v, str) and len(v) > 128 for v in filt.values()):
+        raise ValueError("Label-Filter: höchstens 5 Einträge, Werte bis 128 Zeichen")
+    if len(keys) > 5 or not all(isinstance(k, str) and _LABEL.fullmatch(k) for k in (*keys, *filt)) \
             or not all(isinstance(v, str) for v in filt.values()):
         raise ValueError("Labels: höchstens 5, nur [a-z_]+")
     sid = data.get("server_id")
@@ -93,7 +97,7 @@ class RuleStore:
         self._conn = conn
 
     @contextmanager
-    def _tx(self):
+    def transaction(self):
         """Committet nur, wenn die Transaktion hier begonnen wurde; sonst entscheidet der Aufrufer."""
         if self._conn.in_transaction:
             yield
@@ -126,7 +130,7 @@ class RuleStore:
         v = validate(data)
         dup = False
         try:
-            with self._tx():
+            with self.transaction():
                 self._check_server(v["server_id"])
                 cur = self._conn.execute(
                     "INSERT INTO alert_rules (name, metric, func, window_seconds, op, warning, critical, for_seconds, "
@@ -144,7 +148,7 @@ class RuleStore:
         v = validate(data)
         dup = False
         try:
-            with self._tx():
+            with self.transaction():
                 self._check_server(v["server_id"])
                 cur = self._conn.execute(f"UPDATE alert_rules SET {self._COLS}, updated_at=? WHERE id=?",
                                          (*self._values(v), now, rule_id))
@@ -157,5 +161,5 @@ class RuleStore:
         return self.get(rule_id) if cur.rowcount else None
 
     def delete(self, rule_id: int) -> bool:
-        with self._tx():
+        with self.transaction():
             return self._conn.execute("DELETE FROM alert_rules WHERE id=?", (rule_id,)).rowcount > 0
