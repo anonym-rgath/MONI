@@ -50,6 +50,7 @@ def _parser() -> argparse.ArgumentParser:
     rp.add_argument("--password-file", required=True, help="Datei mit dem neuen Passwort, '-' für stdin")
     u.add_parser("reset-2fa").add_argument("email")
     u.add_parser("unlock").add_argument("email")
+    g.add_parser("openapi").add_argument("--role", choices=["agent", "manager"], required=True)
     g.add_parser("tls").add_subparsers(dest="cmd", required=True).add_parser("init")
     pr = g.add_parser("pair").add_subparsers(dest="cmd", required=True)
     pr.add_parser("code")
@@ -224,10 +225,31 @@ def _pair(args) -> int:
     return 0
 
 
+def openapi_json(role: str) -> str:
+    """OpenAPI-Spezifikation der Rolle (D8): ohne Lifespan, ohne Netz, Daten nur in einem Wegwerfverzeichnis."""
+    import json
+    import logging
+    import tempfile
+    from types import SimpleNamespace
+
+    from .app import create_app
+
+    logging.disable(logging.CRITICAL)  # create_app loggt sonst einen Setup-Token nach stderr
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {"MONI_ROLE": role, "MONI_DATA_DIR": tmp, "MONI_TLS": "on" if role == "agent" else "off",
+               "MONI_SECRET_KEY": generate_key()}
+        # Agent mit TLS, damit die Kopplungsrouten im Dokument stehen; die Attrappe ersetzt Zertifikate
+        app = create_app(Settings.from_env(env), tls_state=SimpleNamespace(paired=True) if role == "agent" else None)
+        return json.dumps(app.openapi(), sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.group == "secret" and args.cmd == "generate":  # braucht weder Konfiguration noch Datenverzeichnis
         print(generate_key())
+        return 0
+    if args.group == "openapi":
+        sys.stdout.write(openapi_json(args.role))
         return 0
     if args.group in ("server", "secret", "user", "tls"):
         return _manager(args)
