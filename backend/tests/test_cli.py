@@ -362,7 +362,7 @@ def test_argon2_outside_write_lock(env, monkeypatch):
     assert order == ["hash", "begin"]
 
 
-@pytest.mark.parametrize("exc", [sqlite3.OperationalError("locked"), OSError("disk"), ValueError("kaputt")])
+@pytest.mark.parametrize("exc", [sqlite3.OperationalError("locked"), OSError("disk"), RuntimeError("x"), ValueError("kaputt")])
 def test_token_create_audit_failure_any_error_no_orphan(env, monkeypatch, capsys, exc):
     def boom(*a, **k):
         raise exc

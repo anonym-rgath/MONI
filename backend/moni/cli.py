@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             tok, plain = store.create(args.name, args.scope, expires_at=exp)
             try:
                 _cli_audit(settings, "token.created", tok.id, {"scope": tok.scope})
-            except (sqlite3.Error, OSError, ValueError):  # kein Token ohne Audit: sonst bliebe ein verwaister, nie angezeigter Token gültig
+            except (sqlite3.Error, OSError, RuntimeError, ValueError):  # kein Token ohne Audit: sonst bliebe ein verwaister, nie angezeigter Token gültig
                 try:
                     store.revoke(tok.id)
                 except (OSError, RuntimeError, ValueError):

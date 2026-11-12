@@ -502,4 +502,5 @@ def test_string_limit_1024_boundary(mgr_client, mgr_app, make_user, login_cookie
     ok = mgr_client.post(url, json={"current_password": "x" * 1024, "new_password": NEW_PW}, headers=h)
     assert ok.status_code == 401  # Schema nimmt 1024 an, der Faktor ist falsch
     assert mgr_client.post(url, json={"current_password": "x" * 1025, "new_password": NEW_PW}, headers=h).status_code == 422
-    assert mgr_client.post(url, json={"current_password": TEST_PASSWORD, "new_password": "x" * 1025}, headers=h).status_code == 422
+    r = mgr_client.post(url, json={"current_password": TEST_PASSWORD, "new_password": "x" * 1025}, headers=h)
+    assert (r.status_code, r.json()["detail"]) == (422, "Ungültige oder fehlende Parameter: new_password")  # Schema, nicht die 256er-Passwortregel
