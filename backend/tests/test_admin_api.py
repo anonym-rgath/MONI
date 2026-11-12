@@ -248,3 +248,18 @@ def test_server_changes_are_audited(mgr_app, admin_client, csrf):
     sid = c.post("/api/v1/servers", json=body, headers=h).json()["id"]
     c.delete(f"/api/v1/servers/{sid}", headers=h)
     assert {e["actor"] for e in _audit(mgr_app)[:2]} == {f"token:{tok.id}"}
+
+
+def test_password_reset_hashes_before_write_lock(mgr_app, admin_client, csrf, make_user, monkeypatch):
+    from moni.auth import passwords
+    u = make_user("viewer")
+    order, real_connect, real_hash = [], db.connect, passwords.hash_password
+
+    def connect(*a, **k):
+        conn = real_connect(*a, **k)
+        conn.set_trace_callback(lambda sql: order.append("begin") if sql.startswith("BEGIN IMMEDIATE") else None)
+        return conn
+    monkeypatch.setattr(db, "connect", connect)
+    monkeypatch.setattr(passwords, "hash_password", lambda p: (order.append("hash"), real_hash(p))[1])
+    assert admin_client.post(f"/api/v1/users/{u.id}/password", json={"password": "Ein-ganz-neues-Passwort"}, headers=csrf).status_code == 204
+    assert order.index("hash") < order.index("begin")

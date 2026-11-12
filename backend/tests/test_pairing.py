@@ -382,3 +382,14 @@ def test_pairing_total_deadline(agent_tls_server, manager_pki, monkeypatch):
     with pytest.raises(PairingError) as e:
         pairing.pair(agent_tls_server.url, agent_tls_server.code, manager_pki, NOW, 1)
     assert e.value.status == 504
+
+
+def test_agent_token_404_via_status(api, agent_tls_server, monkeypatch):
+    from moni.manager.poller import AgentClient, AgentError
+    sid = _pair_via_api(api, agent_tls_server)
+
+    def gone(self, path):
+        raise AgentError("beliebiger Text", status=404)
+    monkeypatch.setattr(AgentClient, "delete", gone)
+    r = api.delete(f"/api/v1/servers/{sid}/agent-tokens/0000abcd")
+    assert (r.status_code, r.json()["detail"]) == (404, "Agent-Token nicht gefunden")

@@ -1,13 +1,13 @@
 import io
-import sqlite3
 import os
+import sqlite3
+
 import pytest
 from moni import cli
 from moni.auth.tokens import TokenStore
 from moni.auth.users import UserStore
-from moni.secretbox import SecretBox
 from moni.manager import db
-from moni.secretbox import generate_key
+from moni.secretbox import SecretBox, generate_key
 
 
 @pytest.fixture
@@ -60,7 +60,6 @@ def test_cli_secret_reencrypt(env, capsys):
 
 
 def test_cli_secret_reencrypt_counts_users_and_is_atomic(env, capsys, monkeypatch):
-    import os
     from moni.auth.users import UserStore
     from moni.manager.servers import ServerStore
     from moni.secretbox import SecretBox
@@ -172,7 +171,6 @@ def test_cli_reset_password_from_stdin(env, capsys, monkeypatch):
 
 @pytest.mark.parametrize("cmd", [["reset-2fa"], ["reset-password", "--password-file", "-"]])
 def test_cli_credential_change_and_session_end_are_atomic(env, monkeypatch, cmd):
-    import sqlite3
     import time
     from moni.auth.sessions import SessionStore
     from moni.config import Settings
@@ -327,3 +325,38 @@ def test_reencrypt_db_error_aborts_tls_files(env, monkeypatch, capsys):
     with pytest.raises(sqlite3.OperationalError):
         cli.main(["secret", "reencrypt"])
     assert calls == ["abort"] and not list((env / "tls").glob("*.tmp"))
+
+
+def test_token_create_audit_failure_no_orphan(env, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr("moni.auth.audit.record", boom)
+    assert cli.main(["token", "create", "--name", "g"]) == 1
+    cap = capsys.readouterr()
+    assert "Traceback" not in cap.err and cap.err.startswith("Fehler: ") and "moni_" not in cap.out + cap.err
+    assert TokenStore(env / "tokens.json").list() == []
+
+
+def test_user_group_refused_in_agent_role(env, monkeypatch, capsys):
+    monkeypatch.setenv("MONI_ROLE", "agent")
+    assert cli.main(["user", "list"]) == 2
+    assert "nur in der Manager-Rolle" in capsys.readouterr().err
+    assert not (env / "moni.db").exists()
+
+
+def test_argon2_outside_write_lock(env, monkeypatch):
+    _mk_user(env)
+    order = []
+    real = db.connect
+
+    def connect(*a, **k):
+        conn = real(*a, **k)
+        conn.set_trace_callback(lambda sql: order.append("begin") if sql.startswith("BEGIN IMMEDIATE") else None)
+        return conn
+    monkeypatch.setattr(db, "connect", connect)
+    real_hash = cli.UserStore.prepare_password
+    monkeypatch.setattr(cli.UserStore, "prepare_password",
+                        lambda self, *a: (order.append("hash"), real_hash(self, *a))[1])
+    monkeypatch.setattr("sys.stdin", io.StringIO("Ein-ganz-neues-Passwort\n"))
+    assert cli.main(["user", "reset-password", "a@b.de", "--password-file", "-"]) == 0
+    assert order == ["hash", "begin"]

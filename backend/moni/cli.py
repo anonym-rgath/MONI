@@ -1,4 +1,5 @@
 import argparse
+import sqlite3
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -66,8 +67,6 @@ _ACTOR = "cli"
 
 
 def _user(args, settings: Settings, conn, box) -> int:
-    if settings.role != "manager":
-        raise ValueError("Benutzer gibt es nur in der Manager-Rolle")
     users = UserStore(conn, box)
     if args.cmd == "list":
         for u in users.list():
@@ -79,18 +78,19 @@ def _user(args, settings: Settings, conn, box) -> int:
         return 1
     if args.cmd != "unlock" and user.kind != "local":
         raise ValueError("Nur für lokale Konten möglich")
-    if args.cmd == "reset-password":  # vor der Transaktion lesen: stdin darf die Schreibsperre nicht halten
+    if args.cmd == "reset-password":  # vor der Transaktion lesen und hashen: stdin und Argon2 dürfen die Schreibsperre nicht halten
         try:
             pw = _read_token(args.password_file)
         except (OSError, UnicodeDecodeError):
             raise ValueError("Passwort-Datei nicht lesbar") from None
+        pw_hash = users.prepare_password(user.id, pw)  # Regeltexte nennen nie das Passwort
     with users._tx(immediate=True):  # Änderung, Sessions und Audit gemeinsam oder gar nicht
         if args.cmd == "unlock":
             users.unlock(user.id)
             action = "user.unlocked"
         else:
             if args.cmd == "reset-password":
-                users.set_password(user.id, pw)  # Regeltexte nennen nie das Passwort
+                users.store_password(user.id, pw_hash)
                 action = "password.reset"
             else:
                 users.reset_totp(user.id)
@@ -130,6 +130,8 @@ def _manager(args) -> int:
         s = Settings.from_env()
         if not s.secret_key:
             raise ValueError("MONI_SECRET_KEY fehlt – erzeugen mit: python -m moni.cli secret generate")
+        if args.group == "user" and s.role != "manager":  # vor db.migrate: sonst entsteht in der Agent-Rolle eine moni.db
+            raise ValueError("Benutzer gibt es nur in der Manager-Rolle")
         db.migrate(s.db_path)
         conn = db.connect(s.db_path)
         try:
@@ -240,7 +242,12 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             exp = utcnow() + timedelta(days=args.expires_days) if args.expires_days is not None else None
             tok, plain = store.create(args.name, args.scope, expires_at=exp)
-            _cli_audit(settings, "token.created", tok.id, {"scope": tok.scope})
+            try:
+                _cli_audit(settings, "token.created", tok.id, {"scope": tok.scope})
+            except sqlite3.Error:  # kein Token ohne Audit: sonst bliebe ein verwaister, nie angezeigter Token gültig
+                store.revoke(tok.id)
+                print("Fehler: Audit-Eintrag nicht möglich, der Token wurde nicht angelegt.", file=sys.stderr)
+                return 1
             print("Token wird nur jetzt angezeigt.")
             print(plain)
         elif args.cmd == "list":
@@ -250,8 +257,12 @@ def main(argv: list[str] | None = None) -> int:
             if not store.revoke(args.id):
                 print(f"Kein Token mit der ID {args.id}.", file=sys.stderr)
                 return 1
-            _cli_audit(settings, "token.revoked", args.id)
             print(f"Token {args.id} widerrufen.")
+            try:
+                _cli_audit(settings, "token.revoked", args.id)
+            except sqlite3.Error:
+                print("Fehler: Der Token ist widerrufen, der Audit-Eintrag fehlt aber.", file=sys.stderr)
+                return 1
     except (OSError, RuntimeError, ValueError) as e:
         print(f"Fehler: Token-Datei oder Konfiguration nicht nutzbar ({e}). Ist das Datenverzeichnis vorhanden und beschreibbar?", file=sys.stderr)
         return 2

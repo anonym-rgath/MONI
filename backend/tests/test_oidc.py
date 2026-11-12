@@ -861,3 +861,24 @@ def test_reencrypt_covers_all_providers(tmp_path, monkeypatch, capsys):
         assert oidc.load_provider(conn, SecretBox(new), "google")["public_url"] == PUBLIC
     finally:
         conn.close()
+
+
+def test_oidc_discovery_failure_cached(monkeypatch):
+    oidc.reset_caches()
+    calls = []
+
+    def down(method, url, *a, **k):
+        calls.append(url)
+        raise oidc.OidcError("OIDC-Anbieter nicht erreichbar")
+    monkeypatch.setattr(oidc, "_http", down)
+    for t in (1000, 1005, 1029):
+        with pytest.raises(oidc.OidcError):
+            oidc._discover(GOOGLE, t)
+    assert len(calls) == 1  # innerhalb von 30 s nur ein Netzaufruf
+    with pytest.raises(oidc.OidcError):
+        oidc._discover(GOOGLE, 1031)
+    assert len(calls) == 2
+    with pytest.raises(oidc.OidcError):
+        oidc._discover(GOOGLE, 1032, fresh=True)  # PUT des Anbieters prüft immer frisch
+    assert len(calls) == 3
+    oidc.reset_caches()

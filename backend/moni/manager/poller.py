@@ -41,10 +41,11 @@ _HTTPS_EVERY = 86400  # HTTPS-Zertifikat des Managers einmal täglich prüfen (D
 class AgentError(Exception):
     """Fehler beim Abruf. `message` ist ein fester deutscher Text ohne Geheimnisse, URLs oder Antwortinhalte."""
 
-    def __init__(self, message: str, fatal: bool = False):
+    def __init__(self, message: str, fatal: bool = False, status: int | None = None):
         super().__init__(message)
         self.message = message
         self.fatal = fatal
+        self.status = status  # HTTP-Status der Agent-Antwort, sonst None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -111,8 +112,8 @@ class AgentClient:
                         raise TimeoutError
         except urllib.error.HTTPError as e:
             e.close()
-            err = AgentError("Agent lehnt Token ab", fatal=True) if e.code in (401, 403) else \
-                AgentError(f"Agent antwortet mit HTTP {e.code}")
+            err = AgentError("Agent lehnt Token ab", fatal=True, status=e.code) if e.code in (401, 403) else \
+                AgentError(f"Agent antwortet mit HTTP {e.code}", status=e.code)
         except ssl.SSLError as e:  # auch beim Lesen, z. B. wenn der Agent das Client-Zertifikat ablehnt (TLS 1.3)
             err = _ssl_error(e)
         except urllib.error.URLError as e:

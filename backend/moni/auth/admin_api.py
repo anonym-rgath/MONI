@@ -136,11 +136,12 @@ def reset_password(request: Request, user_id: UserId, body: PasswordBody, p: Pri
         users = UserStore(conn, request.app.state.box)
         u = _need(users, user_id)
         _local(u)
+        try:
+            pw_hash = users.prepare_password(user_id, body.password)  # vor dem Schreib-Lock
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
         with users._tx(immediate=True):  # Passwort, Sessions und Audit gemeinsam oder gar nicht
-            try:
-                users.set_password(user_id, body.password)
-            except ValueError as e:
-                raise HTTPException(422, str(e)) from None
+            users.store_password(user_id, pw_hash)
             SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
             audit.record(conn, p.actor, "password.reset", target=u.email, ip=client_ip(request))
     return Response(status_code=204)

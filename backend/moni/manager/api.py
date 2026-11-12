@@ -304,8 +304,8 @@ def revoke_agent_token(request: Request, server_id: ServerId, token_id: AgentTok
     try:
         client.delete(f"/api/v1/tokens/{token_id}")
     except AgentError as e:  # Text des Agents bleibt intern
-        failed = e.message
-    if failed == "Agent antwortet mit HTTP 404":
+        failed = e
+    if failed and failed.status == 404:
         raise HTTPException(404, "Agent-Token nicht gefunden")
     if failed:
         raise HTTPException(502, _UNREACHABLE)

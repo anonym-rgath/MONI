@@ -129,19 +129,31 @@ def _basic(client_id: str, client_secret: str) -> str:
 
 _cache: dict[str, tuple[float, dict]] = {}  # URL -> (abgerufen, Antwort); Discovery und JWKS
 _cache_lock = threading.Lock()
+_FAIL_SECONDS = 30
+_failed: dict[str, tuple[float, str]] = {}  # URL -> (Zeitpunkt, Meldung): ein Ausfall wird kurz gemerkt, nicht bei jedem Login neu abgefragt
 
 
 def reset_caches() -> None:
     with _cache_lock:
         _cache.clear()
+        _failed.clear()
 
 
 def _fetch(url: str, now: float, fresh: bool = False) -> dict:
     with _cache_lock:
-        hit = _cache.get(url)
+        hit, bad = _cache.get(url), _failed.get(url)
     if hit and not fresh and 0 <= now - hit[0] < _CACHE_SECONDS:
         return hit[1]
-    data = _http("GET", url)
+    if bad and not fresh and 0 <= now - bad[0] < _FAIL_SECONDS:
+        raise OidcError(bad[1])
+    try:
+        data = _http("GET", url)
+    except OidcError as e:
+        with _cache_lock:
+            _failed[url] = (now, str(e))
+        raise
+    with _cache_lock:
+        _failed.pop(url, None)
     with _cache_lock:
         _cache[url] = (now, data)
     return data

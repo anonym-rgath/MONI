@@ -158,23 +158,26 @@ class UserStore:
             self._conn.execute("DELETE FROM users WHERE id=?", (user_id,))
             return True
 
-    def set_password(self, user_id: int, password: str) -> None:
+    def prepare_password(self, user_id: int, password: str) -> str:
+        """Prüft und hasht (Argon2 ist teuer): vor dem Schreib-Lock aufrufen, Ergebnis an `store_password` geben."""
         r = self._need(user_id)
         if r["kind"] != "local":
             raise ValueError("OIDC-Konten haben kein Passwort")
         passwords.check_policy(password, r["email"])
-        h = passwords.hash_password(password)
+        return passwords.hash_password(password)
+
+    def store_password(self, user_id: int, pw_hash: str) -> None:
         with self._tx():
-            self._conn.execute("UPDATE users SET password_hash=? WHERE id=?", (h, user_id))
+            self._conn.execute("UPDATE users SET password_hash=? WHERE id=?", (pw_hash, user_id))
+
+    def set_password(self, user_id: int, password: str) -> None:
+        self.store_password(user_id, self.prepare_password(user_id, password))
 
     def check_password(self, user_id: int, password: str) -> bool:
         r = self._row(user_id)
         if r is None or r["password_hash"] is None:
             return False
-        try:
-            return passwords.verify_password(password, r["password_hash"])
-        except (UnicodeEncodeError, AttributeError):  # Surrogate aus JSON; Text der Exception würde Zeichen verraten
-            return False
+        return passwords.verify_password(password, r["password_hash"])  # wirft nie, auch nicht bei Surrogaten
 
     @staticmethod
     def is_locked(user: User, now: int) -> bool:

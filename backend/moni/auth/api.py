@@ -285,11 +285,12 @@ def change_password(request: Request, body: PasswordBody, principal: Principal =
         users = UserStore(conn, request.app.state.box)
         _check_factor(request, conn, user, principal.session, now, "password.failure",
                       lambda: users.check_password(user.id, body.current_password))
+        try:
+            pw_hash = users.prepare_password(user.id, body.new_password)  # vor dem Schreib-Lock
+        except ValueError as e:  # Regeltexte nennen nie das Passwort
+            raise HTTPException(422, str(e)) from None
         with users._tx(immediate=True):  # Passwort, Sessions und Audit gemeinsam oder gar nicht
-            try:
-                users.set_password(user.id, body.new_password)
-            except ValueError as e:  # Regeltexte nennen nie das Passwort
-                raise HTTPException(422, str(e)) from None
+            users.store_password(user.id, pw_hash)
             SessionStore(conn, request.app.state.settings).delete_for_user(user.id, keep=principal.session.id_hash)
             audit.record(conn, _actor(user), "password.changed", target=user.email, ip=client_ip(request), now=now)
     return Response(status_code=204)
