@@ -1,11 +1,14 @@
 """Benachrichtigungskanäle (Webhook, E-Mail): Speicher und Versand. Geheimnisse liegen nur verschlüsselt in der DB."""
 import hashlib
 import hmac
+import http.client
 import json
 import logging
 import smtplib
+import socket
 import sqlite3
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -25,7 +28,50 @@ from .servers import _check_name, _visible_ascii
 log = logging.getLogger("moni.manager.alert_channels")
 
 # Kein Proxy aus der Umgebung, keine Weiterleitungen (P2-R6): die URL kann ein Token enthalten
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+class _Budget:
+    """Sockets einer Anfrage; läuft die Gesamtfrist ab, werden sie geschlossen und blockierte Lesevorgänge enden."""
+    def __init__(self):
+        self.socks, self.expired, self._lock = [], False, threading.Lock()
+
+    def add(self, sock) -> None:
+        with self._lock:
+            self.socks.append(sock)
+            if self.expired:
+                self._kill(sock)
+
+    def expire(self) -> None:
+        with self._lock:
+            self.expired = True
+            for s in self.socks:
+                self._kill(s)
+
+    @staticmethod
+    def _kill(sock) -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _conn(base, budget):
+    class C(base):
+        def connect(self):
+            super().connect()
+            budget.add(self.sock)
+    return C
+
+
+class _HTTP(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_conn(http.client.HTTPConnection, req.budget), req)
+
+
+class _HTTPS(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_conn(http.client.HTTPSConnection, req.budget), req, context=self._context)
+
+
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect, _HTTP, _HTTPS)
 _SEVERITIES = ("warning", "critical")
 _SEV_TAG = {"warning": "[WARNUNG]", "critical": "[KRITISCH]"}
 _EVENT_WORD = {"firing": "ausgelöst", "resolved": "behoben", "changed": "Schwere geändert",
@@ -277,22 +323,29 @@ def send_webhook(url: str, body: dict, hmac_secret: str | None, timeout: float =
         ts = int(time.time())
         headers.update({"X-Moni-Timestamp": str(ts), "X-Moni-Signature": sign(hmac_secret, ts, raw)})
     err = None
-    deadline = time.monotonic() + timeout  # Gesamtfrist; timeout allein gilt je Socket-Operation
+    budget = _Budget()  # Gesamtfrist für Verbindung, Köpfe und Rumpf; timeout allein gilt je Socket-Operation
+    timer = threading.Timer(timeout, budget.expire)
+    timer.daemon = True
+    timer.start()
     try:
-        with _OPENER.open(urllib.request.Request(url, raw, headers, method="POST"), timeout=timeout) as resp:
+        req = urllib.request.Request(url, raw, headers, method="POST")
+        req.budget = budget
+        with _OPENER.open(req, timeout=timeout) as resp:
             left = 65536  # Antwort wird nur gelesen und verworfen
             while left > 0:
-                if time.monotonic() > deadline:
-                    raise TimeoutError
                 chunk = resp.read1(min(left, 4096))
                 if not chunk:
                     break
                 left -= len(chunk)
+            if budget.expired:  # abgebrochener Rumpf zählt nicht als Erfolg
+                raise TimeoutError
     except urllib.error.HTTPError as e:
         err = f"Webhook antwortet mit HTTP {e.code}"
         e.close()
     except Exception:  # URLError, Timeout, Verbindungsabbruch, ungültige Antwort
         err = "Webhook nicht erreichbar"
+    finally:
+        timer.cancel()
     if err:
         raise SendError(err)  # außerhalb von except: kein __context__ mit URL oder Antwort
 
@@ -301,15 +354,16 @@ def send_email(cfg: dict, password: str | None, subject: str, text: str, timeout
     msg = EmailMessage()
     msg["From"], msg["To"] = cfg["from_addr"], ", ".join(cfg["to"])
     msg["Subject"] = " ".join(subject.split())  # keine Zeilenumbrüche im Betreff
-    msg["Date"], msg["Message-ID"] = formatdate(localtime=False), make_msgid(domain=cfg["from_addr"].rpartition("@")[2])  # getfqdn() würde bei langsamem DNS blockieren
+    msg["Date"], msg["Message-ID"] = formatdate(localtime=False), make_msgid(domain=cfg["from_addr"].rpartition("@")[2])
     msg.set_content(text)
     ctx = ssl.create_default_context()
+    local = cfg["from_addr"].rpartition("@")[2]  # sonst ruft smtplib getfqdn() auf, das bei langsamem DNS blockiert
     err, stage, smtp = None, "connect", None
     try:
         if cfg["security"] == "tls":
-            smtp = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=timeout, context=ctx)
+            smtp = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=timeout, context=ctx, local_hostname=local)
         else:
-            smtp = smtplib.SMTP(cfg["host"], cfg["port"], timeout=timeout)
+            smtp = smtplib.SMTP(cfg["host"], cfg["port"], timeout=timeout, local_hostname=local)
             stage = "starttls"  # nie Klartext: fehlt STARTTLS, bricht der Versand ab
             smtp.ehlo()
             smtp.starttls(context=ctx)

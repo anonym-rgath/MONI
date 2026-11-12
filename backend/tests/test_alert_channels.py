@@ -56,6 +56,14 @@ class _Server:
                     except OSError:
                         pass
                     return
+                if b == "headdrip":  # Statuszeile Byte für Byte, 1 Byte pro Sekunde
+                    try:
+                        for c in b"HTTP/1.0 200 OK\r\n\r\n":
+                            self.wfile.write(bytes([c]))
+                            threading.Event().wait(1)
+                    except OSError:
+                        pass
+                    return
                 if b == "redirect":
                     self.send_response(302)
                     self.send_header("Location", "http://127.0.0.1:1/x")
@@ -84,6 +92,15 @@ def webhook_server():
 
 def test_webhook_total_timeout(webhook_server):
     webhook_server.behaviour = "drip"
+    t0 = time.monotonic()
+    with pytest.raises(SendError) as ei:
+        send_webhook(webhook_server.url, {"a": 1}, None, timeout=2)
+    assert str(ei.value) == "Webhook nicht erreichbar" and ac.error_text(ei.value) == str(ei.value)
+    assert 1 <= time.monotonic() - t0 <= 3.2
+
+
+def test_webhook_total_timeout_covers_header_drip(webhook_server):
+    webhook_server.behaviour = "headdrip"
     t0 = time.monotonic()
     with pytest.raises(SendError) as ei:
         send_webhook(webhook_server.url, {"a": 1}, None, timeout=2)
@@ -169,6 +186,16 @@ def test_email_starttls_before_login_and_cert_checked(fake_smtp):
     msg = next(c for c in FakeSMTP.calls if c[0] == "send")[1][0]
     assert "\n" not in msg["Subject"] and msg["Bcc"] is None
     assert msg["To"] == "a@example.org, b@example.org" and msg.get_content().strip() == "Text"
+
+
+def test_email_never_calls_getfqdn_and_sets_local_hostname(fake_smtp, monkeypatch):
+    def boom(*a):
+        raise AssertionError("getfqdn blockiert bei langsamem DNS")
+    monkeypatch.setattr(ac.socket, "getfqdn", boom)
+    send_email(CFG, "pw", "S", "T")
+    send_email({**CFG, "security": "tls", "port": 465}, "pw", "S", "T")
+    inits = [c for c in FakeSMTP.calls if c[0] == "init"]
+    assert len(inits) == 2 and all(c[2]["local_hostname"] == "example.org" for c in inits)
 
 
 def test_email_tls_uses_smtp_ssl_with_context_and_no_starttls(fake_smtp):
