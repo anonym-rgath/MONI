@@ -38,6 +38,9 @@ cosign verify ghcr.io/anonym-rgath/moni-agent:2.0.0 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
+Getestet mit cosign 3.x; ältere Versionen finden die Signatur ggf. nicht (cosign 3 legt sie standardmäßig im neuen
+Bundle-Format als OCI-Referrer ab).
+
 Für das Manager-Image ersetzen Sie `moni-agent` durch `moni-manager`. Die Images enthalten außerdem ein SBOM
 und eine Provenance-Attestierung. Den Ablauf, der sie erzeugt, beschreibt [Release](release.md).
 
@@ -114,6 +117,9 @@ Moni liest Container-Informationen über die Docker-API, bekommt aber nie den So
 bringt einen eigenen `docker-socket-proxy` (`wollomatic/socket-proxy`, per Digest gepinnt) mit. Seine Allowlist erlaubt
 ausschließlich `GET` auf die Containerliste sowie `inspect` und `stats` einzelner Container. Kein `logs`, kein
 `exec`, keine schreibenden Methoden. Nur der jeweilige Moni-Dienst darf sich verbinden, das Netz `socket-proxy` ist `internal`.
+
+Ehrlich gesagt: `inspect` liefert auch die Umgebungsvariablen anderer Container, ein kompromittiertes Moni könnte
+sie also lesen. Deshalb erlaubt der Proxy nur `GET` auf genau diese drei Pfade, und der Agent arbeitet ausschließlich lesend.
 
 ### `DOCKER_GID`
 

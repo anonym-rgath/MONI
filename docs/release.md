@@ -35,9 +35,36 @@ Signatur, kein Release.
 6. Den Lauf unter **Actions, Release** beobachten. Danach die Signatur prüfen ([Installation](installation.md#signatur-der-images-prüfen)).
 
 Der Publish-Pfad (Schritt 2 bis 4 der Pipeline) läuft erst bei einem echten Tag und lässt sich im PR nicht
-üben. Beim **ersten Lauf** beobachten Sie ihn genau: Er braucht auf dem Runner Docker ab Version 28
-(`docker image inspect --platform`), und `docker buildx imagetools` sowie das Verhalten von `cosign` bei
-SBOM- und Provenance-Manifesten sind dort zum ersten Mal im Einsatz.
+üben. Er braucht auf dem Runner Docker ab Version 28 (`docker image inspect --platform`, `docker save --platform`
+in `scripts/ci/trivy.sh`), und `docker buildx imagetools` sowie `cosign` v3 bei SBOM- und Provenance-Manifesten
+sind dort zum ersten Mal im Einsatz. Tags sind geschützt und lassen sich nicht verschieben: Ein Workflow-Fehler
+im ersten Lauf würde `v2.0.0` verbrennen. Üben Sie ihn deshalb mit einer Vorabversion.
+
+## Probelauf mit `v2.0.0-rc.1`
+
+`check_version.py` und die Tag-Erzeugung (`docker/metadata-action`) kennen Vorabversionen: Es entsteht nur der eigene
+Tag (kein `X.Y`, `X`, `latest`), und das GitHub-Release wird als Pre-release angelegt.
+
+1. **Version auf `2.0.0-rc.1` setzen**, in allen fünf Quellen, die `check_version.py` prüft: `backend/moni/__init__.py`,
+   `frontend/package.json` (und `package-lock.json`), oberster Abschnitt in `CHANGELOG.md` (mit Datum, `## [2.0.0-rc.1] – <DATUM>`),
+   Image-Standards in `compose.agent.yaml` und `compose.manager.yaml`.
+2. **OpenAPI neu erzeugen** (`docs/api/openapi-agent.json`, `docs/api/openapi-manager.json`) mit den Befehlen aus
+   [API](api.md#openapi-neu-erzeugen), sonst schlägt `test_openapi_snapshot.py` fehl. Dann `python3 scripts/ci/check_version.py v2.0.0-rc.1`.
+3. Per PR nach `main` mergen (oder auf einem Branch bleiben und den Tag dort setzen), dann `git tag v2.0.0-rc.1 && git push origin v2.0.0-rc.1`.
+4. **Nach dem Lauf prüfen:**
+   - Alle Jobs grün, besonders `publish` (Pull per Digest, Trivy, `imagetools`).
+   - `cosign verify ghcr.io/anonym-rgath/moni-agent:2.0.0-rc.1 …` (und `moni-manager`) wie in der
+     [Installation](installation.md#signatur-der-images-prüfen), Tag entsprechend angepasst.
+   - Unter **Packages** existiert nur der Tag `2.0.0-rc.1`, kein `latest`, kein `2.0`, kein `2`.
+   - Das Release ist als **Pre-release** markiert.
+5. **Zurück auf `2.0.0`:** Alle fünf Quellen und die OpenAPI-Dateien wieder auf `2.0.0` setzen, CHANGELOG-Datum prüfen,
+   `check_version.py v2.0.0`, per PR mergen. Erst dann `v2.0.0` taggen.
+6. **Aufräumen:** Der Probelauf lässt ungetaggte Digests in GHCR zurück (Signaturen, SBOM- und Provenance-Manifeste).
+   Löschen Sie sie unter **Packages, Versions**, wenn sie stören. Den Tag `2.0.0-rc.1` und das Pre-release können Sie
+   löschen, sobald das Tag-Ruleset das erlaubt (es verbietet Löschen, siehe unten), sonst bleiben beide stehen.
+
+„Re-run failed jobs“ ist vor dem Setzen der Tags (Pipeline-Schritt 4) gefahrlos, etwa bei einem vorübergehenden
+Netzwerkfehler: Es existiert noch kein Tag, den jemand ziehen könnte.
 
 ## Hinweise
 

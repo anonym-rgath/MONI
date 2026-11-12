@@ -44,13 +44,17 @@ Das sichert nur die Datenbank. Für ein vollständiges Backup brauchen Sie zusä
 ```
 ./scripts/stop.sh manager
 docker volume ls | grep moni-manager-data       # Name des Volumes: moni-manager_moni-manager-data
+umask 077   # Archiv nur für Sie lesbar (0600)
 docker run --rm --user root -v moni-manager_moni-manager-data:/data:ro -v "$PWD":/backup \
   --entrypoint tar ghcr.io/anonym-rgath/moni-manager:2.0.0 czf /backup/moni-data-$(date +%F).tgz -C /data .
 ./scripts/start.sh manager
 ```
 
+Das `umask 077` gilt für die Datei, die der Container-Prozess als root anlegt; sie steht danach mit Modus 0600 im
+Verzeichnis. Prüfen Sie es mit `ls -l moni-data-*.tgz`.
+
 Die Archivdatei enthält verschlüsselte Geheimnisse, aber auch den HTTPS-Schlüssel im Klartext
-(`/data/tls/https.key`). Bewahren Sie sie wie ein Geheimnis auf.
+(`/data/tls/https.key`). Deshalb die Rechte 0600: Bewahren Sie sie wie ein Geheimnis auf.
 
 ## Wiederherstellen
 

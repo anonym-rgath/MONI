@@ -47,7 +47,7 @@ def _db_size(db_path: Path) -> int:
 def render(stats: dict, servers: list[Server], db_path: Path, version: str) -> str:
     def per_server(name, help_, kind, value):
         return family(name, help_, kind, [sample(name, [("server", s.name)], v)
-                                          for s in servers if (v := value(s)) is not None])
+                                          for s in servers if s.enabled and (v := value(s)) is not None])
 
     st = stats["servers"]
     lines = build_info("manager", version)

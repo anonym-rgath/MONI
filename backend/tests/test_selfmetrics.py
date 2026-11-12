@@ -57,6 +57,19 @@ def test_metrics_content(mgr_app, mclient, mauth):
     assert float(size.split()[1]) > 0
 
 
+def test_metrics_skip_disabled_servers(mgr_app, mclient, mauth):
+    store, (_, b) = _servers(mgr_app, "b")
+    conn = db.connect(mgr_app.state.settings.db_path)
+    try:
+        ServerStore(conn, mgr_app.state.box).set_enabled(b.id, False)
+    finally:
+        conn.close()
+    mgr_app.state.poll_stats.record("b", 1.5)
+    t = mclient.get("/api/v1/metrics", headers=mauth).text
+    assert 'moni_manager_server_up{server="lokal"} 1' in t
+    assert 'server="b"' not in t
+
+
 def test_metrics_missing_before_first_poll(mgr_app, mclient, mauth):
     _servers(mgr_app, "b")
     t = mclient.get("/api/v1/metrics", headers=mauth).text

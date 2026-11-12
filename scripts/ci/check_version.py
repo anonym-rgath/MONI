@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Versionspruefung (D1): check_version.py [TAG]
 
-Liest die Version aus backend/moni/__init__.py, frontend/package.json, dem ersten "## ["-Abschnitt
+Liest die Version aus backend/moni/__init__.py, frontend/package.json und -lock.json (beide Stellen), dem ersten "## ["-Abschnitt
 von CHANGELOG.md (daher kein "[Unreleased]"-Abschnitt) und den Image-Defaults in compose.agent.yaml
 und compose.manager.yaml. Exit 0, wenn alle gleich sind, sonst Exit 1 mit der Liste der Abweichungen.
 
@@ -29,9 +29,12 @@ def _first(pattern: str, path: str, flags: int = 0) -> str | None:
 
 def sources() -> dict[str, str | None]:
     pkg = json.loads((ROOT / "frontend/package.json").read_text(encoding="utf-8"))
+    lock = json.loads((ROOT / "frontend/package-lock.json").read_text(encoding="utf-8"))
     return {
         "moni/__init__.py": _first(r'__version__\s*=\s*"([^"]+)"', "backend/moni/__init__.py"),
         "frontend/package.json": pkg.get("version"),
+        "frontend/package-lock.json (version)": lock.get("version"),
+        "frontend/package-lock.json (packages[\"\"])": lock.get("packages", {}).get("", {}).get("version"),
         "CHANGELOG.md": _first(r"^## \[([^\]]+)\]", "CHANGELOG.md", re.M),
         "compose.agent.yaml": _first(r"\$\{MONI_AGENT_IMAGE:-ghcr\.io/anonym-rgath/moni-agent:([^}]+)\}", "compose.agent.yaml"),
         "compose.manager.yaml": _first(r"\$\{MONI_MANAGER_IMAGE:-ghcr\.io/anonym-rgath/moni-manager:([^}]+)\}", "compose.manager.yaml"),

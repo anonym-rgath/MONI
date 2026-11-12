@@ -103,10 +103,12 @@ kein End-to-End-mTLS. Der Manager authentisiert sich dann mit einem API-Token. D
 
    ```
    docker compose -f compose.manager.yaml exec -T moni-manager \
-     python -m moni.cli server add --name web1 --url https://moni-agent.example.org --token-file - \
-     --header CF-Access-Client-Id=<ID> --header CF-Access-Client-Secret=<SECRET>
+     python -m moni.cli server add --name web1 --url https://moni-agent.example.org --token-file -
    ```
 
-   `--header` ist optional und kann mehrfach stehen (z. B. für Zugangs-Proxys). Die Werte werden verschlüsselt gespeichert.
+   Header für einen vorgeschalteten Zugangs-Proxy (z. B. `CF-Access-Client-Id` und `CF-Access-Client-Secret` bei
+   Cloudflare Access) tragen Sie in der Oberfläche ein (**Verwaltung, Server**). Die Werte werden verschlüsselt gespeichert.
+   Die CLI nimmt sie nur als Argument (`--header NAME=WERT`, mehrfach möglich), und ein Argument landet in der
+   Shell-History und in `ps`. Nutzen Sie das nur für unkritische Werte.
 
 Tokens am Agent sind immer `read`. Mehr zu Tokens: [API](api.md#tokens-und-scopes).

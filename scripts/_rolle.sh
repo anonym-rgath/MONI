@@ -68,6 +68,7 @@ env_pruefen() {
     if [ ! -f .env ]; then
         [ -f .env.example ] || fail ".env.example fehlt in $ROOT_DIR"
         cp .env.example .env
+        chmod 600 .env
         warn ".env aus .env.example erstellt, bitte vor dem produktiven Einsatz pruefen"
     fi
     if [ "$ROLLE" = manager ] && [ -z "${MONI_SECRET_KEY:-}" ] && ! grep -qE '^[[:space:]]*MONI_SECRET_KEY=.' .env; then

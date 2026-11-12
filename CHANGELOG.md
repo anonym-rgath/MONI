@@ -54,3 +54,5 @@ cosign verify ghcr.io/anonym-rgath/moni-agent:2.0.0 \
   --certificate-identity-regexp '^https://github.com/anonym-rgath/MONI/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+Getestet mit cosign 3.x (ältere Versionen finden die Signatur ggf. nicht).

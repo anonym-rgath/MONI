@@ -69,6 +69,9 @@ Eigenkennzahlen des Managers (`/api/v1/metrics`):
 | `moni_manager_poll_cycle_duration_seconds` | gauge | – | Dauer des letzten Abrufzyklus (erst nach dem ersten Zyklus) |
 | `moni_manager_db_size_bytes` | gauge | – | Größe der Datenbankdatei samt WAL |
 
+Deaktivierte Server fehlen in den Serien `moni_manager_server_up`, `moni_manager_poll_duration_seconds` und
+`moni_manager_poll_errors_total`, damit `moni_manager_server_up == 0` nicht dauerhaft für einen bewusst abgeschalteten Server feuert.
+
 `moni_manager_poll_errors_total` zählt auch den Fall „Agent liefert keine neuen Daten“. Ein stiller Agent
 (läuft, misst aber nicht) erhöht den Zähler also genauso wie ein nicht erreichbarer.
 

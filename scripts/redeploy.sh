@@ -22,7 +22,8 @@ done
 env_pruefen
 if [ "$LOCAL" = 1 ]; then
     img="MONI_$(echo "$ROLLE" | tr "[:lower:]" "[:upper:]")_IMAGE"
-    [ -n "${!img:-}" ] || warn "--local, aber $img ist nicht gesetzt: Compose nutzt das Standard-Image"
+    # wie DOCKER_GID in _rolle.sh: nur diesen einen Schluessel aus .env pruefen, nichts ausgeben
+    [ -n "${!img:-}" ] || grep -qE "^[[:space:]]*${img}=." .env 2>/dev/null || warn "--local, aber $img ist nicht gesetzt: Compose nutzt das Standard-Image"
     echo -e "${YELLOW}[1/3] --local: kein pull, nutze das gesetzte Image${NC}"
 else
     echo -e "${YELLOW}[1/3] Image ziehen...${NC}"

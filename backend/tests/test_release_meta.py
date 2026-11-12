@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -9,7 +10,7 @@ _spec.loader.exec_module(check_version)
 
 
 def _copy_sources(tmp_path, monkeypatch):
-    for rel in ("backend/moni/__init__.py", "frontend/package.json", "CHANGELOG.md", "compose.agent.yaml", "compose.manager.yaml"):
+    for rel in ("backend/moni/__init__.py", "frontend/package.json", "frontend/package-lock.json", "CHANGELOG.md", "compose.agent.yaml", "compose.manager.yaml"):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text((REPO / rel).read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(check_version, "ROOT", tmp_path)
@@ -51,3 +52,13 @@ def test_compose_images_pinned_to_version():
     for name, role in (("compose.agent.yaml", "agent"), ("compose.manager.yaml", "manager")):
         text = (REPO / name).read_text(encoding="utf-8")
         assert f"ghcr.io/anonym-rgath/moni-{role}:2.0.0}}" in text, name
+
+
+def test_package_lock_version_mismatch_fails(tmp_path, monkeypatch, capsys):
+    _copy_sources(tmp_path, monkeypatch)
+    lock = tmp_path / "frontend/package-lock.json"
+    data = json.loads(lock.read_text(encoding="utf-8"))
+    data["packages"][""]["version"] = "1.9.9"
+    lock.write_text(json.dumps(data), encoding="utf-8")
+    assert check_version.main([]) == 1
+    assert "package-lock.json" in capsys.readouterr().out

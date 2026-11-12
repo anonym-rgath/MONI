@@ -74,6 +74,17 @@ MONI_TLS=off
 MONI_TRUSTED_PROXIES=127.0.0.1
 ```
 
+**Wichtig:** Der Agent sieht `cloudflared` nicht als `127.0.0.1`. Mit einem veröffentlichten Port (`127.0.0.1:9810:9810`)
+kommt die Verbindung im Container über das Gateway des Docker-Netzes an (z. B. `172.18.0.1`). Tragen Sie in
+`MONI_TRUSTED_PROXIES` diese Adresse ein, sonst werden `X-Forwarded-For` und `X-Forwarded-Proto` ignoriert. Die Adresse
+finden Sie so:
+
+```
+docker network inspect moni-agent_default -f '{{(index .IPAM.Config 0).Gateway}}'
+```
+
+Ersetzen Sie `127.0.0.1` oben durch diesen Wert (bei Standard-Compose-Netzen meist `172.x.0.1`).
+
 `cloudflared` auf demselben Host zeigt mit einem Ingress-Eintrag auf den Agent:
 
 ```yaml

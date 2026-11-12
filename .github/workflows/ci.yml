@@ -252,7 +252,7 @@ jobs:
           set -euo pipefail
           agent() { docker compose -f compose.agent.yaml "$@"; }
           manager() { MONI_SECRET_KEY=ci-platzhalter docker compose -f compose.manager.yaml "$@"; }
-          # Agent-Stack (Standardprojekt) und Manager-Stack laufen noch; Manager ans Agent-Netz hängen
+          # Agent-Stack (Projekt moni-agent) und Manager-Stack laufen noch; Manager ans Agent-Netz hängen
           AGENT_CID=$(agent ps -q moni-agent)
           MANAGER_CID=$(manager ps -q moni-manager)
           AGENT_NET=$(docker inspect --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$AGENT_CID" | tr ' ' '\n' | grep -v socket-proxy | head -n1)
