@@ -21,7 +21,7 @@ export function ZweiterFaktor() {
         absenden={t('anmeldung.anmelden')}
         onSubmit={async () => {
           await api.post('/auth/login/mfa', { code: code.trim() })
-          await nachSchritt('full')
+          await nachSchritt()
         }}
       >
         {wiederherstellung ? (

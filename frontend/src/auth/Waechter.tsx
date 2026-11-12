@@ -36,6 +36,7 @@ export function Geschuetzt({ stage, rolle, offen = false, children }: { stage: S
     const weiter = sicheresZiel(new URLSearchParams(search).get('weiter')) // Rücksprungziel der Anmeldeseiten überlebt jeden Stage-Wechsel
     if (s.stage === 'full' && weiter) return <Navigate to={weiter} replace />
     if (s.stage === 'none' && s.ende === 'abgemeldet') return <Navigate to={START.none} replace />
+    if (s.stage === 'none' && s.ende === 'unbestaetigt') return <Navigate to={`${START.none}?abmeldung=offen`} replace />
     // Tiefenlink merken; auf einer Anmeldeseite ist das ihr eigenes weiter, nicht die Seite selbst
     const tiefenlink = s.stage === 'none' ? (stage === 'full' ? sicheresZiel(pathname + search) : weiter) : null
     const behalten = tiefenlink ?? (s.stage === 'none' || s.stage === 'full' ? null : weiter)

@@ -160,8 +160,9 @@ describe('Sitzung', () => {
     server.use(sitzungAntwort(sitzungAdmin), http.post('/api/v1/auth/logout', () => HttpResponse.error()))
     zeigeApp('/')
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Abmelden' }))
-    await waitFor(() => expect(ort()).toBe('/login'))
+    await waitFor(() => expect(ort()).toBe('/login?abmeldung=offen'))
     expect(await h1('Anmelden')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Der Manager hat das Abmelden nicht bestätigt')
   })
 
   test('abmelden während laufender Abfrage zeigt keine „Sitzung abgelaufen“-Meldung', async () => {
@@ -205,8 +206,9 @@ describe('Sitzung', () => {
     } finally {
       vi.useRealTimers()
     }
-    await waitFor(() => expect(ort()).toBe('/login'))
+    await waitFor(() => expect(ort()).toBe('/login?abmeldung=offen'))
     expect(await h1('Anmelden')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Der Manager hat das Abmelden nicht bestätigt')
   })
 
   test('sicheresZiel verwirft Open-Redirect-Ziele', () => {

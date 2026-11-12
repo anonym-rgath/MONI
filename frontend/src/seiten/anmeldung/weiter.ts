@@ -1,22 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router'
 import { schluessel } from '../../api/abfragen'
-import { sicheresZiel } from '../../auth/Sitzung'
-import type { Stage } from '../../api/typen'
 
-const START = { mfa: '/login/zweiter-faktor', enroll: '/einrichtung/zwei-faktor' } as const
-
-// Nach jedem Schritt: Sitzung neu laden, dann zur Seite der neuen Stage; `weiter` bleibt über die Schritte erhalten.
+// Nach jedem Anmeldeschritt nur die Sitzung neu laden. Navigiert wird nicht hier: der Wächter (P6-R13) leitet von jeder Seite
+// zur Seite der neuen Stage, bei full zum Rücksprungziel `weiter` oder zu /.
 export function useNachSchritt() {
   const qc = useQueryClient()
-  const navigate = useNavigate()
-  const [params] = useSearchParams()
-  const weiter = sicheresZiel(params.get('weiter'))
-  return async (stage: Exclude<Stage, 'none'>) => {
-    await qc.invalidateQueries({ queryKey: schluessel.sitzung })
-    // Die Benachrichtigung der Abfrage kommt einen Takt später; erst danach trägt der Kontext die neue Stage, und der Wächter sieht sie.
-    await new Promise((fertig) => setTimeout(fertig))
-    const ziel = stage === 'full' ? (weiter ?? '/') : `${START[stage]}${weiter ? `?weiter=${encodeURIComponent(weiter)}` : ''}`
-    void navigate(ziel, { replace: true })
-  }
+  return () => qc.invalidateQueries({ queryKey: schluessel.sitzung })
 }

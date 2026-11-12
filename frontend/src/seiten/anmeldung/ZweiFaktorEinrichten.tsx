@@ -18,12 +18,12 @@ export function ZweiFaktorRoute() {
   const [codesOffen, setCodesOffen] = useState(false)
   return (
     <Geschuetzt stage="enroll" offen={codesOffen}>
-      <ZweiFaktorEinrichten onCodes={() => setCodesOffen(true)} />
+      <ZweiFaktorEinrichten onCodes={() => setCodesOffen(true)} onFertig={() => setCodesOffen(false)} />
     </Geschuetzt>
   )
 }
 
-function ZweiFaktorEinrichten({ onCodes }: { onCodes: () => void }) {
+function ZweiFaktorEinrichten({ onCodes, onFertig }: { onCodes: () => void; onFertig: () => void }) {
   useTitel(t('seiten.zweiFaktorEinrichten'))
   const nachSchritt = useNachSchritt()
   const [code, setCode] = useState('')
@@ -46,7 +46,8 @@ function ZweiFaktorEinrichten({ onCodes }: { onCodes: () => void }) {
       {codes ? (
         <div className="flex flex-col gap-4.5">
           <p className="text-sm text-muted">{t('zweiFaktor.codesHinweis')}</p>
-          <Einmalwerte titel={t('zweiFaktor.codesTitel')} werte={codes} onFertig={() => void nachSchritt('full')} />
+          {/* nach dem Neuladen gibt die Route die Seite frei, der Wächter leitet weiter */}
+          <Einmalwerte titel={t('zweiFaktor.codesTitel')} werte={codes} onFertig={() => void nachSchritt().then(onFertig)} />
         </div>
       ) : setup.isError ? (
         <div className="flex flex-col gap-3">

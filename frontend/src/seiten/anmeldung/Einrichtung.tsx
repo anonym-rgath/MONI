@@ -30,7 +30,7 @@ export function Einrichtung() {
           onSubmit={async () => {
             await api.post('/setup', f)
             qc.removeQueries({ queryKey: schluessel.setup }) // sonst schickt der Login mit altem Wert zurück
-            await nachSchritt('enroll')
+            await nachSchritt()
           }}
         >
           <Feld label={t('einrichtung.setupToken')} hinweis={t('einrichtung.setupTokenHinweis')} autoComplete="off" spellCheck={false} {...feld('setup_token')} />

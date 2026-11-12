@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router'
 import { schluessel } from '../../api/abfragen'
 import { api } from '../../api/client'
-import type { OidcAnbieter, Stage } from '../../api/typen'
+import type { OidcAnbieter } from '../../api/typen'
 import { t } from '../../texte/de'
 import { Feld } from '../../ui/Feld'
 import { Formular } from '../../ui/Formular'
@@ -32,6 +32,7 @@ export function Login() {
       <div className="mb-4.5 flex flex-col gap-3">
         {params.get('fehler') === 'oidc' && <Hinweis art="fehler">{t('anmeldung.fehlerOidc')}</Hinweis>}
         {params.get('abgelaufen') === '1' && <Hinweis>{t('anmeldung.abgelaufen')}</Hinweis>}
+        {params.get('abmeldung') === 'offen' && <Hinweis art="fehler">{t('anmeldung.abmeldungOffen')}</Hinweis>}
       </div>
       {setup.isPending ? (
         <p role="status">{t('waechter.laden')}</p>
@@ -41,8 +42,8 @@ export function Login() {
             absenden={t('anmeldung.weiter')}
             onSubmit={async () => {
               // Zugangsdaten gehen direkt über den Client, nie durch Mutations-Cache (D5)
-              const { stage } = await api.post<{ stage: Exclude<Stage, 'none'> }>('/auth/login', { email, password: passwort })
-              await nachSchritt(stage)
+              await api.post('/auth/login', { email, password: passwort })
+              await nachSchritt()
             }}
           >
             <Feld label={t('anmeldung.email')} type="email" autoComplete="username" spellCheck={false} required value={email} onChange={(e) => setEmail(e.target.value)} />

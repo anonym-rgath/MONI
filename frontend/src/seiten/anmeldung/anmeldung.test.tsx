@@ -72,6 +72,19 @@ describe('Login', () => {
     await waitFor(() => expect(ort()).toBe('/login/zweiter-faktor?weiter=%2Fkonto'))
   })
 
+  test.each([['/login?weiter=%2Fkonto', '/konto', 'Konto'], ['/login', '/', 'Übersicht']])('Passwort-Login mit Stage full von %s landet auf %s, nicht zurück im Login', async (start, ziel, titel) => {
+    const user = userEvent.setup()
+    server.use(http.post(`${B}/auth/login`, () => {
+      aktuelle = sitzungAdmin
+      return HttpResponse.json({ stage: 'full' })
+    }))
+    zeigeApp(start)
+    await anmelden(user)
+    expect(await h1(titel)).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(ort()).toBe(ziel)
+  })
+
   test('falsches Passwort zeigt detail der API und behält die E-Mail', async () => {
     const user = userEvent.setup()
     server.use(http.post(`${B}/auth/login`, () => problem(401, 'E-Mail oder Passwort falsch.')))

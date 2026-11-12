@@ -62,6 +62,7 @@ export const de = {
     darstellung: 'Darstellung',
     fehlerOidc: 'Die Anmeldung über den Anbieter ist fehlgeschlagen. Versuche es erneut oder melde dich mit Passwort an.',
     abgelaufen: 'Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.',
+    abmeldungOffen: 'Der Manager hat das Abmelden nicht bestätigt. Die Sitzung auf dem Server endet spätestens bei ihrem Ablauf. Schließe auf einem gemeinsam genutzten Computer den Browser.',
     codeApp: 'Code aus der Authenticator-App',
     codeHinweis: '6 Ziffern, der Code wechselt alle 30 Sekunden.',
     codeWiederherstellung: 'Wiederherstellungscode',

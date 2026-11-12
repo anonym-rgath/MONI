@@ -6,7 +6,8 @@ import { ApiFehler, api, setzeAblauf, setzeCsrf } from '../api/client'
 import type { Session, SitzungBenutzer, Stage } from '../api/typen'
 
 // Warum die Sitzung hier endete: abgelaufen führt mit Hinweis und Rücksprungziel zur Anmeldung, abgemeldet ohne.
-type Ende = 'abgelaufen' | 'abgemeldet'
+// unbestaetigt: der Manager hat das Abmelden nicht bestätigt (Zeitüberschreitung, Netzfehler); es führt mit Warnhinweis zur Anmeldung.
+type Ende = 'abgelaufen' | 'abgemeldet' | 'unbestaetigt'
 
 interface SitzungWert {
   stage: Stage
@@ -96,15 +97,18 @@ function Innen({ children }: { children: ReactNode }) {
     abmeldend.current = true
     const abbruch = new AbortController()
     const frist = setTimeout(() => abbruch.abort(), ABMELDE_FRIST_MS)
+    let bestaetigt = true
     try {
       await api.post('/auth/logout', undefined, { signal: abbruch.signal })
-    } catch {
-      /* die Sitzung wird lokal in jedem Fall verworfen */
+    } catch (e) {
+      // Lokal wird in jedem Fall abgemeldet. Antwortet der Manager aber nicht, bleibt die Serversitzung (HttpOnly-Cookie) gültig,
+      // und ein Neuladen meldet wieder an. Das zeigt die Anmeldeseite an. Ein 401 heißt: die Sitzung gab es serverseitig schon nicht mehr.
+      bestaetigt = e instanceof ApiFehler && e.status === 401
     } finally {
       clearTimeout(frist)
       abmeldend.current = false
     }
-    beenden('abgemeldet')
+    beenden(bestaetigt ? 'abgemeldet' : 'unbestaetigt')
   }, [beenden])
 
   const wert = useMemo<SitzungWert>(
