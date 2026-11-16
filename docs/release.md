@@ -20,7 +20,7 @@ Ein Release entsteht, wenn jemand ein Tag `vX.Y.Z` pusht (auch `vX.Y.Z-rc.1`). D
 Ein Fehler vor Schritt 4 lässt keinen Tag zurück: Ein Nutzer, der `:2.0.0` zieht, bekommt nie ein ungeprüftes Image.
 
 **Trockenlauf im Pull Request:** Ändert ein PR `.github/workflows/release.yml`, das `Dockerfile` oder
-`backend/requirements-docker.txt`, läuft nur Job `verify` (bauen, Smoke, Trivy). Kein Login, kein Push, keine
+`backend/requirements-docker.txt` oder `.in`, läuft nur Job `verify` (bauen, Smoke, Trivy). Kein Login, kein Push, keine
 Signatur, kein Release.
 
 ## Ein Release schneiden

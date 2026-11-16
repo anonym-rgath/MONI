@@ -1,0 +1,4 @@
+# Dev-/Test-Abhängigkeiten (nicht im Laufzeit-Image). Daraus entsteht requirements-dev.txt mit Hashes.
+-r requirements-docker.in
+pytest==9.2.0
+httpx2==2.16.0

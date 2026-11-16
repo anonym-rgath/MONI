@@ -24,7 +24,7 @@ on:
       - .github/workflows/release.yml
       - Dockerfile
       - backend/requirements-docker.txt
-      - backend/requirements-docker.lock
+      - backend/requirements-docker.in
 
 permissions:
   contents: read
