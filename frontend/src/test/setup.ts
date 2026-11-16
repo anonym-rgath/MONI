@@ -26,7 +26,7 @@ globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} 
 // jsdom kennt matchMedia nicht; Standard: System ist dunkel.
 mockMatchMedia({ light: false })
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterAll(() => server.close())
 
 afterEach(() => {

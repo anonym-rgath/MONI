@@ -145,7 +145,7 @@ describe('Regeln', () => {
     aufzeichnen('patch', '/alert-rules/1', () => HttpResponse.json({ ...regelDateisystem, for_seconds: 600 }))
     await user.click(within(dialog).getByRole('button', { name: 'Speichern' }))
     expect((await screen.findAllByRole('status')).some((s) => s.textContent === 'Gespeichert.')).toBe(true)
-    expect(dialog).not.toHaveAttribute('open')
+    await waitFor(() => expect(dialog).not.toHaveAttribute('open'))
   })
 
   test('Eine Antwort ohne Änderung zählt als Gespeichert; Filter und Gruppierung werden zu Liste und Objekt', async () => {
