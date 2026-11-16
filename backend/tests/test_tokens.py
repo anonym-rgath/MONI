@@ -113,3 +113,49 @@ def test_cli_invalid_env(monkeypatch, capsys):
 def test_admin_scope_allowed(tmp_path):
     tok, _ = TokenStore(tmp_path / "t.json").create("x", scope="admin")
     assert tok.scope == "admin"
+
+
+def test_last_used_written_at_most_hourly(tmp_path):
+    from datetime import timedelta
+    from moni.timeutil import utcnow
+    s = TokenStore(tmp_path / "tokens.json")
+    tok, plain = s.create("x")
+    now = utcnow()
+    assert s.verify(plain, now).last_used_at is None  # das zurückgegebene Token ist der Stand vor der Nutzung
+    first = s.list()[0].last_used_at
+    assert first is not None
+    s.verify(plain, now + timedelta(minutes=30))
+    assert s.list()[0].last_used_at == first
+    s.verify(plain, now + timedelta(minutes=61))
+    assert s.list()[0].last_used_at != first
+
+
+def test_file_from_2_0_without_new_fields_loads(tmp_path):
+    import json
+    p = tmp_path / "tokens.json"
+    s = TokenStore(p)
+    _, plain = s.create("alt", "admin")
+    data = json.loads(p.read_text())
+    for t in data["tokens"]:
+        del t["created_by"], t["last_used_at"]
+    p.write_text(json.dumps(data))
+    tok = s.verify(plain)
+    assert tok and tok.created_by is None and tok.expires_at is None
+
+
+def test_bad_created_by_fails_closed(tmp_path):
+    import json
+    p = tmp_path / "tokens.json"
+    s = TokenStore(p)
+    _, plain = s.create("x", created_by=1)
+    data = json.loads(p.read_text())
+    data["tokens"][0]["created_by"] = "1"
+    p.write_text(json.dumps(data))
+    assert s.verify(plain) is None
+
+
+def test_unwritable_last_used_does_not_block_login(tmp_path, monkeypatch):
+    s = TokenStore(tmp_path / "tokens.json")
+    _, plain = s.create("x")
+    monkeypatch.setattr(s, "_save", lambda tokens: (_ for _ in ()).throw(OSError("ro")))
+    assert s.verify(plain) is not None

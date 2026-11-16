@@ -103,6 +103,11 @@ def require_scope(scope: str) -> Callable[[Request], Principal]:
         scheme = request.headers.get("authorization", "").split(" ", 1)[0]
         if scheme.lower() == "bearer" or request.app.state.settings.role != "manager":
             tok = _bearer(request)
+            if tok.created_by is not None and request.app.state.settings.role == "manager":
+                with db.request_conn(request) as conn:  # N7: deaktivierter oder gelöschter Ersteller sperrt das Token sofort
+                    owner = UserStore(conn, request.app.state.box).get(tok.created_by)
+                if owner is None or owner.disabled:
+                    raise HTTPException(401, "Token fehlt oder ist ungültig", headers=_UNAUTH)
             if RANK.get(tok.scope, 0) < RANK[scope]:
                 raise HTTPException(403, "Token hat nicht den nötigen Scope")
             return Principal(tok.scope, f"token:{tok.id}", None)

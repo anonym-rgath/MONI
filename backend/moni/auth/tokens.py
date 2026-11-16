@@ -7,8 +7,8 @@ import os
 import re
 import secrets
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 
 SCOPES = frozenset({"read", "admin"})
 _ID_RE = re.compile(r"[0-9a-f]{8}")
+_TOUCH = timedelta(hours=1)  # „zuletzt benutzt“ stundengenau: sonst schriebe jede Anfrage (Prometheus alle 15 s) die Datei
 
 
 class NewToken(BaseModel):
@@ -45,6 +46,8 @@ class Token:
     created_at: str
     expires_at: str | None
     hash: str
+    created_by: int | None = None  # N7: Benutzer-ID; None = CLI oder vor 2.1 angelegt
+    last_used_at: str | None = None
 
 
 def _hash(plaintext: str) -> str:
@@ -78,8 +81,11 @@ class TokenStore:
             for t in tokens:
                 if not all(isinstance(v, str) for v in (t.id, t.name, t.scope, t.created_at, t.hash)):
                     raise TypeError
-                if t.expires_at is not None:
-                    parse_iso(t.expires_at)  # ValueError/TypeError bei Unsinn
+                if t.created_by is not None and type(t.created_by) is not int:
+                    raise TypeError
+                for ts in (t.expires_at, t.last_used_at):
+                    if ts is not None:
+                        parse_iso(ts)  # ValueError/TypeError bei Unsinn
             return tokens
         except (ValueError, KeyError, TypeError):
             log.error("Token-Datei %s ist beschädigt", self.path)
@@ -99,12 +105,13 @@ class TokenStore:
         finally:
             os.close(fd)
 
-    def create(self, name: str, scope: str = "read", expires_at: datetime | None = None) -> tuple[Token, str]:
+    def create(self, name: str, scope: str = "read", expires_at: datetime | None = None,
+               created_by: int | None = None) -> tuple[Token, str]:
         if scope not in SCOPES:
             raise ValueError(f"Unbekannter Scope: {scope!r}")
         tid = secrets.token_hex(4)
         plain = f"moni_{tid}_{secrets.token_urlsafe(32)}"
-        tok = Token(tid, name, scope, iso(utcnow()), iso(expires_at) if expires_at else None, _hash(plain))
+        tok = Token(tid, name, scope, iso(utcnow()), iso(expires_at) if expires_at else None, _hash(plain), created_by)
         with self._lock():
             self._save([*self._load(), tok])
         return tok, plain
@@ -118,12 +125,22 @@ class TokenStore:
         except RuntimeError:
             return None
         h = _hash(plaintext)
+        now = now or utcnow()
         for t in tokens:
             if t.id == parts[1] and hmac.compare_digest(t.hash, h):
-                if t.expires_at and parse_iso(t.expires_at) <= (now or utcnow()):
+                if t.expires_at and parse_iso(t.expires_at) <= now:
                     return None
+                if t.last_used_at is None or parse_iso(t.last_used_at) <= now - _TOUCH:
+                    self._touch(t.id, now)
                 return t
         return None
+
+    def _touch(self, token_id: str, now: datetime) -> None:
+        try:
+            with self._lock():
+                self._save([replace(t, last_used_at=iso(now)) if t.id == token_id else t for t in self._load()])
+        except (OSError, RuntimeError) as e:  # Anmeldung geht vor: ohne Schreibrecht bleibt nur der Zeitstempel alt
+            log.warning("Token-Nutzung nicht gespeichert (%s)", type(e).__name__)
 
     def list(self) -> list[Token]:
         try:

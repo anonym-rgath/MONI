@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, StringConstraints
 
 from ..manager import db
 from ..timeutil import iso, utcnow
@@ -48,6 +48,8 @@ class PasswordBody(_Body):
 
 class NewToken(BaseNewToken):
     scope: Literal["read", "admin"] = "read"
+    # N7: fehlt die Angabe, läuft das Token nach 90 Tagen ab; nur ein ausdrückliches null bedeutet „nie“
+    expires_days: StrictInt | None = Field(90, ge=1, le=3650)
 
 
 def _user_out(u: User, now: int) -> dict:
@@ -170,22 +172,33 @@ def unlock_user(request: Request, user_id: UserId, p: Principal = Depends(requir
     return Response(status_code=204)
 
 
-def _token_out(t) -> dict:  # bewusst ohne hash
-    return {"id": t.id, "name": t.name, "scope": t.scope, "created_at": t.created_at, "expires_at": t.expires_at}
+def _token_out(t, emails: dict[int, str]) -> dict:  # bewusst ohne hash
+    return {"id": t.id, "name": t.name, "scope": t.scope, "created_at": t.created_at, "expires_at": t.expires_at,
+            "created_by": emails.get(t.created_by), "last_used_at": t.last_used_at}
+
+
+def _emails(request: Request) -> dict[int, str]:
+    with db.request_conn(request) as conn:
+        return {u.id: u.email for u in UserStore(conn, request.app.state.box).list()}
 
 
 @router.get("/tokens", dependencies=[admin])
 def list_tokens(request: Request):
-    return [_token_out(t) for t in request.app.state.tokens.list()]
+    emails = _emails(request)
+    return [_token_out(t, emails) for t in request.app.state.tokens.list()]
 
 
 @router.post("/tokens", status_code=201)
 def create_token(request: Request, body: NewToken, p: Principal = Depends(require_scope("admin"))):
     exp = utcnow() + timedelta(days=body.expires_days) if body.expires_days else None
-    tok, plain = request.app.state.tokens.create(body.name, body.scope, expires_at=exp)
+    store = request.app.state.tokens
+    creator = p.user_id  # ein Token, das ein Token anlegt, erbt dessen Besitzer: Deaktivieren sperrt die ganze Kette
+    if creator is None and p.actor.startswith("token:"):
+        creator = next((t.created_by for t in store.list() if t.id == p.actor.removeprefix("token:")), None)
+    tok, plain = store.create(body.name, body.scope, expires_at=exp, created_by=creator)
     with db.request_conn(request) as conn:
         audit.record(conn, p.actor, "token.created", target=tok.id, ip=client_ip(request), details={"scope": tok.scope})
-    return {**_token_out(tok), "token": plain}
+    return {**_token_out(tok, _emails(request)), "token": plain}
 
 
 @router.delete("/tokens/{token_id}", status_code=204)
