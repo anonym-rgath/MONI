@@ -11,16 +11,17 @@ import { Auswahl } from '../alarme/felder'
 // Formular für API-Token (mit Bereich) und Agent-Token (ohne). Das Klartext-Token lebt nur im Zustand dieser Komponente (D5):
 // gcTime 0, kein setQueryData; die Liste wird nur ungültig gemacht. Beim Schließen verschwindet die Komponente samt Wert.
 // onAngezeigt: ab jetzt ist ein Einmalwert sichtbar; der Dialog sperrt sich, bis onFertig (nach der Bestätigung) kommt.
-export function TokenErstellen({ pfad, mitBereich, titelNeu, onErstellt, onAngezeigt, onFertig, onAbbrechen }:
-  { pfad: string; mitBereich: boolean; titelNeu: string; onErstellt: () => Promise<unknown>; onAngezeigt: () => void; onFertig: () => void; onAbbrechen: () => void }) {
+// standardTage (nur API-Token, N7): vorbelegter Ablauf; wer das Feld leert, sendet ausdrücklich null = „nie“.
+export function TokenErstellen({ pfad, mitBereich, standardTage = '', titelNeu, onErstellt, onAngezeigt, onFertig, onAbbrechen }:
+  { pfad: string; mitBereich: boolean; standardTage?: string; titelNeu: string; onErstellt: () => Promise<unknown>; onAngezeigt: () => void; onFertig: () => void; onAbbrechen: () => void }) {
   const [name, setName] = useState('')
   const [bereich, setBereich] = useState('read')
-  const [tage, setTage] = useState('')
+  const [tage, setTage] = useState(standardTage)
   const [wert, setWert] = useState<string | null>(null)
   const erstellen = useMutation({ mutationFn: (body: object) => api.post<{ token: string }>(pfad, body), gcTime: 0 })
 
   async function senden() {
-    const res = await erstellen.mutateAsync({ name: name.trim(), ...(mitBereich && { scope: bereich }), ...(tage && { expires_days: Number(tage) }) })
+    const res = await erstellen.mutateAsync({ name: name.trim(), ...(mitBereich && { scope: bereich }), ...(tage ? { expires_days: Number(tage) } : standardTage && { expires_days: null }) })
     setWert(res.token)
     onAngezeigt()
     await onErstellt()
@@ -39,7 +40,7 @@ export function TokenErstellen({ pfad, mitBereich, titelNeu, onErstellt, onAngez
           <option value="admin">{t('verwaltung.bereichAdmin')}</option>
         </Auswahl>
       )}
-      <Feld label={t('verwaltung.fAblauf')} hinweis={t('verwaltung.fAblaufHinweis')} type="number" min={1} max={3650} value={tage} onChange={(e) => setTage(e.target.value)} />
+      <Feld label={t(standardTage ? 'verwaltung.fAblaufApi' : 'verwaltung.fAblauf')} hinweis={t(standardTage ? 'verwaltung.fAblaufApiHinweis' : 'verwaltung.fAblaufHinweis')} type="number" min={1} max={3650} value={tage} onChange={(e) => setTage(e.target.value)} />
       <p className="m-0 text-sm text-muted">{t('verwaltung.tokenHinweis')}</p>
     </Formular>
     <Knopf onClick={onAbbrechen}>{t('verwaltung.abbrechen')}</Knopf>

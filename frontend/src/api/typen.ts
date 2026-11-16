@@ -157,6 +157,8 @@ export interface Token {
   scope: 'read' | 'admin'
   created_at: string
   expires_at: string | null
+  created_by: string | null // E-Mail; null = per CLI oder vor 2.1 angelegt
+  last_used_at: string | null
   token?: string // nur in der POST-Antwort (D5: nie in den Cache)
 }
 export interface AgentToken {

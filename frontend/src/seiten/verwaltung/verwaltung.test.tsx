@@ -14,7 +14,7 @@ const benutzer = (id: number, extra: Partial<Benutzer> = {}): Benutzer => ({
   id, email: `u${id}@example.test`, name: `Nutzer ${id}`, role: 'viewer', kind: 'local', totp_enabled: true, disabled: false, locked: false,
   oidc_bound: false, created_at: '2026-11-01T08:00:00Z', last_login: '2026-11-10T08:00:00Z', ...extra,
 })
-const token = (id: string, extra: Partial<Token> = {}): Token => ({ id, name: `Token ${id}`, scope: 'read', created_at: '2026-11-01T08:00:00Z', expires_at: null, ...extra })
+const token = (id: string, extra: Partial<Token> = {}): Token => ({ id, name: `Token ${id}`, scope: 'read', created_at: '2026-11-01T08:00:00Z', expires_at: null, created_by: null, last_used_at: null, ...extra })
 const eintrag = (id: number, extra: Partial<AuditEintrag> = {}): AuditEintrag => ({
   id, ts: '2026-11-10T09:00:00Z', actor: 'robin@example.test', action: 'user.created', target: 'u1@example.test', ip: '192.0.2.7', details: { role: 'viewer' }, ...extra,
 })
@@ -264,6 +264,22 @@ describe('Agent-Tokens', () => {
 })
 
 describe('API-Tokens', () => {
+  test('zeigt Ersteller und letzte Nutzung; geleerter Ablauf sendet ausdrücklich null (N7)', async () => {
+    daten({ tokens: [token('t1', { created_by: 'admin@example.org', last_used_at: '2026-11-15T10:00:00Z' }), token('t2')] })
+    const user = userEvent.setup()
+    await zeige('/verwaltung/tokens', 'API-Tokens')
+    expect(await screen.findByRole('row', { name: /Token t1/ })).toHaveTextContent('admin@example.org')
+    expect(screen.getByRole('row', { name: /Token t2/ })).toHaveTextContent('unbekannt (CLI oder vor 2.1)')
+    expect(screen.getByRole('columnheader', { name: 'Zuletzt benutzt' })).toBeInTheDocument()
+    aufzeichnen('post', '/tokens', () => HttpResponse.json({ ...token('t3'), token: 'moni_NIE' }, { status: 201 }))
+    await user.click(screen.getByRole('button', { name: 'Token erstellen' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('Name'), 'Dauer')
+    await user.clear(within(dialog).getByLabelText('Ablauf in Tagen'))
+    await user.click(within(dialog).getByRole('button', { name: 'Token erstellen' }))
+    await waitFor(() => expect(letzter().body).toEqual({ name: 'Dauer', scope: 'read', expires_days: null }))
+  })
+
   test('API-Token erscheint einmal; nach Schließen weder im DOM noch im Query-Cache', async () => {
     daten()
     const user = userEvent.setup()
@@ -275,10 +291,13 @@ describe('API-Tokens', () => {
     const dialog = await screen.findByRole('dialog')
     await user.type(within(dialog).getByLabelText('Name'), 'Skript')
     await user.selectOptions(within(dialog).getByLabelText('Bereich'), 'Admin')
-    await user.type(within(dialog).getByLabelText('Ablauf in Tagen (optional)'), '90')
+    const ablauf = within(dialog).getByLabelText('Ablauf in Tagen')
+    expect(ablauf).toHaveValue(90) // N7: Standard 90 Tage
+    await user.clear(ablauf)
+    await user.type(ablauf, '30')
     await user.click(within(dialog).getByRole('button', { name: 'Token erstellen' }))
     expect(await within(dialog).findByText('moni_SEHR_GEHEIM_42')).toBeInTheDocument()
-    expect(letzter().body).toEqual({ name: 'Skript', scope: 'admin', expires_days: 90 })
+    expect(letzter().body).toEqual({ name: 'Skript', scope: 'admin', expires_days: 30 })
     await user.click(within(dialog).getByRole('checkbox', { name: 'Ich habe das Token sicher gespeichert' }))
     await user.click(within(dialog).getByRole('button', { name: 'Weiter' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())

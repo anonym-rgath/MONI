@@ -201,13 +201,46 @@ def test_token_api_shows_plaintext_once(mgr_app, admin_client, csrf):
     plain = r.json()["token"]
     assert plain.startswith("moni_") and plain not in admin_client.get("/api/v1/tokens").text
     lst = admin_client.get("/api/v1/tokens").json()
-    assert "hash" not in lst[0] and set(lst[0]) == {"id", "name", "scope", "created_at", "expires_at"}
+    assert "hash" not in lst[0] and set(lst[0]) == {"id", "name", "scope", "created_at", "expires_at",
+                                                                             "created_by", "last_used_at"}
     assert lst[0]["expires_at"] is not None and r.json()["scope"] == "read"
     e = _audit(mgr_app)[0]
     assert e["action"] == "token.created" and e["details"] == {"scope": "read"} and plain not in str(e)
     assert admin_client.delete(f"/api/v1/tokens/{lst[0]['id']}", headers=csrf).status_code == 204
     assert admin_client.delete(f"/api/v1/tokens/{lst[0]['id']}", headers=csrf).status_code == 404
     assert _audit(mgr_app)[0]["action"] == "token.revoked" and admin_client.get("/api/v1/tokens").json() == []
+
+
+def test_token_default_expiry_90_days_and_explicit_never(admin_client, csrf):
+    from datetime import timedelta
+    from moni.timeutil import parse_iso, utcnow
+    r = admin_client.post("/api/v1/tokens", json={"name": "standard"}, headers=csrf).json()
+    assert abs(parse_iso(r["expires_at"]) - (utcnow() + timedelta(days=90))) < timedelta(minutes=1)
+    assert admin_client.post("/api/v1/tokens", json={"name": "nie", "expires_days": None}, headers=csrf).json()["expires_at"] is None
+
+
+def test_token_records_creator_and_dies_with_disabled_creator(mgr_app, mgr_client, admin_client, csrf, admin_user, make_user):
+    r = admin_client.post("/api/v1/tokens", json={"name": "skript", "scope": "admin"}, headers=csrf).json()
+    assert r["created_by"] == admin_user.email and r["last_used_at"] is None
+    bearer = {"Authorization": f"Bearer {r['token']}"}
+    # ein Token, das ein Token anlegt, erbt den Besitzer
+    child = mgr_client.post("/api/v1/tokens", json={"name": "kind"}, headers=bearer).json()
+    assert child["created_by"] == admin_user.email
+    other = make_user("admin")
+    tok, plain = mgr_app.state.tokens.create("von-b", "read", created_by=other.id)
+    b = {"Authorization": f"Bearer {plain}"}
+    assert mgr_client.get("/api/v1/servers", headers=b).status_code == 200
+    lst = {t["name"]: t for t in admin_client.get("/api/v1/tokens").json()}
+    assert lst["von-b"]["created_by"] == other.email and lst["von-b"]["last_used_at"] is not None
+    assert admin_client.patch(f"/api/v1/users/{other.id}", json={"disabled": True}, headers=csrf).status_code == 200
+    assert mgr_client.get("/api/v1/servers", headers=b).status_code == 401
+    assert admin_client.patch(f"/api/v1/users/{other.id}", json={"disabled": False}, headers=csrf).status_code == 200
+    assert mgr_client.get("/api/v1/servers", headers=b).status_code == 200
+    assert admin_client.delete(f"/api/v1/users/{other.id}", headers=csrf).status_code == 204
+    assert mgr_client.get("/api/v1/servers", headers=b).status_code == 401
+    # Tokens ohne Ersteller (CLI, vor 2.1) gelten weiter
+    _, legacy = mgr_app.state.tokens.create("cli", "read")
+    assert mgr_client.get("/api/v1/servers", headers={"Authorization": f"Bearer {legacy}"}).status_code == 200
 
 
 @pytest.mark.parametrize("body", [{"name": ""}, {"name": "x" * 65}, {"name": "a\nb"}, {"name": "   "},
