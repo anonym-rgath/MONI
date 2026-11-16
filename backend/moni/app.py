@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from moni import __version__, errors
+from moni import __version__, errors, netguard
 from moni.agent import pairing_api
 from moni.agent.api import metrics_router, router
 from moni.agent.tls import TlsState
@@ -44,6 +44,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     collector = collector or Collector(settings)
     box = setup_hash = manager_pki = None
     if manager:
+        netguard.allow_private = settings.allow_private_targets
         try:
             db.migrate(settings.db_path)
         except RuntimeError:
@@ -102,8 +103,10 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
             if own_col:
                 collector.stop()
 
-    app = FastAPI(title="Moni Manager" if manager else "Moni Agent", version=__version__, docs_url="/api/v1/docs",
-                  openapi_url="/api/v1/openapi.json", redoc_url=None, lifespan=lifespan)
+    docs = settings.api_docs
+    app = FastAPI(title="Moni Manager" if manager else "Moni Agent", version=__version__,
+                  docs_url="/api/v1/docs" if docs else None, openapi_url="/api/v1/openapi.json" if docs else None,
+                  redoc_url=None, lifespan=lifespan)
     app.state.settings, app.state.collector = settings, collector
     app.state.tokens = TokenStore(Path(settings.data_dir) / "tokens.json")
     app.state.tls = tls_state if not manager and settings.tls == "on" else None

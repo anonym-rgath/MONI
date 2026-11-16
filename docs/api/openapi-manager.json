@@ -694,6 +694,7 @@
                 "type": "null"
               }
             ],
+            "default": 90,
             "title": "Expires Days"
           },
           "name": {

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, StringConstraints
 
 from ..manager import db
 from ..timeutil import iso, utcnow
@@ -49,13 +49,17 @@ class PasswordBody(_Body):
 
 class NewToken(BaseNewToken):
     scope: Literal["read", "admin"] = "read"
+    # N7: fehlt die Angabe, läuft das Token nach 90 Tagen ab; nur ein ausdrückliches null bedeutet „nie“
+    expires_days: StrictInt | None = Field(90, ge=1, le=3650)
 
 
 def _user_out(u: User, now: int) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "role": u.role, "kind": u.kind, "totp_enabled": u.totp_enabled,
             "disabled": u.disabled, "locked": UserStore.is_locked(u, now), "oidc_bound": u.oidc_bound,
             "created_at": _ts(u.created_at), "last_login": None if u.last_login is None else _ts(u.last_login),
-            "oidc_issuer": u.oidc_iss}
+            "oidc_issuer": u.oidc_iss,
+            "enroll_until": None if u.totp_enabled or u.enroll_until is None else _ts(u.enroll_until),
+            "enroll_expired": UserStore.enroll_expired(u, now)}
 
 
 def _ts(t: int) -> str:
@@ -92,8 +96,12 @@ def create_user(request: Request, body: NewUser, p: Principal = Depends(require_
                 if p_cfg is None:
                     raise ValueError("Anmeldeanbieter nicht gefunden")
                 iss = p_cfg["issuer"]
-            u = UserStore(conn, request.app.state.box).create(body.email, body.name, body.role, body.kind, body.password, now,
-                                                              oidc_iss=iss)
+            users = UserStore(conn, request.app.state.box)
+            with users._tx(immediate=True):
+                u = users.create(body.email, body.name, body.role, body.kind, body.password, now, oidc_iss=iss)
+                if u.kind == "local":
+                    users.start_enrollment(u.id, now)
+                    u = users.get(u.id)
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
         except ValueError as e:  # Regeltexte nennen nie das Passwort
@@ -151,6 +159,7 @@ def reset_password(request: Request, user_id: UserId, body: PasswordBody, p: Pri
             raise HTTPException(422, str(e)) from None
         with users._tx(immediate=True):  # Passwort, Sessions und Audit gemeinsam oder gar nicht
             users.store_password(user_id, pw_hash)
+            users.start_enrollment(user_id, int(time.time()))  # wirkt nur, solange das Konto keine 2FA hat
             SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
             audit.record(conn, p.actor, "password.reset", target=u.email, ip=client_ip(request))
     return Response(status_code=204)
@@ -164,6 +173,7 @@ def reset_2fa(request: Request, user_id: UserId, p: Principal = Depends(require_
         _local(u)
         with users._tx(immediate=True):  # sonst könnte eine übrige Session ohne Code einen neuen Faktor einrichten
             users.reset_totp(user_id)
+            users.start_enrollment(user_id, int(time.time()))
             SessionStore(conn, request.app.state.settings).delete_for_user(user_id)
             audit.record(conn, p.actor, "totp.reset", target=u.email, ip=client_ip(request))
     return Response(status_code=204)
@@ -179,22 +189,33 @@ def unlock_user(request: Request, user_id: UserId, p: Principal = Depends(requir
     return Response(status_code=204)
 
 
-def _token_out(t) -> dict:  # bewusst ohne hash
-    return {"id": t.id, "name": t.name, "scope": t.scope, "created_at": t.created_at, "expires_at": t.expires_at}
+def _token_out(t, emails: dict[int, str]) -> dict:  # bewusst ohne hash
+    return {"id": t.id, "name": t.name, "scope": t.scope, "created_at": t.created_at, "expires_at": t.expires_at,
+            "created_by": emails.get(t.created_by), "last_used_at": t.last_used_at}
+
+
+def _emails(request: Request) -> dict[int, str]:
+    with db.request_conn(request) as conn:
+        return {u.id: u.email for u in UserStore(conn, request.app.state.box).list()}
 
 
 @router.get("/tokens", dependencies=[admin])
 def list_tokens(request: Request):
-    return [_token_out(t) for t in request.app.state.tokens.list()]
+    emails = _emails(request)
+    return [_token_out(t, emails) for t in request.app.state.tokens.list()]
 
 
 @router.post("/tokens", status_code=201)
 def create_token(request: Request, body: NewToken, p: Principal = Depends(require_scope("admin"))):
     exp = utcnow() + timedelta(days=body.expires_days) if body.expires_days else None
-    tok, plain = request.app.state.tokens.create(body.name, body.scope, expires_at=exp)
+    store = request.app.state.tokens
+    creator = p.user_id  # ein Token, das ein Token anlegt, erbt dessen Besitzer: Deaktivieren sperrt die ganze Kette
+    if creator is None and p.actor.startswith("token:"):
+        creator = next((t.created_by for t in store.list() if t.id == p.actor.removeprefix("token:")), None)
+    tok, plain = store.create(body.name, body.scope, expires_at=exp, created_by=creator)
     with db.request_conn(request) as conn:
         audit.record(conn, p.actor, "token.created", target=tok.id, ip=client_ip(request), details={"scope": tok.scope})
-    return {**_token_out(tok), "token": plain}
+    return {**_token_out(tok, _emails(request)), "token": plain}
 
 
 @router.delete("/tokens/{token_id}", status_code=204)

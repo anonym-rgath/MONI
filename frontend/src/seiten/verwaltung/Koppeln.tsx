@@ -6,6 +6,7 @@ import { t } from '../../texte/de'
 import { Feld } from '../../ui/Feld'
 import { Formular } from '../../ui/Formular'
 import { Hinweis } from '../../ui/Hinweis'
+import { KlartextWarnung } from '../../ui/KlartextWarnung'
 import { Knopf } from '../../ui/Knopf'
 
 const KOPPLUNG_UNGUELTIG = 'Kopplungs-Token ungültig' // D8: Fehler am Feld, keine Abmeldung (der 401-Handler überspringt diesen Text)
@@ -20,6 +21,7 @@ export function Koppeln({ onFertig, onAbbrechen }: { onFertig: () => void; onAbb
   const [code, setCode] = useState('')
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
+  const [klartext, setKlartext] = useState(false)
   const [header, setHeader] = useState<Zeile[]>([])
   const [naechste, setNaechste] = useState(1)
   const [codeFehler, setCodeFehler] = useState<string | undefined>()
@@ -65,6 +67,7 @@ export function Koppeln({ onFertig, onAbbrechen }: { onFertig: () => void; onAbb
           <>
             <Hinweis>{t('verwaltung.proxyWarnung')}</Hinweis>
             <Feld label={t('verwaltung.fUrl')} value={url} onChange={(e) => setUrl(e.target.value)} required inputMode="url" autoComplete="off" spellCheck={false} />
+            <KlartextWarnung url={url} text="formular.klartextAgent" bestaetigt={klartext} onChange={setKlartext} />
             <Feld label={t('verwaltung.fToken')} type="password" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="off" />
             <fieldset className="m-0 flex flex-col gap-3 border-0 p-0">
               <legend className="mb-1 p-0 text-sm font-medium">{t('verwaltung.headerTitel')}</legend>

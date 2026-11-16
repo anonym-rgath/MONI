@@ -58,7 +58,8 @@ export function Benutzer() {
                 <Zelle>{b.email}</Zelle>
                 <Zelle>{t(b.role === 'admin' ? 'verwaltung.rolleAdmin' : 'verwaltung.rolleBetrachter')}</Zelle>
                 <Zelle>{t(b.kind === 'local' ? 'verwaltung.artLokal' : 'verwaltung.artOidc')}</Zelle>
-                <Zelle>{t(b.totp_enabled ? 'verwaltung.zfAn' : 'verwaltung.zfAus')}</Zelle>
+                <Zelle>{b.totp_enabled ? t('verwaltung.zfAn') : !b.enroll_until ? t('verwaltung.zfAus')
+                  : b.enroll_expired ? t('verwaltung.zfAbgelaufen') : t('verwaltung.zfFrist', { zeit: zeitpunkt(b.enroll_until) })}</Zelle>
                 <Zelle><Statusmarke ton={b.disabled || b.locked ? 'warn' : 'ok'}>{t(status)}</Statusmarke></Zelle>
                 <Zelle num>{b.last_login ? zeitpunkt(b.last_login) : t('verwaltung.nieAngemeldet')}</Zelle>
                 <Zelle>

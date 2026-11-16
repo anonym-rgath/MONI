@@ -1,4 +1,5 @@
 import argparse
+import time
 import sqlite3
 import sys
 from datetime import timedelta
@@ -96,6 +97,7 @@ def _user(args, settings: Settings, conn, box) -> int:
             else:
                 users.reset_totp(user.id)
                 action = "totp.reset"
+            users.start_enrollment(user.id, int(time.time()))  # N8: wie in der Admin-API
             SessionStore(conn, settings).delete_for_user(user.id)
         audit.record(conn, _ACTOR, action, target=user.email)
     print(f"{action}: {user.email}")
@@ -279,7 +281,8 @@ def main(argv: list[str] | None = None) -> int:
             print(plain)
         elif args.cmd == "list":
             for t in store.list():
-                print(f"{t.id}  {t.name}  {t.scope}  erstellt {t.created_at}  läuft ab {t.expires_at or 'nie'}")
+                print(f"{t.id}  {t.name}  {t.scope}  erstellt {t.created_at}  läuft ab {t.expires_at or 'nie'}  "
+                      f"zuletzt benutzt {t.last_used_at or 'nie'}")
         else:
             if not store.revoke(args.id):
                 print(f"Kein Token mit der ID {args.id}.", file=sys.stderr)

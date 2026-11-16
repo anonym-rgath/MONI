@@ -151,6 +151,8 @@ export interface Benutzer {
   oidc_issuer: string | null // N2: einziger erlaubter Anbieter vor der ersten Anmeldung
   created_at: string
   last_login: string | null
+  enroll_until: string | null // N8: Frist für die 2FA-Einrichtung, null bei aktiver 2FA oder ohne Frist
+  enroll_expired: boolean
 }
 export interface Token {
   id: string
@@ -158,6 +160,8 @@ export interface Token {
   scope: 'read' | 'admin'
   created_at: string
   expires_at: string | null
+  created_by: string | null // E-Mail; null = per CLI oder vor 2.1 angelegt
+  last_used_at: string | null
   token?: string // nur in der POST-Antwort (D5: nie in den Cache)
 }
 export interface AgentToken {

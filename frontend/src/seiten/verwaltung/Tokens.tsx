@@ -32,14 +32,16 @@ export function Tokens() {
         <Leerzustand text={t('verwaltung.tokenLeer')}><Knopf art="haupt" onClick={() => setNeu(true)}>{t('verwaltung.tokenErstellen')}</Knopf></Leerzustand>
       )}
       {tokens.data && tokens.data.length > 0 && (
-        <Tabelle id="tokens-h" titel={t('verwaltung.tokenListe')} kopf={[t('verwaltung.spName'), t('verwaltung.spBereich'), t('verwaltung.erstellt'), t('verwaltung.spAblauf'), t('verwaltung.spAktionen')]}
+        <Tabelle id="tokens-h" titel={t('verwaltung.tokenListe')} kopf={[t('verwaltung.spName'), t('verwaltung.spBereich'), t('verwaltung.erstellt'), t('verwaltung.spErstelltVon'), t('verwaltung.spAblauf'), t('verwaltung.spZuletzt'), t('verwaltung.spAktionen')]}
           aktion={<Knopf art="haupt" onClick={() => { setMeldung(''); setNeu(true) }}>{t('verwaltung.tokenErstellen')}</Knopf>}>
           {tokens.data.map((k) => (
             <tr key={k.id} className="border-t border-border">
               <Zeilenkopf>{k.name}</Zeilenkopf>
               <Zelle>{t(k.scope === 'admin' ? 'verwaltung.bereichAdmin' : 'verwaltung.bereichLesen')}</Zelle>
               <Zelle num>{zeitpunkt(k.created_at)}</Zelle>
+              <Zelle><span className="break-all">{k.created_by ?? t('verwaltung.ohneErsteller')}</span></Zelle>
               <Zelle num>{k.expires_at ? zeitpunkt(k.expires_at) : t('verwaltung.nie')}</Zelle>
+              <Zelle num>{k.last_used_at ? zeitpunkt(k.last_used_at) : t('verwaltung.nie')}</Zelle>
               <Zelle><Knopf onClick={() => { setMeldung(''); setWiderruf(k) }}>{t('verwaltung.widerrufen')}{' '}<span className="sr-only">{k.name}</span></Knopf></Zelle>
             </tr>
           ))}
@@ -47,7 +49,7 @@ export function Tokens() {
       )}
 
       <Dialog titel={t('verwaltung.tokenErstellen')} offen={neu} gesperrt={gesperrt} onClose={() => setNeu(false)}>
-        <TokenErstellen pfad="/tokens" mitBereich titelNeu={t('verwaltung.tokenNeuTitel')} onErstellt={neuLaden} onAngezeigt={() => setGesperrt(true)}
+        <TokenErstellen pfad="/tokens" mitBereich standardTage="90" titelNeu={t('verwaltung.tokenNeuTitel')} onErstellt={neuLaden} onAngezeigt={() => setGesperrt(true)}
           onFertig={() => { setGesperrt(false); setNeu(false) }} onAbbrechen={() => setNeu(false)} />
       </Dialog>
       <Rueckfrage titel={t('verwaltung.widerrufenTitel')} text={widerruf ? t('verwaltung.widerrufenText', { name: widerruf.name }) : ''} aktion={t('verwaltung.widerrufen')}

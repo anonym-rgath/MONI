@@ -6,7 +6,8 @@ ohne Weboberfläche nutzbar und lässt sich in Skripte, Prometheus oder Grafana 
 - Spezifikation (OpenAPI): [`api/openapi-agent.json`](api/openapi-agent.json) und
   [`api/openapi-manager.json`](api/openapi-manager.json). Beide stehen im Repository und werden in den Tests
   mit dem Code abgeglichen.
-- Interaktive Dokumentation der laufenden Instanz: `/api/v1/docs`.
+- Interaktive Dokumentation der laufenden Instanz: `/api/v1/docs`, nur mit `MONI_API_DOCS=1` (Standard aus; dann ohne
+  Anmeldung abrufbar, siehe [Installation](installation.md#variablen)).
 - Die Agent-Spezifikation beschreibt die Variante mit TLS (`MONI_TLS=on`). Mit `MONI_TLS=off` fehlen die Routen
   unter `/api/v1/tls/` und `/api/v1/tokens`.
 
@@ -31,10 +32,15 @@ und liefert nur `ok`.
 - Am **Manager** erzeugt ein Admin Tokens in der Oberfläche (**Verwaltung, API-Tokens**), per
   `POST /api/v1/tokens` mit `{"name": "...", "scope": "read", "expires_days": 90}` oder per CLI
   (`python -m moni.cli token create --name ... --scope read`).
-- Der Token wird **nur bei der Erzeugung einmal angezeigt**, gespeichert wird nur ein Hash. Er hat ein optionales
-  Ablaufdatum (1 bis 3650 Tage) und ist einzeln widerrufbar (`token revoke`, `DELETE /api/v1/tokens/{id}`).
-- **API-Tokens sind nicht an Benutzer gebunden.** Wer einen Admin deaktiviert, sperrt dessen Tokens nicht. Widerrufen
-  Sie sie von Hand, wenn jemand ausscheidet (`GET /api/v1/tokens` zeigt alle, [Audit-Protokoll](betrieb.md) die Erzeuger).
+- Der Token wird **nur bei der Erzeugung einmal angezeigt**, gespeichert wird nur ein Hash. Er hat ein Ablaufdatum
+  (1 bis 3650 Tage) und ist einzeln widerrufbar (`token revoke`, `DELETE /api/v1/tokens/{id}`).
+- **Ablauf am Manager:** Ohne `expires_days` läuft ein über die API oder Oberfläche angelegter Token nach **90 Tagen** ab.
+  Nur ein ausdrückliches `"expires_days": null` (in der Oberfläche: Feld leeren) ergibt einen Token ohne Ablauf. Per CLI
+  angelegte Tokens laufen nur mit `--expires-days` ab; Agent-Tokens ebenso.
+- **Ersteller:** Ein über die API oder Oberfläche angelegter Token gehört dem angemeldeten Benutzer (legt ein Token einen
+  Token an, erbt dieser den Besitzer). Wird das Konto deaktiviert oder gelöscht, ist der Token sofort ungültig; nach dem
+  Reaktivieren gilt er wieder. Per CLI und vor 2.1 angelegte Tokens haben keinen Ersteller und gelten unabhängig von Konten.
+- `GET /api/v1/tokens` und die Oberfläche zeigen Ersteller (`created_by`) und letzte Nutzung (`last_used_at`, stundengenau).
 
 ## Fehlerformat
 

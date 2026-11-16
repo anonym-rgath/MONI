@@ -528,3 +528,48 @@ def test_string_limit_1024_boundary(mgr_client, mgr_app, make_user, login_cookie
     assert mgr_client.post(url, json={"current_password": "x" * 1025, "new_password": NEW_PW}, headers=h).status_code == 422
     r = mgr_client.post(url, json={"current_password": TEST_PASSWORD, "new_password": "x" * 1025}, headers=h)
     assert (r.status_code, r.json()["detail"]) == (422, "Ungültige oder fehlende Parameter: new_password")  # Schema, nicht die 256er-Passwortregel
+
+
+# --- N8: Einrichtungsfrist für die 2FA ------------------------------------------
+
+def _expire(app, user_id):
+    _store(app, lambda s, c: c.execute("UPDATE users SET enroll_until=? WHERE id=?", (int(time.time()) - 1, user_id)) and c.commit())
+
+
+def test_enroll_deadline_blocks_password_only_login(mgr_client, mgr_app, make_user):
+    u = make_user("viewer")  # direkt angelegt wie vor 2.1: keine Frist
+    assert login(mgr_client, u.email).json() == {"stage": "enroll"}
+    _store(mgr_app, lambda s, c: s.start_enrollment(u.id, int(time.time())))
+    assert login(mgr_client, u.email).json() == {"stage": "enroll"}  # innerhalb der Frist
+    _expire(mgr_app, u.id)
+    r = login(mgr_client, u.email)
+    assert r.status_code == 401 and r.json()["detail"] == login(mgr_client, u.email, "falsch-falsch-1").json()["detail"]
+    assert "login.enroll_expired" in _actions(mgr_app)
+
+
+def test_enroll_deadline_ignored_once_totp_is_active(mgr_client, mgr_app, make_user):
+    u, secret, _ = totp_user(mgr_app, make_user)
+    _expire(mgr_app, u.id)
+    assert login(mgr_client, u.email).json() == {"stage": "mfa"}
+
+
+def test_admin_create_and_resets_start_deadline(mgr_app, make_user, login_cookie):
+    from fastapi.testclient import TestClient
+    from moni.auth.users import ENROLL_SECONDS
+    admin = make_user("admin")
+    cookie, token = login_cookie(admin)
+    c = TestClient(mgr_app, base_url="https://testserver")
+    c.cookies.set(COOKIE, cookie)
+    h = {"X-CSRF-Token": token}
+    r = c.post("/api/v1/users", json={"email": "neu@example.org", "name": "Neu", "role": "viewer", "kind": "local",
+                                      "password": TEST_PASSWORD}, headers=h).json()
+    until = _store(mgr_app, lambda s, conn: s.get(r["id"]).enroll_until)
+    assert abs(until - (time.time() + ENROLL_SECONDS)) < 60 and r["enroll_until"] is not None and r["enroll_expired"] is False
+    _expire(mgr_app, r["id"])
+    assert next(x for x in c.get("/api/v1/users").json() if x["id"] == r["id"])["enroll_expired"] is True
+    for path, body in ((f"/api/v1/users/{r['id']}/reset-2fa", None), (f"/api/v1/users/{r['id']}/password", {"password": TEST_PASSWORD})):
+        _expire(mgr_app, r["id"])
+        assert c.post(path, json=body, headers=h).status_code == 204
+        assert _store(mgr_app, lambda s, conn: s.enroll_expired(s.get(r["id"]), int(time.time()))) is False
+    oidc = c.post("/api/v1/users", json={"email": "o@example.org", "name": "O", "role": "viewer", "kind": "oidc"}, headers=h).json()
+    assert oidc["enroll_until"] is None
