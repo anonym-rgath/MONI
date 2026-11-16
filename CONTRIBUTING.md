@@ -58,17 +58,21 @@ Kurze Betreffzeile mit Präfix und optionalem Bereich, wie im Verlauf (`git log`
 
 Bereiche sind etwa `agent`, `manager`, `auth`, `alerts`, `ui`, `tls`, `api`, `ops`, `scripts`, `release`.
 
-## Laufzeit-Abhängigkeiten ändern
+## Abhängigkeiten ändern
 
-Direkte Pakete stehen in `backend/requirements-docker.txt`. Das Image installiert aber nur
-`backend/requirements-docker.lock` mit Hashes. Nach jeder Änderung die Lock-Datei neu erzeugen, nur mit Versionen,
-die mindestens 14 Tage alt sind:
+Direkte Pakete stehen in `backend/requirements-docker.in` (Laufzeit) und `backend/requirements-dev.in` (Tests).
+Daraus entstehen `requirements-docker.txt` und `requirements-dev.txt` mit allen Paketen und Hashes. Image und CI
+installieren nur diese beiden Dateien, mit geprüften Hashes. Dependabot (Ökosystem `uv`) hält beide aktuell und
+schlägt nur Versionen vor, die mindestens 14 Tage alt sind.
+
+Wer ein Paket selbst ändert, erzeugt beide Dateien neu, ebenfalls nur mit Versionen, die mindestens 14 Tage alt sind:
 
 ```bash
-cd backend && uv pip compile requirements-docker.txt --universal --python-version 3.14 --generate-hashes --no-header --exclude-newer <Datum vor 14 Tagen> -o requirements-docker.lock
+cd backend && export UV_EXCLUDE_NEWER=<Datum vor 14 Tagen> && uv pip compile --universal --python-version 3.14 --generate-hashes --output-file requirements-docker.txt requirements-docker.in && uv pip compile --universal --python-version 3.14 --generate-hashes --output-file requirements-dev.txt requirements-dev.in
 ```
 
-Den Kopfkommentar der Lock-Datei danach wieder einfügen.
+Die Grenze steht bewusst in der Umgebung, nicht im Befehl: Der Befehl landet im Dateikopf, und Dependabot führt ihn
+später genau so aus.
 
 ## OpenAPI neu erzeugen
 

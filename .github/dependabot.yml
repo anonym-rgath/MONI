@@ -12,8 +12,8 @@
 version: 2
 updates:
 
-  # --- Backend: Python (pip) ----------------------------------------------
-  - package-ecosystem: "pip"
+  # --- Backend: Python (uv) -----------------------------------------------
+  - package-ecosystem: "uv"  # pflegt die mit uv pip compile erzeugten Dateien samt Hashes
     directory: "/backend"
     schedule:
       interval: "weekly"
@@ -40,6 +40,12 @@ updates:
       day: "monday"
     cooldown:
       default-days: 14  # nur Versionen, die mindestens 14 Tage alt sind
+    # ESLint-Majors brechen meist Plugins oder Konfiguration (PR mit ESLint 10 war rot): von Hand umstellen
+    ignore:
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/*"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
