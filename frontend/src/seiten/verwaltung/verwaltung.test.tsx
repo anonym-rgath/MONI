@@ -11,7 +11,7 @@ import { zeigeApp } from '../../test/render'
 import { BASIS, problem, server, sitzungAntwort } from '../../test/server'
 
 const benutzer = (id: number, extra: Partial<Benutzer> = {}): Benutzer => ({
-  id, email: `u${id}@example.test`, name: `Nutzer ${id}`, role: 'viewer', kind: 'local', totp_enabled: true, disabled: false, locked: false,
+  id, email: `u${id}@example.test`, name: `Nutzer ${id}`, role: 'viewer', kind: 'local', totp_enabled: true, disabled: false, locked: false, enroll_until: null, enroll_expired: false,
   oidc_bound: false, created_at: '2026-11-01T08:00:00Z', last_login: '2026-11-10T08:00:00Z', ...extra,
 })
 const token = (id: string, extra: Partial<Token> = {}): Token => ({ id, name: `Token ${id}`, scope: 'read', created_at: '2026-11-01T08:00:00Z', expires_at: null, ...extra })
@@ -347,6 +347,15 @@ describe('API-Tokens', () => {
 })
 
 describe('Benutzer', () => {
+  test('zeigt laufende und abgelaufene Frist für die 2FA-Einrichtung (N8)', async () => {
+    daten({ benutzer: [benutzer(1, { role: 'admin' }), benutzer(2, { totp_enabled: false, enroll_until: '2999-01-01T00:00:00Z' }),
+      benutzer(3, { totp_enabled: false, enroll_until: '2020-01-01T00:00:00Z', enroll_expired: true }), benutzer(4, { totp_enabled: false })] })
+    await zeige('/verwaltung/benutzer', 'Benutzer')
+    expect(await screen.findByRole('row', { name: /Nutzer 2/ })).toHaveTextContent('nicht eingerichtet, Frist bis')
+    expect(screen.getByRole('row', { name: /Nutzer 3/ })).toHaveTextContent('Frist abgelaufen, neues Passwort nötig')
+    expect(screen.getByRole('row', { name: /Nutzer 4/ })).toHaveTextContent(/nicht eingerichtet(?!,)/)
+  })
+
   test('Tabelle mit Rolle, Art, 2FA und Status', async () => {
     daten()
     await zeige('/verwaltung/benutzer', 'Benutzer')

@@ -150,6 +150,8 @@ export interface Benutzer {
   oidc_bound: boolean
   created_at: string
   last_login: string | null
+  enroll_until: string | null // N8: Frist für die 2FA-Einrichtung, null bei aktiver 2FA oder ohne Frist
+  enroll_expired: boolean
 }
 export interface Token {
   id: string

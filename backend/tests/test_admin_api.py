@@ -74,7 +74,7 @@ def test_user_crud_and_audit(admin_client, csrf):
     assert r.status_code == 201 and "password" not in r.text and "argon2" not in r.text
     body = r.json()
     assert set(body) == {"id", "email", "name", "role", "kind", "totp_enabled", "disabled", "locked", "oidc_bound",
-                         "created_at", "last_login"}
+                         "created_at", "last_login", "enroll_until", "enroll_expired"}
     assert body["locked"] is False and body["created_at"].endswith("Z") and body["last_login"] is None
     uid = body["id"]
     assert admin_client.patch(f"/api/v1/users/{uid}", json={"role": "admin"}, headers=csrf).json()["role"] == "admin"

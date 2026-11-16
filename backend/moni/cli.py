@@ -1,4 +1,5 @@
 import argparse
+import time
 import sqlite3
 import sys
 from datetime import timedelta
@@ -96,6 +97,7 @@ def _user(args, settings: Settings, conn, box) -> int:
             else:
                 users.reset_totp(user.id)
                 action = "totp.reset"
+            users.start_enrollment(user.id, int(time.time()))  # N8: wie in der Admin-API
             SessionStore(conn, settings).delete_for_user(user.id)
         audit.record(conn, _ACTOR, action, target=user.email)
     print(f"{action}: {user.email}")

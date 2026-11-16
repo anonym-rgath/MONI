@@ -43,6 +43,11 @@ docker compose -f compose.manager.yaml exec moni-manager python -m moni.cli user
 hebt die Sperre nach Fehlversuchen auf. Jeder dieser Schritte steht im Audit-Protokoll. Das Passwort steht kurz in der Shell-History,
 wenn Sie `printf` wie oben tippen: Nutzen Sie stattdessen eine Datei mit Rechten 600 und löschen Sie sie danach.
 
+**Einrichtungsfrist für die 2FA:** Legt ein Admin ein lokales Konto an oder setzt Passwort bzw. 2FA zurück (Oberfläche
+oder CLI), gilt das Passwort ohne zweiten Faktor nur **72 Stunden**. In dieser Zeit meldet sich der Benutzer an und
+richtet TOTP ein; danach lehnt Moni die Anmeldung ab wie bei einem falschen Passwort (im Audit-Protokoll als
+`login.enroll_expired`), bis ein Admin erneut ein Passwort setzt. Konten mit eingerichteter 2FA betrifft das nicht.
+
 Weitere CLI-Befehle: `server add|list|remove`, `token create|list|revoke`, `secret generate|reencrypt`,
 `pair code|reset` (Agent), `openapi`.
 

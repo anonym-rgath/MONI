@@ -148,6 +148,7 @@ def test_cli_reset_2fa_and_unlock_audited(env, capsys):
     assert cli.main(["user", "unlock", "A@B.de"]) == 0
     assert cli.main(["user", "reset-2fa", "a@b.de"]) == 0
     assert users.get(u.id).locked_until is None and not users.get(u.id).totp_enabled
+    assert users.get(u.id).enroll_until > time.time()  # N8: neue Einrichtungsfrist
     assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
     conn.close()
     es = _audit_rows(env)
