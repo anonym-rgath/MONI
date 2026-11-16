@@ -4,6 +4,7 @@ import re
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from starlette.routing import Route
 
 from conftest import TEST_PASSWORD
 from moni.auth.sessions import COOKIE
@@ -42,8 +43,27 @@ NO_ROLE = "Keine Berechtigung"
 NO_CSRF = "CSRF-Token fehlt oder ist ungültig"
 
 
+def _walk(routes, prefix=""):
+    # Seit fastapi 0.137 ist app.routes ein Baum aus eingebundenen Routern (interne Klasse mit original_router).
+    # Unbekannte Knoten brechen laut ab, damit nach einem fastapi-Update keine Route still aus dem Inventar fällt.
+    for r in routes:
+        if isinstance(r, APIRoute):
+            yield from ((m, prefix + r.path) for m in sorted(r.methods))
+        elif hasattr(r, "original_router"):
+            yield from _walk(r.original_router.routes, prefix + r.include_context.prefix)
+        elif isinstance(r, Route) and r.include_in_schema is False:
+            continue  # /docs, /openapi.json und Co. von FastAPI selbst
+        else:
+            raise AssertionError(f"Unbekannter Routentyp im Inventar: {r!r}")
+
+
 def _routes(app):
-    return [(m, r.path) for r in app.routes if isinstance(r, APIRoute) for m in sorted(r.methods)]
+    return list(_walk(app.routes))
+
+
+def test_inventory_matches_openapi(mgr_app):
+    documented = {(m.upper(), p) for p, ops in mgr_app.openapi()["paths"].items() for m in ops}
+    assert documented <= set(_routes(mgr_app))  # das Inventar sieht mindestens alles, was dokumentiert ist
 
 
 def _url(path):
