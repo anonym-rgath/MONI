@@ -32,3 +32,12 @@ Vorgehen: neuen Stack installieren, Agent koppeln, Funktion prüfen (`./scripts/
 
 Ein Zurück auf eine ältere Version ist nach einer Migration nicht vorgesehen: Spielen Sie dafür das Backup zurück.
 Der Agent hat keine Datenbank; Agent und Manager einer Hauptversion arbeiten zusammen, auch wenn der Agent älter ist.
+
+### Hinweise für 2.1
+
+- Die API-Doku ist danach aus. Wer `/api/v1/openapi.json` live abruft, setzt `MONI_API_DOCS=1`.
+- Wird der Manager über einen Namen aufgerufen, der nicht in `MONI_MANAGER_HOSTNAMES` steht, antwortet Port 80 mit 400.
+  Den Namen dort eintragen.
+- Liegen Agents, Webhooks oder der OIDC-Anbieter auf Link-Local-Adressen (`169.254.0.0/16`, `fe80::/10`), sind sie nicht
+  mehr erreichbar.
+- Alte API-Tokens laufen weiter, haben aber keinen Ersteller und keinen Ablauf. Ersetzen Sie sie bei Gelegenheit.

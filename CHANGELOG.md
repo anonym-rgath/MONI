@@ -4,6 +4,40 @@ Das Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die V
 [Semantic Versioning](https://semver.org/lang/de/). Der oberste Abschnitt muss zur Version in
 `backend/moni/__init__.py` passen (`scripts/ci/check_version.py`).
 
+## [2.1.0-rc.1] – 2026-11-16
+
+Schließt die niedrigen Befunde N1–N9 aus dem Security-Audit vom 16.11.2026. Vor dem Update ein Backup anlegen: Es gibt
+eine Datenbank-Migration und ein erweitertes Format für `tokens.json`.
+
+### Verhaltensänderungen
+
+- **API-Doku standardmäßig aus:** `/api/v1/docs` und `/api/v1/openapi.json` antworten bei Agent und Manager nicht mehr.
+  `MONI_API_DOCS=1` schaltet sie wieder ein (N3). Die Spezifikation liegt weiterhin unter `docs/api/`.
+- **Port 80 leitet nur bekannte Namen um:** Host-Header außerhalb von `MONI_MANAGER_HOSTNAMES` erhalten 400 statt einer
+  Umleitung auf HTTPS (N4).
+- **API-Tokens laufen ab:** Neue Tokens gelten standardmäßig 90 Tage („nie“ bleibt ausdrücklich wählbar). Bestehende
+  Tokens bleiben unverändert (N7).
+- **Frist für die 2FA-Einrichtung:** Von Admins gesetzte Passwörter (neues Konto, Passwort- oder 2FA-Reset) gelten ohne
+  eingerichtete Zwei-Faktor-Anmeldung nur 72 Stunden. Bestehende Konten bekommen keine Frist (N8).
+- **Kein Rückweg auf 2.0.x ohne Backup:** Migration 0006 und die neuen Felder in `tokens.json` versteht 2.0.x nicht.
+
+### Sicherheit
+
+- **HSTS** bei `MONI_TLS=on`, ein Jahr, ohne Unterdomänen (N1).
+- **Ausgehende Ziele geprüft:** Der Manager verbindet sich nie mit Link-Local- oder Cloud-Metadaten-Adressen (Agents,
+  Webhooks, OIDC, SMTP). Mit `MONI_ALLOW_PRIVATE_TARGETS=0` erreicht er nur öffentliche Adressen (N5).
+- **Warnung bei `http://`:** Token-Kopplung und Webhooks ohne TLS warnen deutlich und verlangen eine ausdrückliche
+  Bestätigung (N6).
+- **API-Tokens mit Ersteller:** Neue Tokens gehören ihrem Ersteller und sind gesperrt, solange dessen Konto deaktiviert
+  ist; nach dem Löschen des Kontos dauerhaft. Die Liste zeigt Ersteller und letzte Nutzung (N7).
+- **OIDC-Konten an einen Anbieter gebunden:** Beim Anlegen wird der Anmeldeanbieter festgelegt; ein anderer Anbieter mit
+  derselben E-Mail-Adresse kann das Konto nicht übernehmen. Die Zwei-Faktor-Anmeldung liegt bei OIDC beim Anbieter (N2).
+- **Lesender Host-Zugriff** (Host-Dateisystem, Prozesse, Container-Metadaten) ist in `SECURITY.md` als bewusste Entscheidung beschrieben (N9).
+
+### Abhängigkeiten
+
+- fastapi 0.162.0 (neu dabei: `opentelemetry-api`, ohne SDK wirkungslos), uvicorn 0.54.0, react-router 8.5.1.
+
 ## [2.0.3] – 2026-11-16
 
 Wartungsrelease, funktional gleich mit 2.0.2. Der Release-Weg mit den neuen Actions ist vorab mit `2.0.3-rc.1` erprobt.
