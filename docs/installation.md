@@ -183,8 +183,8 @@ Gesetzt werden sie in `.env` (Compose reicht sie an den Container). Ohne Eintrag
 | `MONI_TLS` | beide | `on` | `on`: HTTPS (Agent mit mTLS, Manager mit eigenem Zertifikat). `off`: nur hinter einem vertrauenswürdigen Proxy, siehe [Proxy](proxy.md) |
 | `MONI_TRUSTED_PROXIES` | beide | leer | IPs/CIDRs vertrauenswürdiger Proxys, kommagetrennt. Wirkt nur bei `MONI_TLS=off`; bei `on` wird sie ignoriert (Warnung im Log) |
 | `MONI_MANAGER_BIND` | Manager | `127.0.0.1` | Host-Adresse, an die der Manager seine Ports bindet |
-| `MONI_HTTPS_PORT` | Manager | `8443` | Veröffentlichter HTTPS-Port auf dem Host (Ziel der Umleitung von Port 8080, Healthcheck) |
-| `MONI_MANAGER_HOSTNAMES` | Manager | Hostname, `localhost`, `127.0.0.1` | Namen und IPs im HTTPS-Zertifikat, kommagetrennt |
+| `MONI_HTTPS_PORT` | Manager | `8443` | Veröffentlichter HTTPS-Port auf dem Host (Ziel der Umleitung von Port 8080, Healthcheck). Bei `MONI_TLS=on` sendet der Manager HSTS (`max-age=31536000`, ohne Unterdomänen) |
+| `MONI_MANAGER_HOSTNAMES` | Manager | Hostname, `localhost`, `127.0.0.1` | Namen und IPs im HTTPS-Zertifikat, kommagetrennt. Nur Anfragen an diese Namen leitet Port 8080 auf HTTPS um, alle anderen beantwortet er mit 400 |
 | `MONI_AGENT_BIND` | Agent | `127.0.0.1` | Host-Adresse für Port 9810; `0.0.0.0` für einen Manager auf anderem Rechner |
 | `MONI_PUBLIC_URL` | Agent | leer | `https://host[:port]`, wird in den Kopplungscode eingebettet; kein Pfad |
 | `MONI_ALLOW_PRIVATE_TARGETS` | Manager | `1` | `0`: Agents, Webhooks, OIDC-Anbieter und SMTP-Server nur unter öffentlichen Adressen erreichen (keine privaten Netze, kein localhost). Link-Local und Cloud-Metadaten (`169.254.0.0/16`, `fe80::/10`) sind immer gesperrt; geprüft wird jede aufgelöste Adresse beim Verbinden |
@@ -195,6 +195,7 @@ Gesetzt werden sie in `.env` (Compose reicht sie an den Container). Ohne Eintrag
 | `MONI_RETENTION_HOUR_DAYS` | Manager | `365` | Aufbewahrung der Stundenwerte in Tagen |
 | `MONI_SESSION_IDLE_MINUTES` | Manager | `60` | Abmeldung nach Leerlauf in Minuten |
 | `MONI_SESSION_MAX_HOURS` | Manager | `12` | Absolute Sitzungsdauer in Stunden |
+| `MONI_API_DOCS` | beide | `0` | `1`: interaktive API-Doku unter `/api/v1/docs` und Spezifikation unter `/api/v1/openapi.json`, beide ohne Anmeldung abrufbar. Standard aus; die Spezifikation liegt auch in [`docs/api/`](api/) |
 | `API_CORS_ORIGINS` | beide | leer | Erlaubte Ursprünge für Browser-Zugriffe auf die API, kommagetrennt |
 | `DOCKER_STATS_TIMEOUT` | beide | `2.5` | Timeout je Docker-Stats-Abfrage in Sekunden |
 | `DOCKER_INSPECT_TIMEOUT` | beide | `1.0` | Timeout je Container-Inspect in Sekunden |

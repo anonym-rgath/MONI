@@ -103,8 +103,10 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
             if own_col:
                 collector.stop()
 
-    app = FastAPI(title="Moni Manager" if manager else "Moni Agent", version=__version__, docs_url="/api/v1/docs",
-                  openapi_url="/api/v1/openapi.json", redoc_url=None, lifespan=lifespan)
+    docs = settings.api_docs
+    app = FastAPI(title="Moni Manager" if manager else "Moni Agent", version=__version__,
+                  docs_url="/api/v1/docs" if docs else None, openapi_url="/api/v1/openapi.json" if docs else None,
+                  redoc_url=None, lifespan=lifespan)
     app.state.settings, app.state.collector = settings, collector
     app.state.tokens = TokenStore(Path(settings.data_dir) / "tokens.json")
     app.state.tls = tls_state if not manager and settings.tls == "on" else None

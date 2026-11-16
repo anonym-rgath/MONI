@@ -219,6 +219,9 @@ jobs:
           [ "$ok" = 1 ] || { echo "FAIL: Manager /api/v1/health nicht erreichbar"; exit 1; }
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 301
           test "$(curl -s -o /dev/null -w '%{redirect_url}' http://127.0.0.1:8080/)" = "https://127.0.0.1:8443/"
+          # N4: fremder Host-Header wird nicht umgeleitet; N1: HSTS auf HTTPS
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.org' http://127.0.0.1:8080/)" = 400
+          curl -sk -o /dev/null -D - https://127.0.0.1:8443/ | grep -qi '^strict-transport-security: max-age=31536000'
           test "$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/api/v1/servers)" = 401
           TOKEN=$(docker compose -f compose.manager.yaml exec -T moni-manager python -m moni.cli token create --name ci --scope admin | tail -n1)
           sleep 15   # mindestens zwei Messungen abwarten (Takt 5 s)

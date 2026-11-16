@@ -131,6 +131,7 @@ class Settings:
     public_url: str = ""
     trusted_proxies: tuple[str, ...] = ()
     manager_hostnames: tuple[str, ...] = ("localhost", "127.0.0.1")
+    api_docs: bool = False  # N3: /api/v1/docs und /api/v1/openapi.json nur auf ausdrücklichen Wunsch
     https_port: int = 8443  # von außen erreichbarer HTTPS-Port des Managers, Ziel der Umleitung von Port 80
 
     @property
@@ -170,6 +171,7 @@ class Settings:
             public_url=_public_url(g("MONI_PUBLIC_URL", "")),
             trusted_proxies=_proxies(g("MONI_TRUSTED_PROXIES", "")),
             https_port=_int(env, "MONI_HTTPS_PORT", "8443"),
+            api_docs=_flag(g("MONI_API_DOCS", ""), "MONI_API_DOCS"),
             manager_hostnames=_manager_hostnames(g("MONI_MANAGER_HOSTNAMES", ""), g("HOST_ETC", "/etc")),
         )
         if s.role not in ("agent", "manager"):
