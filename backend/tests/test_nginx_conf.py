@@ -36,15 +36,32 @@ def _location(conf: str, path: str) -> str:
 
 def test_render_tls_on_has_443_redirect_and_no_realip():
     conf = nginx.render(_s(MONI_TLS="on", MONI_TRUSTED_PROXIES="10.0.0.0/8"))  # Proxys gelten nur bei tls=off
-    main, redirect = _servers(conf)
-    assert "listen 443 ssl;" in main and "listen 80;" not in main
+    main, reject, redirect = _servers(conf)
+    assert "listen 443 ssl;" in main and "listen 80" not in main
+    assert 'add_header Strict-Transport-Security "max-age=31536000" always;' in main
     for line in ("ssl_certificate /data/tls/https.crt;", "ssl_certificate_key /data/tls/https.key;",
                  "ssl_protocols TLSv1.2 TLSv1.3;"):
         assert line in main
     assert "location /api {" in main and "location / {" in main
     assert [ln.strip() for ln in redirect.splitlines()[1:-1] if ln.strip() and "log" not in ln] == [
-        "listen 80;", "return 301 https://$host:8443$request_uri;"]  # Standard: veröffentlichter Port 8443 (D7)
+        "listen 80;", f"server_name {' '.join(_s().manager_hostnames)};",
+        "return 301 https://$host:8443$request_uri;"]  # Standard: veröffentlichter Port 8443 (D7)
+    assert [ln.strip() for ln in reject.splitlines()[1:-1] if ln.strip() and "log" not in ln] == [
+        "listen 80 default_server;", "return 400;"]
     assert "real_ip" not in conf and "set_real_ip_from" not in conf
+
+
+def test_render_redirect_only_for_certificate_names():
+    conf = nginx.render(_s(MONI_TLS="on", MONI_MANAGER_HOSTNAMES="moni.example.org, 192.0.2.7, 2001:db8::1"))
+    assert "server_name moni.example.org 192.0.2.7 [2001:db8::1];" in _servers(conf)[2]
+    assert "Strict-Transport-Security" not in nginx.render(_s(MONI_TLS="off"))
+
+
+@pytest.mark.parametrize("bad", ["evil.example.org;\n    return 200", "a b", "x;"])
+def test_render_rejects_injected_hostnames(bad):
+    s = dataclasses.replace(_s(MONI_TLS="on"), manager_hostnames=("moni.example.org", bad))
+    with pytest.raises(ValueError):
+        nginx.render(s)
 
 
 def test_render_tls_off_with_trusted_proxies_sets_realip():
@@ -128,7 +145,7 @@ def test_render_rejects_injected_tokens(bad):
                                          ("9443", "https://$host:9443$request_uri")])
 def test_render_redirect_uses_published_https_port(port, target):
     conf = nginx.render(_s(MONI_TLS="on", MONI_HTTPS_PORT=port))
-    assert [ln.strip() for ln in _servers(conf)[1].splitlines() if "return" in ln] == [f"return 301 {target};"]
+    assert [ln.strip() for ln in _servers(conf)[2].splitlines() if "return" in ln] == [f"return 301 {target};"]
 
 
 def test_render_rejects_non_int_port():
