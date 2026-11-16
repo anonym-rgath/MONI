@@ -334,6 +334,18 @@
             "title": "Name",
             "type": "string"
           },
+          "oidc_provider": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Provider"
+          },
           "password": {
             "anyOf": [
               {

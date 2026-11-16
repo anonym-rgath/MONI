@@ -1,12 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { schluessel } from '../../api/abfragen'
+import { schluessel, useOidcKonfig } from '../../api/abfragen'
 import { api } from '../../api/client'
 import { useSitzung } from '../../auth/Sitzung'
 import type { ApiRolle, Benutzer } from '../../api/typen'
 import { t } from '../../texte/de'
 import { Feld } from '../../ui/Feld'
 import { Formular } from '../../ui/Formular'
+import { Hinweis } from '../../ui/Hinweis'
 import { Knopf } from '../../ui/Knopf'
 import { Auswahl } from '../alarme/felder'
 
@@ -19,7 +20,7 @@ function Rollen({ wert, onChange }: { wert: ApiRolle; onChange: (r: ApiRolle) =>
   )
 }
 
-// Startpasswort nur für lokale Konten; die Rolle beginnt beim geringeren Recht.
+// Startpasswort nur für lokale Konten, Anmeldeanbieter nur für OIDC-Konten (N2); die Rolle beginnt beim geringeren Recht.
 export function BenutzerAnlegen({ onFertig, onAbbrechen }: { onFertig: () => void; onAbbrechen: () => void }) {
   const qc = useQueryClient()
   const [email, setEmail] = useState('')
@@ -27,8 +28,12 @@ export function BenutzerAnlegen({ onFertig, onAbbrechen }: { onFertig: () => voi
   const [rolle, setRolle] = useState<ApiRolle>('viewer')
   const [konto, setKonto] = useState<'local' | 'oidc'>('local')
   const [passwort, setPasswort] = useState('')
+  const anbieterListe = useOidcKonfig().data?.providers ?? []
+  const [gewaehlt, setGewaehlt] = useState('')
+  const anbieter = gewaehlt || (anbieterListe.length === 1 ? (anbieterListe[0]?.id ?? '') : '')
   async function senden() {
-    await api.post('/users', { email: email.trim(), name: name.trim(), role: rolle, kind: konto, ...(konto === 'local' && { password: passwort }) })
+    await api.post('/users', { email: email.trim(), name: name.trim(), role: rolle, kind: konto,
+      ...(konto === 'local' ? { password: passwort } : { oidc_provider: anbieter }) })
     await qc.invalidateQueries({ queryKey: schluessel.benutzer })
     onFertig()
   }
@@ -43,6 +48,13 @@ export function BenutzerAnlegen({ onFertig, onAbbrechen }: { onFertig: () => voi
           <option value="oidc">{t('verwaltung.artOidc')}</option>
         </Auswahl>
         {konto === 'local' && <Feld label={t('verwaltung.fPasswort')} hinweis={t('verwaltung.fPasswortHinweis')} type="password" value={passwort} onChange={(e) => setPasswort(e.target.value)} required autoComplete="new-password" />}
+        {konto === 'oidc' && anbieterListe.length === 0 && <Hinweis art="fehler">{t('verwaltung.keinAnbieter')}</Hinweis>}
+        {konto === 'oidc' && (
+          <Auswahl label={t('verwaltung.fAnbieter')} hinweis={t('verwaltung.fAnbieterHinweis')} value={anbieter} onChange={(e) => setGewaehlt(e.target.value)} required>
+            {anbieterListe.length !== 1 && <option value="">{t('verwaltung.anbieterWaehlen')}</option>}
+            {anbieterListe.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </Auswahl>
+        )}
       </Formular>
       <Knopf onClick={onAbbrechen}>{t('verwaltung.abbrechen')}</Knopf>
     </>

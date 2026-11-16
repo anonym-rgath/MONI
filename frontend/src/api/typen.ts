@@ -148,6 +148,7 @@ export interface Benutzer {
   disabled: boolean
   locked: boolean
   oidc_bound: boolean
+  oidc_issuer: string | null // N2: einziger erlaubter Anbieter vor der ersten Anmeldung
   created_at: string
   last_login: string | null
   enroll_until: string | null // N8: Frist für die 2FA-Einrichtung, null bei aktiver 2FA oder ohne Frist

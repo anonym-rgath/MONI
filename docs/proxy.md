@@ -110,3 +110,13 @@ Adresse des Managers. Dafür braucht der Manager eine echte Domain mit gültigem
 einen Proxy wie oben. Die öffentliche Adresse muss mit `https://` beginnen und ohne Pfad sein. Tragen Sie sie in der Verwaltung
 unter **Anmeldung, Öffentliche URL des Managers** ein, daraus entsteht die Redirect-URI jedes Anbieters; Benutzer
 legt ein Admin vorher mit ihrer E-Mail-Adresse an, Konten entstehen nicht automatisch.
+
+Beim Anlegen eines OIDC-Kontos wählt der Admin den **Anmeldeanbieter**. Nur über diesen Anbieter kann sich das Konto
+zum ersten Mal anmelden und wird dann an dessen Identität gebunden. Ein anderer eingerichteter Anbieter, der dieselbe
+E-Mail-Adresse bestätigt, kommt nicht hinein (im Audit-Protokoll `oidc.failure` mit `wrong_provider`). Konten, die vor
+Moni 2.1 angelegt und noch nie angemeldet wurden, haben keinen festen Anbieter: Legen Sie sie bei mehreren Anbietern
+neu an.
+
+**Zwei-Faktor-Anmeldung:** OIDC-Konten melden sich ohne Moni-TOTP an. Den zweiten Faktor verlangt der Anbieter, nicht
+Moni. Erzwingen Sie MFA deshalb beim Anbieter (z. B. per Richtlinie in Microsoft Entra, Google Workspace oder Keycloak),
+sonst schützt nur dessen Passwort den Zugang.

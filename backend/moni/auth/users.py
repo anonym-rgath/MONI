@@ -35,13 +35,14 @@ class User:
     created_at: int
     last_login: int | None
     oidc_bound: bool
+    oidc_iss: str | None = None  # N2: vor der ersten Anmeldung der einzige erlaubte Anbieter; None = jeder (vor 2.1)
     enroll_until: int | None = None
 
 
 def _user(r: sqlite3.Row) -> User:
     return User(r["id"], r["email"], r["name"], r["role"], r["kind"], r["totp_enc"] is not None, bool(r["disabled"]),
                 r["failed_logins"], r["locked_until"], r["created_at"], r["last_login"], r["oidc_sub"] is not None,
-                r["enroll_until"])
+                r["oidc_iss"], r["enroll_until"])
 
 
 def _email_shape(s: str) -> bool:
@@ -95,12 +96,15 @@ class UserStore:
                                   (user_id,)).fetchone()[0]:
             raise Conflict(_LAST_ADMIN)
 
-    def create(self, email: str, name: str, role: str, kind: str, password: str | None = None, now: int | None = None) -> User:
+    def create(self, email: str, name: str, role: str, kind: str, password: str | None = None, now: int | None = None,
+               oidc_iss: str | None = None) -> User:
         email, name = normalize_email(email), _check_name(name)
         if role not in _ROLES or kind not in _KINDS:
             raise ValueError("Rolle oder Art des Kontos ist ungültig")
         if kind == "oidc" and password is not None:
             raise ValueError("OIDC-Konten haben kein Passwort")
+        if kind == "local" and oidc_iss is not None:
+            raise ValueError("Nur OIDC-Konten haben einen Anmeldeanbieter")
         pw_hash = None
         if kind == "local":
             if password is None:
@@ -110,8 +114,8 @@ class UserStore:
         try:
             with self._tx():
                 cur = self._conn.execute(
-                    "INSERT INTO users (email, name, role, kind, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (email, name, role, kind, pw_hash, int(time.time()) if now is None else now))
+                    "INSERT INTO users (email, name, role, kind, password_hash, created_at, oidc_iss) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (email, name, role, kind, pw_hash, int(time.time()) if now is None else now, oidc_iss))
         except sqlite3.IntegrityError:
             raise Conflict(_EMAIL_TAKEN) from None
         return _user(self._row(cur.lastrowid))

@@ -12,7 +12,7 @@ import { BASIS, problem, server, sitzungAntwort } from '../../test/server'
 
 const benutzer = (id: number, extra: Partial<Benutzer> = {}): Benutzer => ({
   id, email: `u${id}@example.test`, name: `Nutzer ${id}`, role: 'viewer', kind: 'local', totp_enabled: true, disabled: false, locked: false, enroll_until: null, enroll_expired: false,
-  oidc_bound: false, created_at: '2026-11-01T08:00:00Z', last_login: '2026-11-10T08:00:00Z', ...extra,
+  oidc_bound: false, oidc_issuer: null, created_at: '2026-11-01T08:00:00Z', last_login: '2026-11-10T08:00:00Z', ...extra,
 })
 const token = (id: string, extra: Partial<Token> = {}): Token => ({ id, name: `Token ${id}`, scope: 'read', created_at: '2026-11-01T08:00:00Z', expires_at: null, created_by: null, last_used_at: null, ...extra })
 const eintrag = (id: number, extra: Partial<AuditEintrag> = {}): AuditEintrag => ({
@@ -433,9 +433,27 @@ describe('Benutzer', () => {
     await user.selectOptions(within(d2).getByLabelText('Art des Kontos'), 'OIDC')
     expect(within(d2).queryByLabelText('Startpasswort')).not.toBeInTheDocument()
     await user.type(within(d2).getByLabelText('E-Mail-Adresse'), 'sso@example.test')
+    expect(await within(d2).findByLabelText('Anmeldeanbieter')).toHaveValue('keycloak') // einziger Anbieter ist vorgewählt
     await user.click(within(d2).getByRole('button', { name: 'Benutzer anlegen' }))
     await waitFor(() => expect(mit('POST')).toHaveLength(2))
-    expect(letzter().body).toEqual({ email: 'sso@example.test', name: '', role: 'viewer', kind: 'oidc' })
+    expect(letzter().body).toEqual({ email: 'sso@example.test', name: '', role: 'viewer', kind: 'oidc', oidc_provider: 'keycloak' })
+  })
+
+  test('OIDC-Konto: bei mehreren Anbietern ist die Wahl Pflicht (N2)', async () => {
+    daten({ oidc: { public_url: 'https://moni.example.org', providers: [{ id: 'keycloak', label: 'Keycloak' }, { id: 'google', label: 'Google' }] } })
+    const user = userEvent.setup()
+    await zeige('/verwaltung/benutzer', 'Benutzer')
+    aufzeichnen('post', '/users', () => HttpResponse.json(benutzer(9), { status: 201 }))
+    await user.click(await screen.findByRole('button', { name: 'Benutzer anlegen' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.selectOptions(within(dialog).getByLabelText('Art des Kontos'), 'OIDC')
+    await user.type(within(dialog).getByLabelText('E-Mail-Adresse'), 'sso@example.test')
+    await user.click(within(dialog).getByRole('button', { name: 'Benutzer anlegen' }))
+    expect(mit('POST')).toHaveLength(0)
+    await user.selectOptions(await within(dialog).findByLabelText('Anmeldeanbieter'), 'Google')
+    await user.click(within(dialog).getByRole('button', { name: 'Benutzer anlegen' }))
+    await waitFor(() => expect(mit('POST')).toHaveLength(1))
+    expect(letzter().body).toMatchObject({ kind: 'oidc', oidc_provider: 'google' })
   })
 
   test('letzter Admin: die API-Meldung erscheint unverändert im Dialog', async () => {
