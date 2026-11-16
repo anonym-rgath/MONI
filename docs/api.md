@@ -6,7 +6,8 @@ ohne Weboberfläche nutzbar und lässt sich in Skripte, Prometheus oder Grafana 
 - Spezifikation (OpenAPI): [`api/openapi-agent.json`](api/openapi-agent.json) und
   [`api/openapi-manager.json`](api/openapi-manager.json). Beide stehen im Repository und werden in den Tests
   mit dem Code abgeglichen.
-- Interaktive Dokumentation der laufenden Instanz: `/api/v1/docs`.
+- Interaktive Dokumentation der laufenden Instanz: `/api/v1/docs`, nur mit `MONI_API_DOCS=1` (Standard aus; dann ohne
+  Anmeldung abrufbar, siehe [Installation](installation.md#variablen)).
 - Die Agent-Spezifikation beschreibt die Variante mit TLS (`MONI_TLS=on`). Mit `MONI_TLS=off` fehlen die Routen
   unter `/api/v1/tls/` und `/api/v1/tokens`.
 

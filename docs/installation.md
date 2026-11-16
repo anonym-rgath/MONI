@@ -194,6 +194,7 @@ Gesetzt werden sie in `.env` (Compose reicht sie an den Container). Ohne Eintrag
 | `MONI_RETENTION_HOUR_DAYS` | Manager | `365` | Aufbewahrung der Stundenwerte in Tagen |
 | `MONI_SESSION_IDLE_MINUTES` | Manager | `60` | Abmeldung nach Leerlauf in Minuten |
 | `MONI_SESSION_MAX_HOURS` | Manager | `12` | Absolute Sitzungsdauer in Stunden |
+| `MONI_API_DOCS` | beide | `0` | `1`: interaktive API-Doku unter `/api/v1/docs` und Spezifikation unter `/api/v1/openapi.json`, beide ohne Anmeldung abrufbar. Standard aus; die Spezifikation liegt auch in [`docs/api/`](api/) |
 | `API_CORS_ORIGINS` | beide | leer | Erlaubte Ursprünge für Browser-Zugriffe auf die API, kommagetrennt |
 | `DOCKER_STATS_TIMEOUT` | beide | `2.5` | Timeout je Docker-Stats-Abfrage in Sekunden |
 | `DOCKER_INSPECT_TIMEOUT` | beide | `1.0` | Timeout je Container-Inspect in Sekunden |

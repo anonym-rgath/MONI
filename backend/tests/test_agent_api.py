@@ -59,15 +59,23 @@ def test_unhandled_error_is_500_without_details(settings, collector):
     assert r.status_code == 500 and r.headers["content-type"].startswith("application/problem+json")
     assert "division" not in r.text
 
-def test_docs_paths(client):
-    assert client.get("/api/v1/openapi.json").status_code == 200
-    assert client.get("/api/v1/docs").status_code == 200
-    assert client.get("/docs").status_code == 404 and client.get("/openapi.json").status_code == 404
+def test_docs_off_by_default(client):
+    for p in ("/api/v1/openapi.json", "/api/v1/docs", "/docs", "/openapi.json", "/redoc"):
+        assert client.get(p).status_code in (401, 404), p
+
+def test_docs_paths_with_flag(settings, collector):
+    from dataclasses import replace
+    from fastapi.testclient import TestClient
+    from moni import __version__
+    from moni.app import create_app
+    c = TestClient(create_app(replace(settings, api_docs=True), collector))
+    assert c.get("/api/v1/openapi.json").json()["info"]["version"] == __version__
+    assert c.get("/api/v1/docs").status_code == 200
+    assert c.get("/docs").status_code == 404 and c.get("/openapi.json").status_code == 404
 
 def test_version_matches_package(client, auth):
     from moni import __version__
     assert client.get("/api/v1/info", headers=auth).json()["version"] == __version__
-    assert client.get("/api/v1/openapi.json").json()["info"]["version"] == __version__
 
 def test_missing_scope_is_403(client, auth, monkeypatch):
     from dataclasses import replace
