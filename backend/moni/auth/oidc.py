@@ -250,6 +250,12 @@ def delete_provider(conn: sqlite3.Connection, pid: str) -> bool:
     return True
 
 
+def provider(conn: sqlite3.Connection, pid: str) -> dict | None:
+    """Anbieter ohne Secret, oder None."""
+    p = _find(_stored(conn), pid)
+    return None if p is None else {k: v for k, v in p.items() if k != "client_secret_enc"}
+
+
 def load_provider(conn: sqlite3.Connection, box: SecretBox, pid: str) -> dict | None:
     """Anbieter mit entschlüsseltem Secret und public_url, oder None."""
     cfg = _stored(conn)
@@ -542,6 +548,8 @@ def _account(users: UserStore, claims: dict) -> tuple[User | None, str | None, b
         user = users.by_email(claims.get("email"))
         if user is None or user.oidc_bound:
             return None, "unknown_user", False
+        if user.oidc_iss is not None and user.oidc_iss != claims["iss"]:  # N2: nur der beim Anlegen festgelegte Anbieter
+            return None, "wrong_provider", False
     if user.kind != "oidc":
         return None, "unknown_user", False
     if user.disabled:

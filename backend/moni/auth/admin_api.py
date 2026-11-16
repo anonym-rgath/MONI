@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, StringConstra
 
 from ..manager import db
 from ..timeutil import iso, utcnow
-from . import audit
+from . import audit, oidc
 from .deps import Principal, client_ip, require_scope
 from .sessions import SessionStore
 from .tokens import NewToken as BaseNewToken
@@ -34,6 +34,7 @@ class NewUser(_Body):
     role: Role
     kind: Literal["local", "oidc"] = "local"
     password: Str | None = None
+    oidc_provider: Str | None = None  # N2: ID des Anmeldeanbieters, über den sich das OIDC-Konto erstmals anmelden darf
 
 
 class UserPatch(_Body):
@@ -53,7 +54,8 @@ class NewToken(BaseNewToken):
 def _user_out(u: User, now: int) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "role": u.role, "kind": u.kind, "totp_enabled": u.totp_enabled,
             "disabled": u.disabled, "locked": UserStore.is_locked(u, now), "oidc_bound": u.oidc_bound,
-            "created_at": _ts(u.created_at), "last_login": None if u.last_login is None else _ts(u.last_login)}
+            "created_at": _ts(u.created_at), "last_login": None if u.last_login is None else _ts(u.last_login),
+            "oidc_issuer": u.oidc_iss}
 
 
 def _ts(t: int) -> str:
@@ -84,13 +86,20 @@ def create_user(request: Request, body: NewUser, p: Principal = Depends(require_
     now = int(time.time())
     with db.request_conn(request) as conn:
         try:
-            u = UserStore(conn, request.app.state.box).create(body.email, body.name, body.role, body.kind, body.password, now)
+            iss = None
+            if body.oidc_provider is not None:
+                p_cfg = oidc.provider(conn, body.oidc_provider)
+                if p_cfg is None:
+                    raise ValueError("Anmeldeanbieter nicht gefunden")
+                iss = p_cfg["issuer"]
+            u = UserStore(conn, request.app.state.box).create(body.email, body.name, body.role, body.kind, body.password, now,
+                                                              oidc_iss=iss)
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
         except ValueError as e:  # Regeltexte nennen nie das Passwort
             raise HTTPException(422, str(e)) from None
         audit.record(conn, p.actor, "user.created", target=u.email, ip=client_ip(request),
-                     details={"role": u.role, "kind": u.kind}, now=now)
+                     details={"role": u.role, "kind": u.kind, **({"provider": body.oidc_provider} if iss else {})}, now=now)
         return _user_out(u, now)
 
 

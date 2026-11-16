@@ -317,6 +317,29 @@ def test_same_email_two_providers_binds_once(oidc_client, idp_google, idp_micros
     assert r.headers["location"] == FAIL and last_audit(oidc_client)["details"] == {"grund": "unknown_user"}
 
 
+def test_account_bound_to_chosen_provider_only(oidc_client, idp_google, idp_microsoft, admin):
+    """N2: ein vorab angelegtes Konto bindet sich nur an den beim Anlegen gewählten Anbieter."""
+    r = admin.post("/api/v1/users", json={"email": "m@firma.de", "name": "M", "role": "viewer", "kind": "oidc",
+                                          "oidc_provider": "microsoft"})
+    assert r.status_code == 201 and r.json()["oidc_issuer"] == idp_microsoft.issuer
+    assert last_audit(oidc_client)["details"] == {"role": "viewer", "kind": "oidc", "provider": "microsoft"}
+    oidc_client.cookies.clear()
+    r = complete_flow(oidc_client, idp_google, {"email": "m@firma.de", "email_verified": True})
+    assert r.headers["location"] == FAIL and last_audit(oidc_client)["details"] == {"grund": "wrong_provider"}
+    oidc_client.cookies.clear()
+    r = complete_flow(oidc_client, idp_microsoft, {"email": "m@firma.de", "xms_edov": True})
+    assert r.headers["location"] == "/"
+
+
+@pytest.mark.parametrize("body,detail", [
+    ({"kind": "oidc", "oidc_provider": "github"}, "Anmeldeanbieter nicht gefunden"),
+    ({"kind": "local", "password": "ein-langes-passwort-1", "oidc_provider": "google"}, "Nur OIDC-Konten haben einen Anmeldeanbieter"),
+])
+def test_create_user_provider_validation(oidc_client, admin, body, detail):
+    r = admin.post("/api/v1/users", json={"email": "x@example.org", "role": "viewer", **body})
+    assert r.status_code == 422 and r.json()["detail"] == detail
+
+
 def test_bound_user_disabled_later(oidc_client, idp, make_user):
     u = make_user("viewer", kind="oidc", email="o@example.org")
     assert complete_flow(oidc_client, idp, {"email": "o@example.org", "email_verified": True}).headers["location"] == "/"
