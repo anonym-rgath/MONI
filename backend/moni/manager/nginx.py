@@ -1,4 +1,5 @@
 """nginx-Konfiguration des Manager-Images, beim Containerstart aus den Settings erzeugt (D7, D8)."""
+import ipaddress
 import re
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from moni.config import Settings
 
 CONF_PATH = Path("/tmp/moni-nginx/moni.conf")  # die Haupt-nginx.conf bindet /tmp/moni-nginx/*.conf ein (Dockerfile)
 _CIDR = re.compile(r"[0-9A-Fa-f:.]+/[0-9]{1,3}")
+_HOST = re.compile(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?")
 
 _PROXY = """\
         proxy_pass http://127.0.0.1:8001;
@@ -64,21 +66,42 @@ server {
     ssl_certificate /data/tls/https.crt;
     ssl_certificate_key /data/tls/https.key;
     ssl_protocols TLSv1.2 TLSv1.3;
+    # N1: ohne includeSubDomains, damit andere Dienste unter Unterdomänen nicht mitbetroffen sind
+    add_header Strict-Transport-Security "max-age=31536000" always;
 """
 
+# N4: nur Namen aus dem Zertifikat werden umgeleitet; ein fremder Host-Header bekommt 400 statt einer Umleitung
 _REDIRECT = """
 server {{
+    listen 80 default_server;
+    access_log /dev/stdout moni;
+    return 400;
+}}
+
+server {{
     listen 80;
+    server_name {names};
     access_log /dev/stdout moni;
     return 301 https://$host{port}$request_uri;
 }}
 """
 
 
+def _server_name(name: str) -> str:
+    try:
+        ip = ipaddress.ip_address(name)
+    except ValueError:
+        if not _HOST.fullmatch(name):  # schon in Settings geprüft; hier gegen jede Einschleusung in die Konfiguration
+            raise ValueError("Ungültiger Eintrag in MONI_MANAGER_HOSTNAMES") from None
+        return name
+    return f"[{ip}]" if ip.version == 6 else str(ip)
+
+
 def render(s: Settings) -> str:
     if s.tls == "on":
         assert isinstance(s.https_port, int)  # gegen jede Einschleusung in die Konfiguration
-        return _HEAD + _TLS + _BODY + _REDIRECT.format(port="" if s.https_port == 443 else f":{s.https_port}")
+        names = " ".join(_server_name(n) for n in s.manager_hostnames)
+        return _HEAD + _TLS + _BODY + _REDIRECT.format(names=names, port="" if s.https_port == 443 else f":{s.https_port}")
     realip = ""
     if s.trusted_proxies:  # nur Anfragen von diesen Adressen dürfen $remote_addr per X-Forwarded-For ersetzen (D8)
         for cidr in s.trusted_proxies:
