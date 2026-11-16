@@ -4,6 +4,20 @@ Das Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die V
 [Semantic Versioning](https://semver.org/lang/de/). Der oberste Abschnitt muss zur Version in
 `backend/moni/__init__.py` passen (`scripts/ci/check_version.py`).
 
+## [2.0.2] – unveröffentlicht
+
+### Sicherheit
+
+- **Anmeldung im Proxy-Modus nicht mehr für alle sperrbar:** Mit `MONI_TLS=off` ohne `MONI_TRUSTED_PROXIES` sieht Moni
+  nur die Adresse des Proxys, alle Besucher teilen sich eine IP. Moni warnt jetzt beim Start; die Doku führt
+  `MONI_TRUSTED_PROXIES` im Proxy-Modus als Pflicht.
+- **Kontosperre nicht mehr von außen auslösbar:** Bei Konten mit Zwei-Faktor-Anmeldung zählen falsche Passwörter je
+  Konto und IP. Wer nur die E-Mail-Adresse kennt, sperrt damit nur sich selbst aus, nicht den echten Benutzer. Fehlversuche
+  beim zweiten Faktor sperren das Konto weiterhin, ebenso falsche Passwörter bei Konten ohne Zwei-Faktor-Anmeldung.
+- **Abhängigkeiten mit Hashes:** Das Image installiert alle Python-Pakete aus `backend/requirements-docker.lock` mit
+  geprüften Hashes (`pip --require-hashes`) und nur in Versionen, die mindestens 14 Tage alt sind. Dependabot hält sich
+  ebenfalls an diese Frist.
+
 ## [2.0.1] – 2026-11-12
 
 ### Behoben
