@@ -4,9 +4,10 @@ Das Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die V
 [Semantic Versioning](https://semver.org/lang/de/). Der oberste Abschnitt muss zur Version in
 `backend/moni/__init__.py` passen (`scripts/ci/check_version.py`).
 
-## [2.1.0-rc.1] – 2026-11-16
+## [2.1.0] – 2026-11-16
 
-Schließt die niedrigen Befunde N1–N9 aus dem Security-Audit vom 16.11.2026. Vor dem Update ein Backup anlegen: Es gibt
+Schließt die niedrigen Befunde N1–N9 aus dem Security-Audit vom 16.11.2026. Das Update von 2.0.1 ist vorab mit
+`2.1.0-rc.1` erprobt (Migration, bestehende Kopplung, neue Schutzmaßnahmen). Vor dem Update ein Backup anlegen: Es gibt
 eine Datenbank-Migration und ein erweitertes Format für `tokens.json`.
 
 ### Verhaltensänderungen
