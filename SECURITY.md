@@ -31,6 +31,36 @@ Nicht im Umfang: Angriffe, die schon Admin-Rechte oder Zugriff auf den Docker-Ho
 einer Umgebung, die vom Standard abweicht (z. B. Agent-Port 9810 offen ins Internet, `MONI_TLS=off` ohne Proxy);
 Schwachstellen in Abhängigkeiten ohne Auswirkung auf Moni; Denial-of-Service durch Überlast ohne Verstärkung.
 
+## Bewusste Designentscheidung: lesender Zugriff auf den Host
+
+Agent und Manager (für den eigenen Rechner) messen den Host von innen heraus. Dafür binden die Compose-Dateien ein:
+
+- `/:/host/root:ro,rslave`: das **gesamte Host-Dateisystem, nur lesend**. Moni ermittelt daraus die Belegung aller
+  Dateisysteme (`statvfs` je Einhängepunkt aus `/proc/1/mounts`), auch später eingehängte Platten.
+- `/proc:/host/proc:ro` und `/sys:/host/sys:ro`: CPU, Speicher, Last, Netzwerk, Temperaturen. Damit ist auch die
+  **Prozessliste des Hosts samt Kommandozeilen** sichtbar.
+- Docker-API über den Socket-Proxy (nur `GET` auf Liste, `inspect`, `stats`): `inspect` liefert auch die
+  **Umgebungsvariablen aller Container**, siehe [Installation](docs/installation.md#docker-socket-und-socket-proxy).
+
+Das ist gewollt und gehört zum Zweck. Ein kompromittiertes Moni kann deshalb alles lesen, was der Container-Benutzer
+`app` (kein root) auf dem Host lesen darf. Dazu gehören weltlesbare Dateien, Kommandozeilen fremder Prozesse und
+Umgebungsvariablen anderer Container. Nicht lesbar sind nur root vorbehaltene Dateien (z. B. `/etc/shadow`, `/root`,
+Volumes unter `/var/lib/docker`) und `/proc/<pid>/environ` fremder Prozesse, weil alle Capabilities fehlen. Schreiben
+kann Moni nichts: Die Einbindungen sind `ro`, der Container ist `read_only`, hat `cap_drop: ALL` und
+`no-new-privileges`, und der Socket-Proxy lässt keine schreibenden Methoden zu.
+
+**Folgerung für den Betrieb:** Legen Sie Geheimnisse auf dem Host nicht weltlesbar ab und nicht in Kommandozeilen
+oder Container-Umgebungsvariablen, wenn Moni sie nicht sehen soll. Für Container-Geheimnisse eignen sich Docker
+Secrets bzw. Dateien mit Rechten 600.
+
+**Geprüfte Alternative zu `/`:** Einzelne Einhängepunkte statt `/` reichen technisch, haben aber Folgen. `statvfs`
+braucht für jedes Dateisystem einen Pfad darauf, auch für das Root-Dateisystem. Ohne `/` bräuchte es je Dateisystem
+eine eigene Einbindung (für das Root-Dateisystem etwa ein leeres Verzeichnis darauf) und eine Zuordnung zu den
+Einhängepunkten aus `/proc/1/mounts`. Die automatische Erkennung neuer Platten fiele weg, und die Compose-Datei würde
+je Host angepasst. Ähnlich ließe sich `/proc` auf die gelesenen Dateien (`stat`, `meminfo`, `loadavg`, `uptime`,
+`1/net/dev`, `1/mounts`) einschränken, was die Prozessliste verbergen würde. Beides ist derzeit nicht umgesetzt;
+wer es braucht, kann es per `compose.override.yaml` selbst einschränken und verliert dann die betroffenen Messwerte.
+
 ## Bekannte, bewusst belassene CodeQL-Hinweise
 
 CodeQL meldet zwei Stellen als mögliche Server-Side Request Forgery (SSRF). Beide bleiben absichtlich, weil die
