@@ -268,3 +268,8 @@ def test_summary_null_without_snapshot_and_null_fields_for_missing_metrics(clien
         _set_snapshot(conn, app, local_id, bad)
         r = client.get("/api/v1/servers", headers=read_auth)
         assert (r.status_code, r.json()[0]["summary"]) == (200, None)
+
+
+def test_manager_api_docs_off_by_default(mgr_client):
+    for p in ("/api/v1/openapi.json", "/api/v1/docs"):
+        assert mgr_client.get(p).status_code in (401, 404), p
