@@ -4,9 +4,9 @@ Das Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die V
 [Semantic Versioning](https://semver.org/lang/de/). Der oberste Abschnitt muss zur Version in
 `backend/moni/__init__.py` passen (`scripts/ci/check_version.py`).
 
-## [2.0.3-rc.1] – 2026-11-16
+## [2.0.3] – 2026-11-16
 
-Probelauf für die neuen Versionen der Release-Actions. Funktional gleich mit 2.0.2.
+Wartungsrelease, funktional gleich mit 2.0.2. Der Release-Weg mit den neuen Actions ist vorab mit `2.0.3-rc.1` erprobt.
 
 ### Geändert
 
