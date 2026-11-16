@@ -177,6 +177,9 @@ class Settings:
             raise ValueError("MONI_TLS muss on oder off sein")
         if s.tls == "on" and s.trusted_proxies:
             log.warning("MONI_TRUSTED_PROXIES wird bei MONI_TLS=on ignoriert")
+        if s.role == "manager" and s.tls == "off" and not s.trusted_proxies:
+            log.warning("MONI_TLS=off ohne MONI_TRUSTED_PROXIES: Moni sieht nur die Adresse des Proxys, alle Clients teilen "
+                        "sich eine IP. Ein Angreifer kann die Anmeldung dann für alle sperren. Adresse des Proxys eintragen")
         if s.collect_interval_seconds < 1:
             raise ValueError("MONI_COLLECT_INTERVAL muss >= 1 sein")
         if s.buffer_seconds < s.collect_interval_seconds:

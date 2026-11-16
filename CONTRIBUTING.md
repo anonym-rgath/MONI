@@ -58,6 +58,18 @@ Kurze Betreffzeile mit Präfix und optionalem Bereich, wie im Verlauf (`git log`
 
 Bereiche sind etwa `agent`, `manager`, `auth`, `alerts`, `ui`, `tls`, `api`, `ops`, `scripts`, `release`.
 
+## Laufzeit-Abhängigkeiten ändern
+
+Direkte Pakete stehen in `backend/requirements-docker.txt`. Das Image installiert aber nur
+`backend/requirements-docker.lock` mit Hashes. Nach jeder Änderung die Lock-Datei neu erzeugen, nur mit Versionen,
+die mindestens 14 Tage alt sind:
+
+```bash
+cd backend && uv pip compile requirements-docker.txt --universal --python-version 3.14 --generate-hashes --no-header --exclude-newer <Datum vor 14 Tagen> -o requirements-docker.lock
+```
+
+Den Kopfkommentar der Lock-Datei danach wieder einfügen.
+
 ## OpenAPI neu erzeugen
 
 Ändern Sie Routen oder Modelle, erzeugen Sie die Dateien in `docs/api/` neu (Befehle in der
