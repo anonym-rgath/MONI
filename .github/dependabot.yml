@@ -18,6 +18,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 14  # nur Versionen, die mindestens 14 Tage alt sind
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -36,6 +38,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 14  # nur Versionen, die mindestens 14 Tage alt sind
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -89,6 +93,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 14  # nur Versionen, die mindestens 14 Tage alt sind
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -103,6 +109,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 14  # nur Versionen, die mindestens 14 Tage alt sind
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -116,6 +124,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    cooldown:
+      default-days: 14  # nur Versionen, die mindestens 14 Tage alt sind
     open-pull-requests-limit: 5
     labels:
       - "dependencies"

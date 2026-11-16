@@ -19,8 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends --only-upgrade 
     && rm -rf /var/lib/apt/lists/*
 
 # pip und setuptools werden zur Laufzeit nicht gebraucht; ohne sie entfallen ihre mitgelieferten Abhängigkeiten (Trivy)
-COPY backend/requirements-docker.txt ./backend/
-RUN pip install --no-cache-dir -r backend/requirements-docker.txt \
+COPY backend/requirements-docker.lock ./backend/
+RUN pip install --no-cache-dir --require-hashes --no-deps -r backend/requirements-docker.lock \
     && pip uninstall -y pip setuptools
 
 COPY backend/moni /app/moni
@@ -63,8 +63,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # pip und setuptools werden zur Laufzeit nicht gebraucht; ohne sie entfallen ihre mitgelieferten Abhängigkeiten (Trivy)
-COPY backend/requirements-docker.txt ./backend/
-RUN pip install --no-cache-dir -r backend/requirements-docker.txt \
+COPY backend/requirements-docker.lock ./backend/
+RUN pip install --no-cache-dir --require-hashes --no-deps -r backend/requirements-docker.lock \
     && pip uninstall -y pip setuptools
 
 COPY backend/moni ./moni
