@@ -163,12 +163,20 @@ def login(request: Request, response: Response, body: LoginBody):
     with db.request_conn(request) as conn:
         users = UserStore(conn, request.app.state.box)
         user = users.by_email(body.email)
-        if user is None or user.kind != "local" or user.disabled or users.is_locked(user, now):
+        # M2: Konten mit 2FA zählen falsche Passwörter je Konto und IP, nie für das ganze Konto: Wer nur die E-Mail kennt,
+        # sperrt sonst den echten Benutzer aus. Der zweite Faktor und Konten ohne 2FA behalten die Kontosperre.
+        pair = f"{throttle_key(request)}|{user.id}" if user is not None and user.totp_enabled else None
+        pair_blocked = pair is not None and request.app.state.pair_throttle.retry_after(pair, now) is not None
+        if user is None or user.kind != "local" or user.disabled or users.is_locked(user, now) or pair_blocked:
             passwords.dummy_verify(body.password)  # gleiche Antwortzeit wie eine echte Prüfung (D8)
             ok = locked = False
         else:
             ok = users.check_password(user.id, body.password)
-            locked = not ok and users.register_failure(user.id, now)
+            locked = False
+            if not ok and pair is not None:
+                request.app.state.pair_throttle.fail(pair, now)
+            elif not ok:
+                locked = users.register_failure(user.id, now)
         if not ok:
             request.app.state.throttle.fail(throttle_key(request), now)
             actor = _actor(user) if user else "anonym"

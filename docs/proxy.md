@@ -18,6 +18,10 @@ auswertet. Sie sorgen dafür, dass Sperre nach Fehlversuchen und Rate-Limit pro 
 nur Proxys ein, die Sie kontrollieren. Welche Adresse der Proxy aus Sicht von Moni hat, sehen Sie im
 Zugriffslog (`./scripts/logs.sh manager`).
 
+**Pflicht im Proxy-Modus:** Ohne `MONI_TRUSTED_PROXIES` sieht Moni nur die Adresse des Proxys, alle Besucher teilen
+sich dann eine IP. Ein Angreifer kann mit wenigen falschen Anmeldungen die Anmeldung für alle sperren, auch für Sie.
+Moni warnt deshalb beim Start, wenn `MONI_TLS=off` ohne `MONI_TRUSTED_PROXIES` gesetzt ist.
+
 **Warnung:** Bei `MONI_TLS=on` wird `MONI_TRUSTED_PROXIES` ignoriert; Moni schreibt dazu eine Warnung ins Log.
 Wer einen Proxy vorschaltet, muss `MONI_TLS=off` setzen.
 

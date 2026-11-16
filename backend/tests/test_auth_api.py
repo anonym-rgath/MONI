@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import TEST_PASSWORD, Dummy, code_at
-from moni.auth import audit, passwords
+from moni.auth import api as auth_api, audit, passwords
 from moni.auth.sessions import COOKIE
 from moni.auth.users import UserStore
 from moni.manager import db
@@ -206,14 +206,38 @@ def test_locked_account_cannot_complete_mfa(mgr_client, mgr_app, make_user):
     assert mgr_client.get("/api/v1/auth/session").status_code == 401
 
 
-def test_password_failures_then_mfa_failures_lock(mgr_client, mgr_app, make_user):
+def test_password_failures_do_not_lock_totp_account(mgr_client, mgr_app, make_user, monkeypatch):
+    """M2: falsche Passwörter sperren ein Konto mit 2FA nur für die angreifende IP, nie für alle."""
+    u, secret, _ = totp_user(mgr_app, make_user)
+    for _ in range(5):
+        assert login(mgr_client, u.email, "falsch-falsch-1").status_code == 401
+    row = _store(mgr_app, lambda s, c: s.get(u.id))
+    assert row.failed_logins == 0 and row.locked_until is None
+    assert "login.locked" not in _actions(mgr_app)
+    r = login(mgr_client, u.email)  # dieselbe IP bleibt für dieses Konto gesperrt, auch mit richtigem Passwort
+    assert (r.status_code, r.json()) == (401, FAIL)
+    monkeypatch.setattr(auth_api, "throttle_key", lambda request: "198.51.100.7")
+    assert login(mgr_client, u.email).json() == {"stage": "mfa"}  # der echte Benutzer von einer anderen IP
+
+
+def test_account_ip_block_is_per_account(mgr_client, mgr_app, make_user):
+    a, _, _ = totp_user(mgr_app, make_user)
+    b, _, _ = totp_user(mgr_app, make_user)
+    for _ in range(5):
+        login(mgr_client, a.email, "falsch-falsch-1")
+    assert login(mgr_client, b.email).json() == {"stage": "mfa"}
+
+
+def test_mfa_failures_still_lock_account(mgr_client, mgr_app, make_user):
+    """Wer den zweiten Faktor rät, kennt das Passwort schon: hier bleibt die Kontosperre."""
     u, secret, _ = totp_user(mgr_app, make_user)
     for _ in range(3):
         login(mgr_client, u.email, "falsch-falsch-1")
-    assert login(mgr_client, u.email).json() == {"stage": "mfa"}  # setzt den Zähler noch nicht zurück
-    assert mfa(mgr_client, "abcdef").status_code == 401  # 4. Fehlversuch
+    assert login(mgr_client, u.email).json() == {"stage": "mfa"}
+    for _ in range(4):
+        assert mfa(mgr_client, "abcdef").status_code == 401
     assert mgr_client.get("/api/v1/auth/session").status_code == 200
-    assert mfa(mgr_client, "abcdef").status_code == 401  # 5. Fehlversuch sperrt und beendet die Session
+    assert mfa(mgr_client, "abcdef").status_code == 401  # 5. Fehlversuch mit dem zweiten Faktor sperrt
     assert mgr_client.get("/api/v1/auth/session").status_code == 401
     assert _actions(mgr_app).count("login.locked") == 1
 

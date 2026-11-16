@@ -113,6 +113,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
         app.state.notifier = notifier
         app.state.poll_stats = getattr(poller, "stats", None) or PollStats()  # Test-Attrappen haben keine
         app.state.setup_hash, app.state.throttle = setup_hash, LoginThrottle()
+        app.state.pair_throttle = LoginThrottle(max_failures=5, window=900)  # falsche Passwörter je Konto und IP (M2)
         app.state.oidc_flows = oidc.Flows()
         app.include_router(manager_router)
         app.include_router(alert_api.router)

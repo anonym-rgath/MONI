@@ -173,5 +173,18 @@ def test_trusted_proxies_with_tls_on_warns(caplog):
         Settings.from_env({"MONI_TLS": "on", "MONI_TRUSTED_PROXIES": "10.0.0.1"})
     assert any("MONI_TRUSTED_PROXIES" in r.message and "ignoriert" in r.message for r in caplog.records)
     caplog.clear()
-    Settings.from_env({"MONI_TLS": "off", "MONI_TRUSTED_PROXIES": "10.0.0.1"})
+    Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": "x", "MONI_TLS": "off", "MONI_TRUSTED_PROXIES": "10.0.0.1"})
     assert not caplog.records
+
+
+def test_tls_off_without_trusted_proxies_warns(caplog):
+    """M1: ohne Proxy-Adressen teilen sich alle Clients eine IP, ein Angreifer sperrt dann die Anmeldung für alle."""
+    with caplog.at_level("WARNING"):
+        Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": "x", "MONI_TLS": "off"})
+    assert any("MONI_TRUSTED_PROXIES" in r.message and "alle Clients" in r.message for r in caplog.records)
+
+
+def test_tls_off_with_trusted_proxies_does_not_warn(caplog):
+    with caplog.at_level("WARNING"):
+        Settings.from_env({"MONI_ROLE": "manager", "MONI_SECRET_KEY": "x", "MONI_TLS": "off", "MONI_TRUSTED_PROXIES": "10.0.0.1"})
+    assert not any("alle Clients" in r.message for r in caplog.records)
