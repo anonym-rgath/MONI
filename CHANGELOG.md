@@ -4,6 +4,18 @@ Das Format folgt [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), die V
 [Semantic Versioning](https://semver.org/lang/de/). Der oberste Abschnitt muss zur Version in
 `backend/moni/__init__.py` passen (`scripts/ci/check_version.py`).
 
+## [2.0.3-rc.1] – 2026-11-16
+
+Probelauf für die neuen Versionen der Release-Actions. Funktional gleich mit 2.0.2.
+
+### Geändert
+
+- **Lock-Dateien im uv-Format:** Die Python-Pakete stehen in `backend/requirements-docker.in`; daraus entsteht
+  `requirements-docker.txt` mit Hashes, die das Image mit `pip --require-hashes` installiert. Dependabot pflegt die
+  Datei jetzt selbst, Updates kommen damit auch im Image an. Die Paketversionen sind dieselben wie in 2.0.2.
+- **CI und Release:** `actions/checkout` 7.0.1, `actions/setup-python` 7.1.0, `docker/build-push-action` 7.4.0 und
+  `docker/setup-buildx-action` 4.4.1.
+
 ## [2.0.2] – 2026-11-16
 
 ### Sicherheit
