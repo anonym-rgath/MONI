@@ -187,6 +187,7 @@ Gesetzt werden sie in `.env` (Compose reicht sie an den Container). Ohne Eintrag
 | `MONI_MANAGER_HOSTNAMES` | Manager | Hostname, `localhost`, `127.0.0.1` | Namen und IPs im HTTPS-Zertifikat, kommagetrennt |
 | `MONI_AGENT_BIND` | Agent | `127.0.0.1` | Host-Adresse für Port 9810; `0.0.0.0` für einen Manager auf anderem Rechner |
 | `MONI_PUBLIC_URL` | Agent | leer | `https://host[:port]`, wird in den Kopplungscode eingebettet; kein Pfad |
+| `MONI_ALLOW_PRIVATE_TARGETS` | Manager | `1` | `0`: Agents, Webhooks, OIDC-Anbieter und SMTP-Server nur unter öffentlichen Adressen erreichen (keine privaten Netze, kein localhost). Link-Local und Cloud-Metadaten (`169.254.0.0/16`, `fe80::/10`) sind immer gesperrt; geprüft wird jede aufgelöste Adresse beim Verbinden |
 | `MONI_COLLECT_INTERVAL` | beide | `15` | Mess- und Abruftakt in Sekunden |
 | `MONI_POLL_TIMEOUT` | Manager | `10` | Timeout je Agent-Abruf in Sekunden |
 | `MONI_RETENTION_RAW_HOURS` | Manager | `48` | Aufbewahrung der Rohdaten in Stunden |

@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from moni import __version__, errors
+from moni import __version__, errors, netguard
 from moni.agent import pairing_api
 from moni.agent.api import metrics_router, router
 from moni.agent.tls import TlsState
@@ -44,6 +44,7 @@ def create_app(settings: Settings | None = None, collector: Collector | None = N
     collector = collector or Collector(settings)
     box = setup_hash = manager_pki = None
     if manager:
+        netguard.allow_private = settings.allow_private_targets
         try:
             db.migrate(settings.db_path)
         except RuntimeError:

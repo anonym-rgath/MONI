@@ -43,7 +43,12 @@ export const de = {
     anmeldung: 'Anmeldung',
     konto: 'Konto',
   },
-  formular: { wirdGesendet: 'Wird gesendet …' },
+  formular: {
+    wirdGesendet: 'Wird gesendet …',
+    klartextAgent: 'Unverschlüsselt: Mit http:// gehen Token, Header und Messwerte im Klartext über das Netz. Wer mitliest, kann den Token abgreifen und den Agent selbst abfragen. Besser https:// oder die Kopplung mit Code (mTLS).',
+    klartextWebhook: 'Unverschlüsselt: Mit http:// gehen die URL samt enthaltenem Token und alle Alarminhalte im Klartext über das Netz. Besser https:// verwenden.',
+    klartextBestaetigen: 'Ich habe die Warnung verstanden und will trotzdem http:// verwenden.',
+  },
   einmalwerte: {
     kopieren: 'Kopieren',
     kopiert: 'In die Zwischenablage kopiert.',
