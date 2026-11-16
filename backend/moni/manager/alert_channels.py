@@ -19,6 +19,7 @@ from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from urllib.parse import urlsplit
 
+from .. import netguard
 from ..auth.users import Conflict, normalize_email
 from ..secretbox import SecretBox
 from ..timeutil import iso
@@ -60,6 +61,11 @@ def _connect_tcp(budget, address, timeout, source_address=None):
     for fam, typ, proto, _, sa in socket.getaddrinfo(address[0], address[1], type=socket.SOCK_STREAM):
         if budget.expired:
             raise TimeoutError
+        try:
+            netguard.check(sa[0])
+        except netguard.Blocked as e:
+            err = e
+            continue
         sock = socket.socket(fam, typ, proto)
         sock.settimeout(timeout)
         budget.add(sock)  # schon abgelaufen: sofort geschlossen, connect schlägt fehl
@@ -375,6 +381,15 @@ def send_webhook(url: str, body: dict, hmac_secret: str | None, timeout: float =
         raise SendError(err)  # außerhalb von except: kein __context__ mit URL oder Antwort
 
 
+class _SMTP(smtplib.SMTP):
+    def _get_socket(self, host, port, timeout):
+        return netguard.create_connection((host, port), timeout, self.source_address)
+
+
+class _SMTPS(smtplib.SMTP_SSL, _SMTP):  # SMTP_SSL._get_socket ruft super()._get_socket, also _SMTP, und wickelt dann TLS
+    pass
+
+
 def send_email(cfg: dict, password: str | None, subject: str, text: str, timeout: float = 15) -> None:
     msg = EmailMessage()
     msg["From"], msg["To"] = cfg["from_addr"], ", ".join(cfg["to"])
@@ -386,9 +401,9 @@ def send_email(cfg: dict, password: str | None, subject: str, text: str, timeout
     err, stage, smtp = None, "connect", None
     try:
         if cfg["security"] == "tls":
-            smtp = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=timeout, context=ctx, local_hostname=local)
+            smtp = _SMTPS(cfg["host"], cfg["port"], timeout=timeout, context=ctx, local_hostname=local)
         else:
-            smtp = smtplib.SMTP(cfg["host"], cfg["port"], timeout=timeout, local_hostname=local)
+            smtp = _SMTP(cfg["host"], cfg["port"], timeout=timeout, local_hostname=local)
             stage = "starttls"  # nie Klartext: fehlt STARTTLS, bricht der Versand ab
             smtp.ehlo()
             smtp.starttls(context=ctx)

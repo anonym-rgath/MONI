@@ -197,8 +197,8 @@ class FakeSMTP:
 @pytest.fixture
 def fake_smtp(monkeypatch):
     FakeSMTP.calls, FakeSMTP.fail = [], {}
-    monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
-    monkeypatch.setattr(smtplib, "SMTP_SSL", type("FakeSSL", (FakeSMTP,), {}))
+    monkeypatch.setattr(ac, "_SMTP", FakeSMTP)
+    monkeypatch.setattr(ac, "_SMTPS", type("FakeSSL", (FakeSMTP,), {}))
     return FakeSMTP
 
 
@@ -258,7 +258,7 @@ def test_email_errors_mapped(fake_smtp, monkeypatch, stage, exc, msg):
     if stage == "init":
         def boom(*a, **kw):
             raise exc
-        monkeypatch.setattr(smtplib, "SMTP", boom)
+        monkeypatch.setattr(ac, "_SMTP", boom)
     else:
         FakeSMTP.fail[stage] = exc
     with pytest.raises(SendError) as ei:

@@ -272,6 +272,24 @@ describe('Kanäle', () => {
     await waitFor(() => expect(letzte().body).toEqual({ name: 'Hook', kind: 'webhook', url: 'https://hook.example.test/x', min_severity: 'warning', enabled: true }))
   })
 
+  test('Webhook mit http:// warnt und speichert erst nach ausdrücklicher Bestätigung (N6)', async () => {
+    daten()
+    const user = userEvent.setup()
+    await zeige('/alarme/kanaele')
+    await user.click(await screen.findByRole('button', { name: 'Kanal anlegen' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('Name'), 'Hook')
+    await user.type(within(dialog).getByLabelText('URL'), 'http://hook.example.test/x')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/Klartext/)
+    aufzeichnen('post', '/alert-channels', () => HttpResponse.json(kanalWebhook, { status: 201 }))
+    const vorher = anfragen.length
+    await user.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+    expect(anfragen.length).toBe(vorher)
+    await user.click(within(dialog).getByRole('checkbox', { name: /trotzdem http:\/\/ verwenden/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+    await waitFor(() => expect(letzte().body).toMatchObject({ url: 'http://hook.example.test/x' }))
+  })
+
   test('Testnachricht: ok und Fehlertext werden angesagt; 429 zeigt Wartehinweis', async () => {
     daten()
     const user = userEvent.setup()

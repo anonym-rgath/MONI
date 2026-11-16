@@ -14,7 +14,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
-from .. import pki
+from .. import netguard, pki
 from ..auth import audit
 from ..auth.sessions import SessionStore
 from ..collector import Collector
@@ -55,7 +55,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 # Kein Proxy aus HTTP(S)_PROXY: Token und Header gingen sonst an einen Dritten (Proxy-Option: Paket 7, Doku).
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect, netguard.HTTPHandler,
+                                      netguard.HTTPSHandler)
 _TLS_FAILED = "TLS-Prüfung des Agents fehlgeschlagen"
 
 
@@ -79,8 +80,8 @@ class AgentClient:
         auth = {} if ssl_context is not None else {"Authorization": f"Bearer {token}"}
         self._headers = {**headers, **auth, "Accept": "application/json"}
         self._timeout = timeout
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect,
-                                                   urllib.request.HTTPSHandler(context=ssl_context or _system_context()))
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect, netguard.HTTPHandler,
+                                                   netguard.HTTPSHandler(context=ssl_context or _system_context()))
 
     def __repr__(self) -> str:
         return "AgentClient(…)"

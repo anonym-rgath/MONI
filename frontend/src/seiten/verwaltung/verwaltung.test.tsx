@@ -225,6 +225,26 @@ describe('Koppeln', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Server koppeln' }))
     await waitFor(() => expect(mit('POST')).toHaveLength(1))
     expect(letzter().body).toEqual({ name: 'proxy', url: 'https://agent.example.test', token: 'geheim', headers: { 'X-Zugang': 'abc' } })
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument() // https: keine Klartext-Warnung
+  })
+
+  test('Token-Modus mit http:// warnt deutlich und sendet erst nach ausdrücklicher Bestätigung (N6)', async () => {
+    daten()
+    const user = userEvent.setup()
+    await zeige('/verwaltung/server', 'Server verwalten')
+    await user.click(await screen.findByRole('button', { name: 'Server koppeln' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('radio', { name: 'Mit Token, ohne mTLS' }))
+    await user.type(within(dialog).getByLabelText('Name'), 'lan')
+    await user.type(within(dialog).getByLabelText('URL des Agents'), 'HTTP://192.168.1.5:9810')
+    await user.type(within(dialog).getByLabelText('Token des Agents'), 'geheim')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/Klartext/)
+    aufzeichnen('post', '/servers', () => HttpResponse.json({ ...serverEins, id: 22 }, { status: 201 }))
+    await user.click(within(dialog).getByRole('button', { name: 'Server koppeln' }))
+    expect(mit('POST')).toHaveLength(0)
+    await user.click(within(dialog).getByRole('checkbox', { name: /trotzdem http:\/\/ verwenden/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Server koppeln' }))
+    await waitFor(() => expect(mit('POST')).toHaveLength(1))
   })
 })
 

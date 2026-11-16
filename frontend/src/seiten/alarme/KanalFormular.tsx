@@ -6,6 +6,7 @@ import type { Kanal, Schweregrad } from '../../api/typen'
 import { t } from '../../texte/de'
 import { Feld } from '../../ui/Feld'
 import { Formular } from '../../ui/Formular'
+import { KlartextWarnung } from '../../ui/KlartextWarnung'
 import { Auswahl, Bereich, Haken, zeilen } from './felder'
 
 const text = (v: unknown, standard = '') => (typeof v === 'string' ? v : standard)
@@ -18,6 +19,7 @@ export function KanalFormular({ kanal, onFertig }: { kanal: Kanal | null; onFert
   const [name, setName] = useState(kanal?.name ?? '')
   const [url, setUrl] = useState('')
   const [hmac, setHmac] = useState('')
+  const [klartext, setKlartext] = useState(false)
   const [host, setHost] = useState(text(c.host))
   const [port, setPort] = useState(String(typeof c.port === 'number' ? c.port : 587))
   const [sicherheit, setSicherheit] = useState(c.security === 'tls' ? 'tls' : 'starttls')
@@ -59,6 +61,7 @@ export function KanalFormular({ kanal, onFertig }: { kanal: Kanal | null; onFert
       {art === 'webhook' ? (
         <>
           <Feld label={t('alarme.fUrl')} hinweis={hinweis} value={url} onChange={(e) => setUrl(e.target.value)} required={!bearbeiten} inputMode="url" autoComplete="off" spellCheck={false} />
+          <KlartextWarnung url={url} text="formular.klartextWebhook" bestaetigt={klartext} onChange={setKlartext} />
           <Feld label={t('alarme.fHmac')} hinweis={hinweis} type="password" value={hmac} onChange={(e) => setHmac(e.target.value)} autoComplete="new-password" />
         </>
       ) : (

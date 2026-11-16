@@ -125,6 +125,7 @@ class Settings:
     retention_hour_days: int = 365
     bind_host: str = "0.0.0.0"
     trust_local_proxy: bool = False
+    allow_private_targets: bool = True  # N5: Agents, Webhooks, OIDC, SMTP im privaten Netz; Link-Local nie
     session_idle_minutes: int = 60
     session_max_hours: int = 12
     public_url: str = ""
@@ -164,6 +165,7 @@ class Settings:
             retention_hour_days=_int(env, "MONI_RETENTION_HOUR_DAYS", "365"),
             bind_host=g("MONI_BIND_HOST", "0.0.0.0"),
             trust_local_proxy=_flag(g("MONI_TRUST_LOCAL_PROXY", ""), "MONI_TRUST_LOCAL_PROXY"),
+            allow_private_targets=_flag(g("MONI_ALLOW_PRIVATE_TARGETS", "1"), "MONI_ALLOW_PRIVATE_TARGETS"),
             session_idle_minutes=_int(env, "MONI_SESSION_IDLE_MINUTES", "60"),
             session_max_hours=_int(env, "MONI_SESSION_MAX_HOURS", "12"),
             public_url=_public_url(g("MONI_PUBLIC_URL", "")),
