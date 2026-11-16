@@ -10,6 +10,7 @@ from . import passwords, totp
 
 LOCK_AFTER = 5
 LOCK_SECONDS = 900
+ENROLL_SECONDS = 72 * 3600  # N8: so lange taugt ein vom Admin gesetztes Passwort ohne 2FA für die Anmeldung
 _LAST_ADMIN = "Der letzte aktive Admin kann nicht entfernt, herabgestuft oder deaktiviert werden"
 _EMAIL_TAKEN = "E-Mail-Adresse ist bereits vergeben"
 _TOTP_CODE = re.compile(r"[0-9]{6}")
@@ -34,11 +35,13 @@ class User:
     created_at: int
     last_login: int | None
     oidc_bound: bool
+    enroll_until: int | None = None
 
 
 def _user(r: sqlite3.Row) -> User:
     return User(r["id"], r["email"], r["name"], r["role"], r["kind"], r["totp_enc"] is not None, bool(r["disabled"]),
-                r["failed_logins"], r["locked_until"], r["created_at"], r["last_login"], r["oidc_sub"] is not None)
+                r["failed_logins"], r["locked_until"], r["created_at"], r["last_login"], r["oidc_sub"] is not None,
+                r["enroll_until"])
 
 
 def _email_shape(s: str) -> bool:
@@ -178,6 +181,15 @@ class UserStore:
         if r is None or r["password_hash"] is None:
             return False
         return passwords.verify_password(password, r["password_hash"])  # wirft nie, auch nicht bei Surrogaten
+
+    def start_enrollment(self, user_id: int, now: int) -> None:
+        """Nach Anlegen oder Reset durch einen Admin: ohne 2FA nur bis now + ENROLL_SECONDS anmeldbar."""
+        with self._tx():
+            self._conn.execute("UPDATE users SET enroll_until=? WHERE id=?", (now + ENROLL_SECONDS, user_id))
+
+    @staticmethod
+    def enroll_expired(user: User, now: int) -> bool:
+        return not user.totp_enabled and user.enroll_until is not None and now > user.enroll_until
 
     @staticmethod
     def is_locked(user: User, now: int) -> bool:

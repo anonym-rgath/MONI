@@ -185,6 +185,10 @@ def login(request: Request, response: Response, body: LoginBody):
             if locked:
                 audit.record(conn, actor, "login.locked", target=target, ip=ip, now=now)
             raise HTTPException(401, _FAILED)
+        if users.enroll_expired(user, now):  # N8: gleiche Antwort wie ein falsches Passwort, Grund nur im Audit
+            request.app.state.throttle.fail(throttle_key(request), now)
+            audit.record(conn, _actor(user), "login.enroll_expired", target=user.email, ip=ip, now=now)
+            raise HTTPException(401, _FAILED)
         stage = "mfa" if user.totp_enabled else "enroll"  # Zähler erst nach dem zweiten Faktor zurücksetzen
         _, plain = SessionStore(conn, request.app.state.settings).create(user.id, stage, now, ip)
     _set_cookie(response, plain)
